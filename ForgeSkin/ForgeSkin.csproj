@@ -12,7 +12,6 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <!-- Line numbers in error logs without the builder's local paths. -->
     <DebugType>embedded</DebugType>
-    <PathMap>$(MSBuildProjectDirectory)=/ForgeSkin</PathMap>
     <GTFOBepInExPath Condition="'$(GTFOBepInExPath)' == ''">$(GTFO_BEPINEX_PATH)</GTFOBepInExPath>
   </PropertyGroup>
   <Target Name="RequireGameReferences" BeforeTargets="ResolveReferences">
@@ -24,6 +23,8 @@
     <Compile Include="Core/*.cs;Native/**/*.cs" />
     <!-- The in-game texts, beside the DLL where ForgeCore's UI reads them. -->
     <None Update="lang/*.forge" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The picker's CHARACTER slot icon, rendered from its SVG by the icons step of Tools/Brand/make-logo.ts. -->
+    <EmbeddedResource Include="Native/character-slot.png" LogicalName="ForgeSkin.character-slot.png" />
     <ProjectReference Include="../ForgeCore/ForgeCore.csproj" Private="false" />
     <Reference Include="$(GTFOBepInExPath)/core/0Harmony.dll" Private="false" />
     <Reference Include="$(GTFOBepInExPath)/core/BepInEx.Core.dll" Private="false" />
