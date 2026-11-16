@@ -6,6 +6,22 @@ This version stays at 1.0.x although it removes and changes public interfaces; e
 
 - Breaking: `HookFanout<T>`, `HookLease` and `HookDispatch` are removed; there is no replacement.
 - Breaking: `ItemModelIcons.Photograph` and `ModelPictureView` are removed; there is no replacement (ForgeSkin's picker shows the picture each pack carries).
+- Breaking: `Glow.Srgb` and `Glow.LinearToSrgb` are removed; use `ColourSpace.ToSrgb`, `ColourSpace.ToLinear` and `ColourSpace.Glow`. `Glow.Value` and `Glow.Write(material, srgb, gain)` convert a glow colour once, by whether the shader property is HDR (`Glow.IsHdr`).
+- Breaking: `FirstPersonWear.Follow` is removed: the library follows a worn model's visibility every frame itself. `FirstPersonWearOptions` adds `Descendants` and `LeaveOut`, and the wear accepts the caller's own model instance.
+- Interface: `MenuScreenWindow.AddButton` takes an optional `why`: a disabled button fades with its frame and text, takes no press or hover, and shows that one sentence under it. Recompile mods that call it.
+- Added: player looks for a whole character. `PlayerLooks` (one provider per player look: `Provide`, `Describe`, `Dress`, `Hang`, `Worn`, with `IPlayerLookProvider`, `ILookDress` and `PlayerLook`), `Persons.Hide` for a player's agent or for a body without one (a lobby figure, a replay stand-in), several holders on one person not fighting, and `PersonHideOptions` (`ThirdPerson`, `FirstPerson`, `Held`, `Keep`, `Look`).
+- Added: humanoid rigs. `HumanRig` (the canonical humanoid links, arm reach and first-person arm wear), `PoseFingers` and `PoseLink.Optional` (pose copy covers 30 finger joints; a missing bone is skipped), `RigMap.Check`, `ImportedModelDescriptor.CheckFiles` / `IsMeshFile`, and `ImportedModels.Prepare` / `ImageTextures.Prepare`, which decode a model's textures over several frames before it is built.
+- Added: chain physics for charms, hair, skirts and ribbons: `Chains.Bind` with `ChainSpec` (presets `Charm`, `LongHair`, `ShortHair`, `Skirt`, `Tail`), `ChainState`, `ChainShape` and `ChainCapsule`; chains settle at rest, are culled by distance and visibility, and survive turning and being knocked back.
+- Added: toon materials, `Toon` and `ToonDress` with `ToonLighting` (forward, deferred or off, per player).
+- Added: `Models.Drawn` (enabled and not turned off by `forceRenderingOff`; outlines collect only what is drawn), `Models.LeaveOutInFirstPerson`, `OwnBodyCut`.
+- Added: replayable objects for recordings: `Recording.Track` (pose, scale and visibility recorded when they change), `Recording.State`, `Recording.Provide` / `IRecordingProvider`, `Recording.Find`, `Recording.Apply` and `Recording.Placed`.
+- Added: `Combat.Kill` kills an enemy whatever its health, melee resistance or not-dying flag (on the host, through the game's own damage entry); `EnemyDamageCall.Unruled` marks that hit so Forge damage rules leave it alone.
+- Added: local rundown progress. `Progression` records the zones cleared in each level of a local rundown on this machine, and the game's rundown screen unlocks levels from it without the game's server.
+- Added: `PickerSource.Layout`, `Panel`, `PickScheme`, `Settings`, `SettingsInfo` and `NumberSlots`, with `PickerPanel` and `PickerScheme` (a picker's colour schemes and its settings behind the title bar's gear); `UIKitSprites.Gear` and `Tick`.
+- Added: `NativeObjects.Same` and `Identity` (compare game objects by the object, not the wrapper), `GameText.Read` and `TryColumn`, `ColourSpace`, `WorldBackdrop.Queue`, `Png.TryDecode`.
+- Fixed: outlines draw every part of a model with many sub-meshes (a character model was outlined only at the face); a hidden original body no longer enters the outline.
+- Fixed: a pose copy that follows a body is applied after that body's own arm and aim solving, so teammates' character models and replay stand-ins hold the gun where the game holds it.
+- Logs: a save that cannot be written, a damaged save file and an error in the sentry tool-slot guard are written once instead of at every save or deployment.
 - Fixed: `GearIcons.Redraw` no longer fails while the game's icon renderer has removed itself between jobs.
 - Added: `GearIcons.Unframed`, which leaves a mod's additions on a gear out of the framing of its game icons.
 - Added: `Store.Flush()` writes out the values still waiting for the background writer; ForgeCore calls it when the game closes, so a setting changed just before quitting is kept.
