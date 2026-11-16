@@ -170,8 +170,14 @@ public sealed class FxInstance
         }
         // The game's interop exposes no particle lights module, so the module is silenced by removing the template
         // lights it copies (each on its own `<layer>_light` child); the copy spawns none of its own.
+        // A light anywhere else (on the root or on a particle layer) loses only its Light, never the copy's layers.
         foreach (var template in gameObject.GetComponentsInChildren<Light>(true))
-            if (template != null) Object.DestroyImmediate(template.gameObject);
+        {
+            if (template == null) continue;
+            var holder = template.gameObject;
+            if (holder.Pointer != gameObject.Pointer && holder.GetComponent<ParticleSystem>() == null) Object.DestroyImmediate(holder);
+            else Object.DestroyImmediate(template);
+        }
         _object.SetActive(false);
     }
 

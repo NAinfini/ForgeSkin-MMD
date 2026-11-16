@@ -69,7 +69,8 @@ internal static class ScreenStack
     private static readonly ScreenLayer.User User = new();
     private static readonly float[] BandAlpha = new float[Bands], BandAzimuth = new float[Bands];
     private static readonly int[] BandIds = new int[Bands];
-    private static readonly Vector4[] Shown = new Vector4[16];
+    // What each shader value was last set to: the eight fixed values (0..7), then one per edge band.
+    private static readonly Vector4[] Shown = new Vector4[8 + Bands];
     private static readonly int FlashId = Shader.PropertyToID("_Flash"), VignetteId = Shader.PropertyToID("_Vignette"),
         LowHealthId = Shader.PropertyToID("_LowHealth"), HeatId = Shader.PropertyToID("_Heat"), InterferenceId = Shader.PropertyToID("_Interference"),
         SweepId = Shader.PropertyToID("_Sweep"), LayoutId = Shader.PropertyToID("_Layout"),
@@ -276,9 +277,8 @@ internal static class ScreenStack
     /// steps of ForgeCore <c>LandingWork</c>, a frame apart and apart from the other warm-ups.</summary>
     private static void AutoWarm()
     {
-        if (!_used || _failed || _warmedGeneration == ScreenLayer.Generation && _warmedGeneration >= 0 || _autoGeneration == ScreenLayer.Generation) return;
-        var state = GameStateManager.CurrentStateName;
-        if (state != eGameStateName.StopElevatorRide && state != eGameStateName.InLevel) return;
+        if (!_used || _failed || _warmedGeneration == ScreenLayer.Generation && _warmedGeneration >= 0 || _autoGeneration == ScreenLayer.Generation
+            || !ForgeCore.GameEventSources.Landed) return;
         _autoGeneration = ScreenLayer.Generation;
         ForgeCore.LandingWork.Add(Plugin.Id, "screen-effects-build", () => { if (!_failed) Build(); });
         ForgeCore.LandingWork.Add(Plugin.Id, "screen-effects-draw", () => { if (!_failed) Warm(); });

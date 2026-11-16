@@ -6,7 +6,7 @@ using UnityEngine;
 namespace ForgeCore;
 
 /// <summary>The local player's walk speed, jump, stamina cost and hit flinch, changed through the game's own paths. Whoever needs one
-/// subscribes (the first subscription puts that hook on, and it stays on); every subscriber is asked, so two packages combine: walk sources
+/// subscribes (the first subscription puts that hook on, and it stays on; disposing a subscription ends it); every subscriber is asked, so two packages combine: walk sources
 /// chain, jump factors multiply, and any one source is enough for the yes-or-no ones. Each peer changes only its own local player and nothing
 /// is sent.
 /// <para>Walk: the velocity every locomotion state asks for (<c>PLOC_Base.GetHorizontalVelocityFromInput</c>) goes through
@@ -23,40 +23,52 @@ public static class PlayerStats
     private static Func<PlayerAgent?, bool>[] _noStamina = [];
 
     /// <summary>Changes the velocity the local player's locomotion asked for. Puts the walk hook on.</summary>
-    public static void Walk(Func<PlayerAgent, Vector3, Vector3> velocity)
+    public static IDisposable Walk(Func<PlayerAgent, Vector3, Vector3> velocity)
     {
+        if (velocity == null) throw new ArgumentNullException(nameof(velocity));
         Patches.Ensure(Modules.PlayerWalk, typeof(PlayerWalkHook));
         _walk = [.. _walk, velocity];
+        return new Subscription(() => _walk = Without(_walk, velocity));
     }
 
     /// <summary>True lifts the game's carry slowdown for the local player. Puts the walk hook on.</summary>
-    public static void CarryUnslowed(Func<bool> unslowed)
+    public static IDisposable CarryUnslowed(Func<bool> unslowed)
     {
+        if (unslowed == null) throw new ArgumentNullException(nameof(unslowed));
         Patches.Ensure(Modules.PlayerWalk, typeof(PlayerWalkHook));
         _unslowed = [.. _unslowed, unslowed];
+        return new Subscription(() => _unslowed = Without(_unslowed, unslowed));
     }
 
     /// <summary>A factor on the jump speed of the player asked about (1 leaves it). Puts the two jump hooks on.</summary>
-    public static void Jump(Func<PlayerAgent?, float> speed)
+    public static IDisposable Jump(Func<PlayerAgent?, float> speed)
     {
+        if (speed == null) throw new ArgumentNullException(nameof(speed));
         Patches.Ensure(Modules.PlayerJump, typeof(PlayerJumpHook));
         Patches.Ensure(Modules.PlayerRise, typeof(PlayerRiseHook));
         _jump = [.. _jump, speed];
+        return new Subscription(() => _jump = Without(_jump, speed));
     }
 
     /// <summary>True skips the stamina cost of the player asked about. Puts the stamina hook on.</summary>
-    public static void NoStamina(Func<PlayerAgent?, bool> free)
+    public static IDisposable NoStamina(Func<PlayerAgent?, bool> free)
     {
+        if (free == null) throw new ArgumentNullException(nameof(free));
         Patches.Ensure(Modules.PlayerStamina, typeof(PlayerStaminaHook));
         _noStamina = [.. _noStamina, free];
+        return new Subscription(() => _noStamina = Without(_noStamina, free));
     }
 
     /// <summary>True skips the local player's hit flinch. Puts the flinch hook on.</summary>
-    public static void NoFlinch(Func<bool> calm)
+    public static IDisposable NoFlinch(Func<bool> calm)
     {
+        if (calm == null) throw new ArgumentNullException(nameof(calm));
         Patches.Ensure(Modules.PlayerFlinch, typeof(PlayerFlinchHook));
         _noFlinch = [.. _noFlinch, calm];
+        return new Subscription(() => _noFlinch = Without(_noFlinch, calm));
     }
+
+    private static T[] Without<T>(T[] sources, T source) where T : class => Array.FindAll(sources, other => !ReferenceEquals(other, source));
 
     internal static bool Unslowed() => AnyOf(_unslowed);
 

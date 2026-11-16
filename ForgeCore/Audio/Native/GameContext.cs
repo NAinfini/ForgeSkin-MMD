@@ -68,7 +68,7 @@ internal static class GameContext
         Now = AudioClock.Now;
         Focused = Application.isFocused;
         if (Now >= _nextSliders) { _nextSliders = Now + .25; ReadSliders(); }
-        InLevel = GameStateManager.CurrentStateName == eGameStateName.InLevel;
+        InLevel = ForgeCore.GameEventSources.InLevel;
         Reloading = InLevel && ForgeCore.Checkpoint.Recalling;
         var levelEnded = _levelEnded; _levelEnded = false;
         var checkpointChanged = _checkpointReloaded; _checkpointReloaded = false;
@@ -83,7 +83,7 @@ internal static class GameContext
         var levelChanged = _hadLevel != InLevel || levelEnded;
         _wasReloading = Reloading;
         _hadLevel = InLevel;
-        // Outside a level, after one full pass, nothing here changes until the game state turns to InLevel (read above every frame):
+        // Outside a level, after one full pass, nothing here changes until the game state turns to InLevel (the state ForgeCore keeps):
         // no camera, player or listener lookup in the menus.
         if (!InLevel && !levelChanged && _idleSettled)
         {

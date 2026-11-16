@@ -13,7 +13,7 @@ internal static class WeaponActions
     internal static readonly ClaimBook<WeaponActionClaim> Book = new();
     private const WeaponAction AllKinds = WeaponAction.ReloadStart | WeaponAction.ReloadDone | WeaponAction.DryFire;
 
-    internal static WeaponActionClaim? Claim(string modId, Item item, WeaponAction kinds, IWeaponActionHandler handler, int priority)
+    internal static WeaponActionClaim? Claim(string modId, Item item, WeaponAction kinds, Action<WeaponAction> handler, int priority)
     {
         string? problem = null;
         if (!AudioKit.ValidIdentity(modId)) problem = "invalid mod ID";
@@ -63,7 +63,7 @@ internal static class WeaponActions
         if (Book.Count == 0 || item == null || item.WasCollected) return;
         var claim = Book.Find(item.Pointer, (int)action);
         if (claim == null) return;
-        try { claim.Handler.Play(action); }
+        try { claim.Handler(action); }
         catch (Exception error)
         {
             if (!claim.HandlerFailed) AudioLog.Report(AudioError.CallbackFailed, claim.ModId + ": weapon action handler failed (" + error + ").");

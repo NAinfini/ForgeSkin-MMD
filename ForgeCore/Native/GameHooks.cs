@@ -56,6 +56,20 @@ public static partial class GameHooks
     public static readonly Bracket<(Animator Animator, int Hash)> AnimatorCrossFaded = new("GameHooks.AnimatorCrossFaded", typeof(AnimatorCrossFadedHook));
     /// <summary><c>ES_HibernateWakeUp.ActivateState</c>: a sleeping enemy getting up, with the distance and delay the game gave it and whether another enemy's wake-up passed it on (<c>Skip</c> keeps the enemy asleep).</summary>
     public static readonly Bracket<(ES_HibernateWakeUp State, float Distance, float Delay, bool Propagated)> HibernateWakeActivated = new("GameHooks.HibernateWakeActivated", typeof(HibernateWakeActivatedHook));
+    /// <summary><c>ES_HibernateWakeUp.DoWakeup(turn, index, delay, isPropagatedWakeup)</c>: a sleeper's wake-up animation starts, on every
+    /// machine (the host from the state packet it sends itself). On the propagated path the body hands the static
+    /// <c>m_propagatedWakeupColor</c> to the glow within the call, so an <c>Around</c> that swaps it covers exactly this wake-up.</summary>
+    public static readonly Bracket<(ES_HibernateWakeUp State, bool Turn, int Index, float Delay, bool Propagated)> HibernateWakeupStarted = new("GameHooks.HibernateWakeupStarted", typeof(HibernateWakeupStartedHook));
+    /// <summary><c>ES_Hibernate.DoStartDetection</c>: a sleeper starts sensing someone (the host's <c>MasterStartDetection</c> and a client's packet both reach it).</summary>
+    public static readonly Bracket<ES_Hibernate> HibernateDetectionStarted = new("GameHooks.HibernateDetectionStarted", typeof(HibernateDetectionStartedHook));
+    /// <summary><c>ES_Hibernate.DoEndDetection</c>: a sleeper stops sensing, back to its heartbeat.</summary>
+    public static readonly Bracket<ES_Hibernate> HibernateDetectionEnded = new("GameHooks.HibernateDetectionEnded", typeof(HibernateDetectionEndedHook));
+    /// <summary><c>EB_Hibernating.OnNoiseDetected(ref NM_NoiseData, float distance01)</c>: a sleeping enemy hears a noise; the body may wake it
+    /// (<see cref="HibernateWakeActivated"/> runs inside it). The native only reads the noise, so the call carries a copy and a change to it reaches nothing.</summary>
+    public static readonly Bracket<(EB_Hibernating State, NM_NoiseData Noise, float Distance01)> HibernatingNoiseHeard = new("GameHooks.HibernatingNoiseHeard", typeof(HibernatingNoiseHeardHook));
+    /// <summary><c>EnemyAI.InjectPropagatedTarget</c>: another enemy's target propagation (<c>EnemyAgent.PropagateTargetLimited</c> / <c>Full</c>)
+    /// hands this enemy its target; a sleeper reached this way gets up on a later frame.</summary>
+    public static readonly Bracket<EnemyAI> EnemyTargetInjected = new("GameHooks.EnemyTargetInjected", typeof(EnemyTargetInjectedHook));
     /// <summary><c>ES_Scream.ActivateState</c>: the host starts an enemy's scream.</summary>
     public static readonly Bracket<ES_Scream> EnemyScreamStarted = new("GameHooks.EnemyScreamStarted", typeof(EnemyScreamStartedHook));
     /// <summary><c>ES_Scream.OnStateShouldBeActivated</c>: an awake enemy's scream packet arrives (the entry other packages read).</summary>
@@ -893,4 +907,61 @@ internal static class HibernateWakeActivatedHook
     private static void After(ES_HibernateWakeUp __instance, float distance, float delay, bool isPropagatedWakeup, bool __runOriginal) => GameHooks.HibernateWakeActivated.RunAfter((__instance, distance, delay, isPropagatedWakeup), __runOriginal);
     [HarmonyFinalizer, HarmonyPriority(Priority.Last)]
     private static Exception? Faulted(Exception? __exception, ES_HibernateWakeUp __instance, float distance, float delay, bool isPropagatedWakeup) { if (__exception != null) GameHooks.HibernateWakeActivated.RunFaulted((__instance, distance, delay, isPropagatedWakeup), __exception); return __exception; }
+}
+
+[HarmonyPatch(typeof(ES_HibernateWakeUp), nameof(ES_HibernateWakeUp.DoWakeup))]
+internal static class HibernateWakeupStartedHook
+{
+    [HarmonyPrefix, HarmonyPriority(Priority.First)]
+    private static void Before(ES_HibernateWakeUp __instance, bool turn, int index, float delay, bool isPropagatedWakeup) => GameHooks.HibernateWakeupStarted.RunBefore((__instance, turn, index, delay, isPropagatedWakeup));
+    [HarmonyPostfix, HarmonyPriority(Priority.Last)]
+    private static void After(ES_HibernateWakeUp __instance, bool turn, int index, float delay, bool isPropagatedWakeup, bool __runOriginal) => GameHooks.HibernateWakeupStarted.RunAfter((__instance, turn, index, delay, isPropagatedWakeup), __runOriginal);
+    [HarmonyFinalizer, HarmonyPriority(Priority.Last)]
+    private static Exception? Faulted(Exception? __exception, ES_HibernateWakeUp __instance, bool turn, int index, float delay, bool isPropagatedWakeup) { if (__exception != null) GameHooks.HibernateWakeupStarted.RunFaulted((__instance, turn, index, delay, isPropagatedWakeup), __exception); return __exception; }
+}
+
+[HarmonyPatch(typeof(ES_Hibernate), nameof(ES_Hibernate.DoStartDetection))]
+internal static class HibernateDetectionStartedHook
+{
+    [HarmonyPrefix, HarmonyPriority(Priority.First)]
+    private static void Before(ES_Hibernate __instance) => GameHooks.HibernateDetectionStarted.RunBefore(__instance);
+    [HarmonyPostfix, HarmonyPriority(Priority.Last)]
+    private static void After(ES_Hibernate __instance, bool __runOriginal) => GameHooks.HibernateDetectionStarted.RunAfter(__instance, __runOriginal);
+    [HarmonyFinalizer, HarmonyPriority(Priority.Last)]
+    private static Exception? Faulted(Exception? __exception, ES_Hibernate __instance) { if (__exception != null) GameHooks.HibernateDetectionStarted.RunFaulted(__instance, __exception); return __exception; }
+}
+
+[HarmonyPatch(typeof(ES_Hibernate), nameof(ES_Hibernate.DoEndDetection))]
+internal static class HibernateDetectionEndedHook
+{
+    [HarmonyPrefix, HarmonyPriority(Priority.First)]
+    private static void Before(ES_Hibernate __instance) => GameHooks.HibernateDetectionEnded.RunBefore(__instance);
+    [HarmonyPostfix, HarmonyPriority(Priority.Last)]
+    private static void After(ES_Hibernate __instance, bool __runOriginal) => GameHooks.HibernateDetectionEnded.RunAfter(__instance, __runOriginal);
+    [HarmonyFinalizer, HarmonyPriority(Priority.Last)]
+    private static Exception? Faulted(Exception? __exception, ES_Hibernate __instance) { if (__exception != null) GameHooks.HibernateDetectionEnded.RunFaulted(__instance, __exception); return __exception; }
+}
+
+// `ref NM_NoiseData` is an Il2Cpp value type the native only reads: Patches.Set prepares the bridge repair (HookByRef, ValueRead) before
+// the first patch, so each end gets a boxed copy of the noise.
+[HarmonyPatch(typeof(EB_Hibernating), nameof(EB_Hibernating.OnNoiseDetected))]
+internal static class HibernatingNoiseHeardHook
+{
+    [HarmonyPrefix, HarmonyPriority(Priority.First)]
+    private static void Before(EB_Hibernating __instance, ref NM_NoiseData noiseData, float distance01) => GameHooks.HibernatingNoiseHeard.RunBefore((__instance, noiseData, distance01));
+    [HarmonyPostfix, HarmonyPriority(Priority.Last)]
+    private static void After(EB_Hibernating __instance, ref NM_NoiseData noiseData, float distance01, bool __runOriginal) => GameHooks.HibernatingNoiseHeard.RunAfter((__instance, noiseData, distance01), __runOriginal);
+    [HarmonyFinalizer, HarmonyPriority(Priority.Last)]
+    private static Exception? Faulted(Exception? __exception, EB_Hibernating __instance, ref NM_NoiseData noiseData, float distance01) { if (__exception != null) GameHooks.HibernatingNoiseHeard.RunFaulted((__instance, noiseData, distance01), __exception); return __exception; }
+}
+
+[HarmonyPatch(typeof(EnemyAI), nameof(EnemyAI.InjectPropagatedTarget))]
+internal static class EnemyTargetInjectedHook
+{
+    [HarmonyPrefix, HarmonyPriority(Priority.First)]
+    private static void Before(EnemyAI __instance) => GameHooks.EnemyTargetInjected.RunBefore(__instance);
+    [HarmonyPostfix, HarmonyPriority(Priority.Last)]
+    private static void After(EnemyAI __instance, bool __runOriginal) => GameHooks.EnemyTargetInjected.RunAfter(__instance, __runOriginal);
+    [HarmonyFinalizer, HarmonyPriority(Priority.Last)]
+    private static Exception? Faulted(Exception? __exception, EnemyAI __instance) { if (__exception != null) GameHooks.EnemyTargetInjected.RunFaulted(__instance, __exception); return __exception; }
 }

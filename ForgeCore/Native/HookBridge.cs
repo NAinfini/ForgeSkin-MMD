@@ -18,7 +18,7 @@ namespace ForgeCore;
 /// pointer-width load into a struct local; for a `ref` Il2Cpp value type it wraps the first eight bytes of the struct as an
 /// object pointer and, after the call, stores that wrapper pointer over them.
 ///
-/// ForgeCore's <c>Hooks</c> is the one installer, so it is also the one place that changes the bridge: before it patches a target
+/// ForgeCore's <c>Hooks</c> and its brackets' <c>Patches.Set</c> are the installers, so they are also the one place that changes the bridge: before either patches a target
 /// whose by-reference shape needs it, a Harmony postfix on the generator edits the generated Cecil body of exactly the targets prepared
 /// here. This is the only place Forge reaches into a non-public member of the hooking backend, and only of the one pinned
 /// Il2CppInterop.HarmonySupport build (<see cref="HookBridgeBackend"/>); with any other build such a target is refused

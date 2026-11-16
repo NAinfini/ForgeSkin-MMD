@@ -496,7 +496,8 @@ public sealed class JointPlayer
                 player._playing = 0;
                 continue;
             }
-            player.PoseAll(now);
+            // One body's failure does not stop the others from posing this frame.
+            try { player.PoseAll(now); } catch (Exception error) { Scene.StepFailed("joint clips", error); }
         }
     }
 
@@ -509,6 +510,7 @@ public sealed class JointPlayer
     private void PoseAll(float now)
     {
         // Oldest first, so on a bone two tracks share the later one wins.
+        var lastOrder = 0;
         for (var done = 0; done < _playing;)
         {
             Track? next = null;
@@ -516,12 +518,12 @@ public sealed class JointPlayer
             for (var s = 0; s < MaxTracks; s++)
             {
                 var track = _tracks[s];
-                if (track.Clip == null || track.Order <= _lastOrder || (next != null && track.Order >= next.Order)) continue;
+                if (track.Clip == null || track.Order <= lastOrder || (next != null && track.Order >= next.Order)) continue;
                 next = track;
                 slot = s;
             }
             if (next == null) break;
-            _lastOrder = next.Order;
+            lastOrder = next.Order;
             var time = now - next.Start;
             if (!next.Loop && float.IsPositiveInfinity(next.Ending)) next.Ending = next.Began + (next.Clip!.Duration - (next.Began - next.Start));
             if (now >= next.Ending) { StopSlot(slot); continue; }
@@ -530,10 +532,7 @@ public sealed class JointPlayer
             Pose(next, time, envelope);
             done++;
         }
-        _lastOrder = 0;
     }
-
-    private int _lastOrder;
 
     private void Pose(Track track, float time, float envelope)
     {

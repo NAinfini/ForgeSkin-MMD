@@ -17,18 +17,13 @@ public static class ScreenShaderBuild
         ("ForgeUIScreenEffects", "ScreenEffectsShaderBytes", "ScreenEffectsShader.Generated.cs", "forgeui-screen-effects"),
     };
 
-    public static void Build()
-    {
-        try { Run(); EditorApplication.Exit(0); }
-        catch (Exception e) { Debug.LogException(e); EditorApplication.Exit(1); }
-    }
+    public static void Build() => UnityBatch.Run(Run);
 
     static void Run()
     {
-        if (Application.unityVersion != "2019.4.21f1") throw new InvalidOperationException("Use the game's Unity 2019.4.21f1.");
-        var tools = Environment.GetEnvironmentVariable("FORGE_TOOLS") ?? throw new InvalidOperationException("FORGE_TOOLS is not set.");
-        var native = Environment.GetEnvironmentVariable("FORGE_NATIVE") ?? throw new InvalidOperationException("FORGE_NATIVE is not set.");
-        var project = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        var tools = UnityBatch.Env("FORGE_TOOLS");
+        var native = UnityBatch.Env("FORGE_NATIVE");
+        var project = UnityBatch.Project;
         var output = Path.Combine(project, "shader-out");
         Directory.CreateDirectory(output);
         var shaders = Path.GetFullPath(Path.Combine(native, "../../Assets/Shaders"));

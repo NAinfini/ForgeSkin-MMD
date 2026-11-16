@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using Player;
 using UnityEngine;
 
@@ -31,11 +30,12 @@ public readonly record struct SessionPlayer(ulong Lookup, bool IsBot, bool IsLoc
 /// <summary>Reads about the players in the level. Main thread only.</summary>
 public static partial class Players
 {
-    private static readonly Dictionary<IntPtr, PlayerMotion> Seen = new();
+    /// <summary>The motion last seen per team slot, with the agent it was seen on (a new agent in the slot starts again).</summary>
+    private static readonly (IntPtr Agent, PlayerMotion Motion)[] Seen = new (IntPtr, PlayerMotion)[8];
     private static Action<PlayerAgent, PlayerMotion, PlayerMotion>? _motionChanged;
     private static bool _watching;
     private static Action<SessionPlayer>? _joined, _left;
-    private static readonly Action<PlayerInfo> ObserveMotion = static info => Observe(info.Agent);
+    private static readonly Action<PlayerInfo> ObserveMotion = static info => Observe(info.Agent, info.Slot);
 
     /// <summary>The local player's agent; null when there is none (no level, between lives) or it was already collected.</summary>
     public static PlayerAgent? Local
@@ -135,14 +135,16 @@ public static partial class Players
             if (_watching) return;
             _watching = true;
             Frame.OnUpdate("NAinfini.ForgeCore", Watch);
-            GameEvents.LevelEnded += Seen.Clear;
+            GameEvents.LevelEnded += ForgetMotion;
         }
         remove
         {
             _motionChanged -= value;
-            if (_motionChanged == null) Seen.Clear();
+            if (_motionChanged == null) ForgetMotion();
         }
     }
+
+    private static void ForgetMotion() => Array.Clear(Seen);
 
     private static void Watch()
     {
@@ -151,12 +153,15 @@ public static partial class Players
         Each(ObserveMotion);
     }
 
-    private static void Observe(PlayerAgent agent)
+    private static void Observe(PlayerAgent agent, int slot)
     {
+        if ((uint)slot >= (uint)Seen.Length) return;
         var now = Motion(agent);
-        if (!Seen.TryGetValue(agent.Pointer, out var was)) { Seen[agent.Pointer] = now; return; }
+        ref var seen = ref Seen[slot];
+        if (seen.Agent != agent.Pointer) { seen = (agent.Pointer, now); return; }
+        var was = seen.Motion;
         if (was == now) return;
-        Seen[agent.Pointer] = now;
+        seen.Motion = now;
         // A handler that throws must not cost the other players' changes this frame (Seen is already updated).
         try { _motionChanged?.Invoke(agent, was, now); }
         catch (Exception error) { Log.For("ForgeCore").ErrorOnce("core-player-motion-handler-failed", "A player motion handler failed: " + error); }

@@ -11,20 +11,11 @@ $tools = $PSScriptRoot
 $native = Join-Path (Split-Path (Split-Path $tools -Parent) -Parent) 'Native'
 $Work = [IO.Path]::GetFullPath($Work)
 if (!(Test-Path -LiteralPath $Unity)) { throw "Missing Unity: $Unity" }
-if (!(Test-Path -LiteralPath (Join-Path $Work 'ProjectSettings'))) {
-    New-Item -ItemType Directory -Force (Split-Path $Work -Parent) | Out-Null
-    $proc = Start-Process -FilePath $Unity -WindowStyle Hidden -PassThru -ArgumentList @('-batchmode', '-nographics', '-quit', '-createProject', "`"$Work`"", '-logFile', "`"$Work.create.log`"")
-    $proc.WaitForExit()
-    if ($proc.ExitCode -ne 0) { throw "Unity could not create the project; see $Work.create.log" }
-}
-New-Item -ItemType Directory -Force (Join-Path $Work 'Assets/Editor') | Out-Null
-Copy-Item -LiteralPath "$tools/ScreenShaderBuild.cs" -Destination (Join-Path $Work 'Assets/Editor/ScreenShaderBuild.cs') -Force
+. (Join-Path $tools '../../../tools/Unity/UnityBatch.ps1')
 $env:FORGE_TOOLS = $tools
 $env:FORGE_NATIVE = $native
 $log = "$Work.build.log"
-$proc = Start-Process -FilePath $Unity -WindowStyle Hidden -PassThru -ArgumentList @('-batchmode', '-nographics', '-quit', '-projectPath', "`"$Work`"", '-executeMethod', 'ScreenShaderBuild.Build', '-logFile', "`"$log`"")
-$proc.WaitForExit()
-if ($proc.ExitCode -ne 0) {
+if ((Invoke-UnityBatch $Unity $Work @("$tools/ScreenShaderBuild.cs") 'ScreenShaderBuild.Build' $log) -ne 0) {
     Select-String -LiteralPath $log -Pattern 'error' | Select-Object -First 15 | ForEach-Object { Write-Host $_.Line }
     throw "Unity build failed; see $log"
 }

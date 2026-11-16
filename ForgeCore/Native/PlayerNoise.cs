@@ -53,7 +53,8 @@ public static class PlayerNoise
 /// <c>EnemyDetection.UpdateDirectionDistanceToTarget_Hibernate</c> (build 20403457, no by-ref parameter) and the noise check that follows reads it
 /// from <c>AgentTarget.m_distance</c>: this postfix divides that distance for a leased player's movement noise, so the game's own check
 /// (and a mod reading the distance after it, ForgeEnemy's wake rules) sees the scaled value. The check method itself is not patched: its
-/// <c>out float</c> parameter made Il2CppInterop's trampoline throw on every call (see <see cref="TrampolineSafety"/>). The distance is
+/// <c>out float</c> parameter made Il2CppInterop's stock trampoline throw on every call (by-reference shapes are now repaired or refused
+/// by <see cref="HookByRef"/>, but the distance hook already does the job). The distance is
 /// measured again before every check, so nothing needs putting back.</summary>
 internal static class PlayerNoiseHooks
 {

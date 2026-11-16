@@ -17,6 +17,7 @@ public readonly record struct InstancedDraw(Mesh Mesh, Material?[] Materials, Ma
 /// instance poses point at transforms of the source room (absent from a placed copy) and its area batches are built
 /// once while the level is generated. Matrices live in pre-allocated arrays; a frame allocates nothing. Imported models draw through the same
 /// groups without instancing: their gear and surface shaders have no instancing variant, so each matrix is one Graphics.DrawMesh.
+/// Main thread only, like every Unity call it makes.
 /// </summary>
 public static class InstancedMeshBatches
 {
@@ -60,7 +61,6 @@ public static class InstancedMeshBatches
 
     private static readonly List<Group> Groups = new();
     private static readonly Il2CppStructArray<Plane> Planes = new(6);
-    private static Camera? _camera;
 
     /// <summary>
     /// Registers the draws of one placed leaf; their matrices are in <paramref name="anchor"/>'s local frame. The groups end
@@ -93,90 +93,86 @@ public static class InstancedMeshBatches
                 chunk.LocalBounds = Enclose(draw.Mesh.bounds, chunk.Local, chunk.Count, Matrix4x4.identity);
                 for (int slot = 0; slot < chunk.Count; slot++) chunk.World[slot] = chunk.Local[slot];
             }
-            lock (Groups)
-                Groups.Add(new Group
-                {
-                    Anchor = anchor,
-                    Mesh = draw.Mesh,
-                    Materials = draw.Materials,
-                    ShadowOnly = draw.ShadowOnly,
-                    Chunks = chunks,
-                    SubMeshes = Math.Min(draw.Mesh.subMeshCount, draw.Materials.Length),
-                    Layer = layer,
-                    Instanced = instanced,
-                });
+            Groups.Add(new Group
+            {
+                Anchor = anchor,
+                Mesh = draw.Mesh,
+                Materials = draw.Materials,
+                ShadowOnly = draw.ShadowOnly,
+                Chunks = chunks,
+                SubMeshes = Math.Min(draw.Mesh.subMeshCount, draw.Materials.Length),
+                Layer = layer,
+                Instanced = instanced,
+            });
         }
     }
 
     /// <summary>Submits every live group; run once per frame after transforms settled.</summary>
     public static void Draw()
     {
-        lock (Groups)
+        if (Groups.Count == 0) return;
+        // The camera the player looks through this frame (the same one every effect reads), not a cached Camera.main.
+        var camera = Scene.EyeCamera;
+        if (camera != null) GeometryUtility.CalculateFrustumPlanes(camera, Planes);
+        for (int index = Groups.Count - 1; index >= 0; index--)
         {
-            if (Groups.Count == 0) return;
-            if (_camera == null) _camera = Camera.main;
-            var camera = _camera;
-            if (camera != null) GeometryUtility.CalculateFrustumPlanes(camera, Planes);
-            for (int index = Groups.Count - 1; index >= 0; index--)
+            var group = Groups[index];
+            // The native pointer, not the Unity == overload (a call into the game for every group every frame).
+            if (ForgeCore.NativeObjects.Gone(group.Anchor)) { Groups.RemoveAt(index); continue; }
+            var anchorObject = group.AnchorObject ??= group.Anchor.gameObject;
+            if (!anchorObject.activeInHierarchy) continue;
+            var layer = group.Layer ?? anchorObject.layer;
+            // On the local player's first-person item the item camera draws it, with the first-person copies a gun's own meshes take (made once).
+            // A model hung on a part of the gun (a magazine) keeps its world layer until the wield: the gun's item decides, read every frame.
+            var item = group.Item;
+            if (layer != group.SeenLayer || (item != null && ForgeCore.NativeObjects.Gone(item)))
             {
-                var group = Groups[index];
-                // The native pointer, not the Unity == overload (a call into the game for every group every frame).
-                if (ForgeCore.NativeObjects.Gone(group.Anchor)) { Groups.RemoveAt(index); continue; }
-                var anchorObject = group.AnchorObject ??= group.Anchor.gameObject;
-                if (!anchorObject.activeInHierarchy) continue;
-                var layer = group.Layer ?? anchorObject.layer;
-                // On the local player's first-person item the item camera draws it, with the first-person copies a gun's own meshes take (made once).
-                // A model hung on a part of the gun (a magazine) keeps its world layer until the wield: the gun's item decides, read every frame.
-                var item = group.Item;
-                if (layer != group.SeenLayer || (item != null && ForgeCore.NativeObjects.Gone(item)))
+                group.SeenLayer = layer;
+                item = group.Item = group.Anchor.GetComponentInParent<ItemEquippable>();
+                group.OnFirstPersonItem = item != null && item.IsFirstPerson;
+                if (item != null) ReportView(group, layer);
+            }
+            else if (item != null)
+            {
+                var held = item.IsFirstPerson;
+                if (held != group.OnFirstPersonItem) { group.OnFirstPersonItem = held; ReportView(group, held && group.Layer == null ? GunMount.FirstPersonLayer : layer); }
+            }
+            if (group.OnFirstPersonItem && group.Layer == null) layer = GunMount.FirstPersonLayer;
+            bool firstPerson = group.OnFirstPersonItem || layer == GunMount.FirstPersonLayer;
+            var materials = firstPerson ? group.FirstPerson ??= Array.ConvertAll(group.Materials, LitMaterial.FirstPerson) : group.Materials;
+            var anchor = group.Anchor.localToWorldMatrix;
+            bool moved = !group.HasLast || !ForgeCore.Vec.Same(anchor, group.Last);
+            if (moved) { group.Last = anchor; group.HasLast = true; }
+            foreach (var chunk in group.Chunks)
+            {
+                if (moved)
                 {
-                    group.SeenLayer = layer;
-                    item = group.Item = group.Anchor.GetComponentInParent<ItemEquippable>();
-                    group.OnFirstPersonItem = item != null && item.IsFirstPerson;
-                    if (item != null) ReportView(group, layer);
+                    for (int slot = 0; slot < chunk.Count; slot++) chunk.World[slot] = ForgeCore.Vec.Multiply(anchor, chunk.Local[slot]);
+                    chunk.WorldBounds = Transformed(chunk.LocalBounds, anchor);
                 }
-                else if (item != null)
+                if (camera != null && !GeometryUtility.TestPlanesAABB(Planes, chunk.WorldBounds)) continue;
+                for (int sub = 0; sub < group.SubMeshes; sub++)
                 {
-                    var held = item.IsFirstPerson;
-                    if (held != group.OnFirstPersonItem) { group.OnFirstPersonItem = held; ReportView(group, held && group.Layer == null ? GunMount.FirstPersonLayer : layer); }
-                }
-                if (group.OnFirstPersonItem && group.Layer == null) layer = GunMount.FirstPersonLayer;
-                bool firstPerson = group.OnFirstPersonItem || layer == GunMount.FirstPersonLayer;
-                var materials = firstPerson ? group.FirstPerson ??= Array.ConvertAll(group.Materials, LitMaterial.FirstPerson) : group.Materials;
-                var anchor = group.Anchor.localToWorldMatrix;
-                bool moved = !group.HasLast || !ForgeCore.Vec.Same(anchor, group.Last);
-                if (moved) { group.Last = anchor; group.HasLast = true; }
-                foreach (var chunk in group.Chunks)
-                {
-                    if (moved)
+                    var material = materials[sub];
+                    if (material == null) continue;
+                    bool shadowOnly = group.ShadowOnly?[sub] == true;
+                    if (group.Instanced)
                     {
-                        for (int slot = 0; slot < chunk.Count; slot++) chunk.World[slot] = ForgeCore.Vec.Multiply(anchor, chunk.Local[slot]);
-                        chunk.WorldBounds = Transformed(chunk.LocalBounds, anchor);
+                        Graphics.DrawMeshInstanced(group.Mesh, sub, material, chunk.World, chunk.Count, null,
+                            shadowOnly ? ShadowCastingMode.ShadowsOnly : ShadowCastingMode.Off, false, layer);
+                        continue;
                     }
-                    if (camera != null && !GeometryUtility.TestPlanesAABB(Planes, chunk.WorldBounds)) continue;
-                    for (int sub = 0; sub < group.SubMeshes; sub++)
-                    {
-                        var material = materials[sub];
-                        if (material == null) continue;
-                        bool shadowOnly = group.ShadowOnly?[sub] == true;
-                        if (group.Instanced)
-                        {
-                            Graphics.DrawMeshInstanced(group.Mesh, sub, material, chunk.World, chunk.Count, null,
-                                shadowOnly ? ShadowCastingMode.ShadowsOnly : ShadowCastingMode.Off, false, layer);
-                            continue;
-                        }
-                        // As a renderer: shadows in the world, none in the hands (the game's first-person guns cast none).
-                        bool world = !firstPerson;
-                        var shadows = shadowOnly ? ShadowCastingMode.ShadowsOnly : world ? ShadowCastingMode.On : ShadowCastingMode.Off;
-                        for (int slot = 0; slot < chunk.Count; slot++)
-                            Graphics.DrawMesh(group.Mesh, chunk.World[slot], material, layer, null, sub, null, shadows, world);
-                    }
+                    // As a renderer: shadows in the world, none in the hands (the game's first-person guns cast none).
+                    bool world = !firstPerson;
+                    var shadows = shadowOnly ? ShadowCastingMode.ShadowsOnly : world ? ShadowCastingMode.On : ShadowCastingMode.Off;
+                    for (int slot = 0; slot < chunk.Count; slot++)
+                        Graphics.DrawMesh(group.Mesh, chunk.World[slot], material, layer, null, sub, null, shadows, world);
                 }
             }
         }
     }
 
-    public static void Clear() { lock (Groups) Groups.Clear(); }
+    public static void Clear() => Groups.Clear();
 
     /// <summary>Where a first-person view change of a gun's model is reported (one line per change, not one per placed model); null reports nothing.</summary>
     public static Action<string>? ViewReport { get; set; }

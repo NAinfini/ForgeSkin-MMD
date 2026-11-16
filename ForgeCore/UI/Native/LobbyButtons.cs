@@ -21,6 +21,8 @@ namespace ForgeUI;
 internal static class LobbyButtons
 {
     private const float MeasureEvery = 0.5f;
+    /// <summary>A bar that keeps moving this long (s) is measured where it stands, so its buttons are never left unmeasured.</summary>
+    private const float MeasureMovingAfter = 3f;
     private static readonly Registry<LobbyButton> Registered = new();
     /// <summary>Per bar, per button ID: the copy.</summary>
     private static readonly Dictionary<IntPtr, Dictionary<string, Copy>> Copies = new();
@@ -38,6 +40,8 @@ internal static class LobbyButtons
     private static float[] _widths = Array.Empty<float>(), _offsets = Array.Empty<float>();
     private static readonly int[] RowsUsed = new int[3];
     private static readonly LobbySpots[] Spots = new LobbySpots[3];
+    // The buttons and outcomes (no room, or another area) already written to the log.
+    private static readonly HashSet<(string, int)> Reported = new();
     /// <summary>This bar's lobby strip rows and room under APPAREL (to the screen's bottom), for the log.</summary>
     private static int _strips;
     private static float _room;
@@ -68,6 +72,10 @@ internal static class LobbyButtons
         /// <summary>For the right column: the next player's panel; for the top row also the next player's name and status.</summary>
         internal float RightEdge = float.PositiveInfinity, TopRightEdge = float.PositiveInfinity;
         internal float At = float.NegativeInfinity;
+        /// <summary>Since when the bar has been moving without a measurement (NaN: standing still).</summary>
+        internal float Moving = float.NaN;
+        /// <summary>APPAREL's place on the page last frame (in the page's moving content holder), to tell a bar still sliding in.</summary>
+        internal Vector3 Seen = new(float.NaN, float.NaN, float.NaN);
         /// <summary>The rows under APPAREL and how many of them its lobby buttons fill.</summary>
         internal LobbySpots BelowSpots;
         internal int Below;
@@ -169,12 +177,36 @@ internal static class LobbyButtons
         }
         if (!Copies.TryGetValue(bar.Pointer, out var perBar)) Copies[bar.Pointer] = perBar = new Dictionary<string, Copy>();
         if (!Rooms.TryGetValue(bar.Pointer, out var room)) Rooms[bar.Pointer] = room = new Room();
-        var origin = clothes.transform.localPosition;
+        var pose = clothes.transform;
+        var origin = pose.localPosition;
         var shown = clothes.gameObject.activeInHierarchy;
-        if (shown && Time.unscaledTime - room.At >= MeasureEvery)
+        // The bars slide in from below the screen when the lobby opens (CM_PlayerLobbyBar's intro): a room measured then puts the screen's
+        // bottom above APPAREL and every button reads as not fitting. A bar is measured only standing still, and once more when it stops;
+        // one that never stands still is measured where it is every few seconds.
+        var holder = page.m_movingContentHolder;
+        var at = pose.position;
+        var seen = holder != null ? holder.InverseTransformPoint(at) : at;
+        var still = ForgeCore.Vec.SqrLength(seen - room.Seen) < 0.25f;
+        room.Seen = seen;
+        var now = Time.unscaledTime;
+        if (!still)
         {
-            room.At = Time.unscaledTime;
-            Measure(page, bar, clothes, origin, room);
+            room.At = float.NegativeInfinity;
+            if (float.IsNaN(room.Moving)) room.Moving = now;
+            else if (shown && now - room.Moving >= MeasureMovingAfter)
+            {
+                room.Moving = now;
+                Measure(page, holder, bar, clothes, origin, room);
+            }
+        }
+        else
+        {
+            room.Moving = float.NaN;
+            if (shown && now - room.At >= MeasureEvery)
+            {
+                room.At = now;
+                Measure(page, holder, bar, clothes, origin, room);
+            }
         }
         var count = 0;
         var buttons = Registered.Ordered;
@@ -236,7 +268,7 @@ internal static class LobbyButtons
         LobbyLayout.Assign(_wanted, _widths, count, Spots, _area, _row, _offsets, RowsUsed);
         room.Below = RowsUsed[(int)LobbyArea.Below];
         room.BelowSpots = Spots[(int)LobbyArea.Below];
-        var scale0 = clothes.transform.localScale;
+        var scale0 = pose.localScale;
         for (var i = 0; i < count; i++)
         {
             var button = _shown[i];
@@ -244,11 +276,15 @@ internal static class LobbyButtons
             var area = _area[i];
             if (area != copy.Placed)
             {
-                if (area < 0)
-                    Plugin.Error("ui-lobby-button-does-not-fit", "Lobby button '" + button.Id + "' is not shown: no lobby area has room for it on this screen" + RoomOf(button) + ".");
-                else if (area != (int)button.Area)
-                    Plugin.Error("ui-lobby-button-moved-to-another-area", "Lobby button '" + button.Id + "' has no room in the " + button.Area + " area on this screen; it is shown in the " + (LobbyArea)area
-                        + " area, row " + _row[i] + ", " + ForgeCore.Log.Num(_offsets[i]) + " from its left, at scale " + ForgeCore.Log.Num(Spots[area].Scale) + RoomOf(button) + ".");
+                // Once per button and outcome: the measurements in the text change with every resolution or panel, which would write it again each time.
+                if (area != (int)button.Area && Reported.Add((button.Id, area)))
+                {
+                    if (area < 0)
+                        Plugin.Error("ui-lobby-button-does-not-fit", "Lobby button '" + button.Id + "' is not shown: no lobby area has room for it on this screen" + RoomOf(button) + ".");
+                    else
+                        Plugin.Error("ui-lobby-button-moved-to-another-area", "Lobby button '" + button.Id + "' has no room in the " + button.Area + " area on this screen; it is shown in the " + (LobbyArea)area
+                            + " area, row " + _row[i] + ", " + ForgeCore.Log.Num(_offsets[i]) + " from its left, at scale " + ForgeCore.Log.Num(Spots[area].Scale) + RoomOf(button) + ".");
+                }
                 copy.Placed = area;
             }
             if (area < 0)
@@ -327,7 +363,7 @@ internal static class LobbyButtons
     /// <see cref="MenuScreen"/> reads it, kept <see cref="MenuScreen.EdgeGap"/> inside; at the page's rest position, since the panel pans
     /// with it), the bottom of the player's name and status where they stand over the panel, and the left edge of the next bar to the
     /// right (its panel, the same prefab as this one, and for the top row also its name and status).</summary>
-    private static void Measure(CM_PageLoadout page, CM_PlayerLobbyBar bar, CM_LobbyScrollItem clothes, Vector3 origin, Room room)
+    private static void Measure(CM_PageLoadout page, Transform? holder, CM_PlayerLobbyBar bar, CM_LobbyScrollItem clothes, Vector3 origin, Room room)
     {
         var parent = clothes.transform.parent;
         var panel = new Extent();
@@ -347,7 +383,6 @@ internal static class LobbyButtons
 
         float right = float.PositiveInfinity, top = float.PositiveInfinity;
         room.Floor = float.NegativeInfinity;
-        var holder = page.m_movingContentHolder;
         var size = page.m_screenResVec2;
         var unit = holder != null && holder.localScale.x != 0f ? holder.localScale.x : 1f;
         if (holder != null && size.x > 0f && size.y > 0f)
@@ -499,9 +534,16 @@ internal sealed class LobbyButtonSkin
             return null;
         }
         var order = MenuCanvas.TopOrder(item) + 1;
-        foreach (var label in labels) NativeUi.SetText(label, "");
         var box = MenuCanvas.BoxIn(item.transform, item.m_collider ?? item.GetComponent<BoxCollider2D>(), new Rect(-225f, -27.5f, 450f, 55f));
         var canvas = new MenuCanvas(item.transform, "ForgeUI.ButtonLook", sprites[0], labels[0], order);
+        // The copy's own labels are turned off, not only emptied: the game writes the APPAREL title into them again when the language
+        // changes, and a language drawn with a fallback font (Chinese) then adds a glyph renderer no veil covered. (The copy is ours and
+        // is destroyed whole, so nothing turns them back on, as MenuCanvas.SilenceOriginalTexts does for a game object.)
+        foreach (var label in labels)
+        {
+            NativeUi.SetText(label, "");
+            label.enabled = false;
+        }
         // forceRenderingOff, not enabled: the game turns the button's sprites on again when its page comes back (intro, show).
         canvas.VeilOriginals();
         return new LobbyButtonSkin(canvas, box);

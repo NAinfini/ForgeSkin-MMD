@@ -48,7 +48,7 @@ public sealed class HitFeedbackStyle
     /// mark); off leaves only what your code calls.</summary>
     public bool LocalHits { get; init; } = true;
 
-    /// <summary>Numbers showing at once (1..<see cref="FloatingNumbers.Limit"/>); past it the oldest gives way (counted in the log).</summary>
+    /// <summary>Numbers showing at once (1..<see cref="FloatingNumbers.Limit"/>); past it the oldest gives way.</summary>
     public int MaxNumbers { get; init; } = 8;
 
     /// <summary>Text size of a number, 1080p pixels (8..48).</summary>
@@ -148,7 +148,7 @@ public sealed class HitFeedback
 internal static class HitFeedbacks
 {
     private static readonly Dictionary<string, HitFeedback> Registered = new(StringComparer.Ordinal);
-    private static readonly ScopeSwitches<HitFeedback> Scopes = new();
+    private static readonly ForgeCore.ScopeSwitches<HitFeedback> Scopes = new();
     private static ConfigEntry<bool>? _enabled;
     private static HitFeedbackView? _view;
 

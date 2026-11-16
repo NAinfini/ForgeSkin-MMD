@@ -66,7 +66,7 @@ public sealed class ParticlePool
 
     /// <summary>The child system <paramref name="child"/>; resolve once at setup and keep the channel. <paramref name="capacity"/> is
     /// the maxParticles the prefab was built with (the game's interop does not expose it): when that many are alive, priority-0
-    /// emissions are skipped and counted; 0 leaves every emission to Unity's own oldest-first recycling. Null (logged once) when the
+    /// emissions are skipped (nothing counts them); 0 leaves every emission to Unity's own oldest-first recycling. Null (logged once) when the
     /// prefab has no such system.</summary>
     public ParticleChannel? Channel(string child, int capacity = 0)
     {
@@ -186,7 +186,7 @@ public sealed class ParticleChannel
             return false;
         }
         // Below its budget every request is taken. At the budget a request of priority above 0 is taken too (Unity recycles the oldest particle of a
-        // full system, so the pool never grows past its capacity); priority 0 is refused and the caller counts it. A capacity of 0 means no budget was given.
+        // full system, so the pool never grows past its capacity); priority 0 is refused, uncounted. A capacity of 0 means no budget was given.
         var live = _system!.particleCount;
         return _capacity <= 0 || live < _capacity || priority > 0;
     }

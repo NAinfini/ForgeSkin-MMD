@@ -98,6 +98,15 @@ public static partial class Log
     /// <summary>A number for a message: at most two decimals, no trailing zeros, always a dot.</summary>
     public static string Num(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
 
+    /// <summary>Developer logs: true when <c>NAinfini.ForgeCore.cfg</c> [Logging] DeveloperLogs is on or ForgeDevelopment is installed.
+    /// Every Forge package writes an Info, Debug or Warning line to its BepInEx log only while this is true (<c>if (Log.Developer)
+    /// source.LogInfo(...)</c>, so nothing is built when it is false); errors are always written. Info a player turns on by a named
+    /// setting (default off) writes as that setting says.</summary>
+    public static bool Developer { get; internal set; }
+
+    /// <summary>ForgeDevelopment is installed: collection records (probes, readbacks written to files) are made only while this is true.</summary>
+    public static bool DevelopmentInstalled { get; internal set; }
+
     /// <summary>A position for a message: <c>(x, y, z)</c>, two decimals each, always a dot.</summary>
     public static string Pos(float x, float y, float z)
         => "(" + x.ToString("0.00", CultureInfo.InvariantCulture) + ", " + y.ToString("0.00", CultureInfo.InvariantCulture)
@@ -107,7 +116,7 @@ public static partial class Log
 
     /// <summary>The host (ForgeCore's plugin) turns a mod ID into its log source; offline it writes to the console.</summary>
     internal static Func<string, Action<string>> Sinks { get; set; } =
-        id => message => Console.WriteLine("[Error: " + id + "] " + message);
+        id => message => Console.Error.WriteLine("[Error: " + id + "] " + message);
 
     public static ModLog For(string modId)
     {

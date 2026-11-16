@@ -61,10 +61,11 @@ public static class GearIcons
 
     /// <summary>Draws the icons of <paramref name="range"/> (any gear, vanilla too) again, for a gear whose look a mod changed after the game
     /// drew them: the game's posted jobs, sprites, icon textures and the file of that one checksum are dropped and its jobs posted again.
-    /// Needs the game's gear manager and icon renderer (false while either is missing).</summary>
+    /// Needs the game's gear manager (false while it is missing); the icon renderer, which removes itself whenever it has no job left, is
+    /// made again by the posting.</summary>
     public static bool Redraw(GearIDRange range)
     {
-        if (GearManager.Current == null || GearIconRendering.Current == null) return false;
+        if (GearManager.Current == null) return false;
         var checksum = range.GetChecksum();
         GearManager.m_allGearWithPostedIconJobs?.Remove(checksum);
         GearIconRendering.s_cachedSprites?.Remove(checksum);
@@ -76,6 +77,48 @@ public static class GearIcons
         return true;
     }
 
+    private static readonly List<GameObject> Decorations = new();
+
+    /// <summary>Leaves <paramref name="root"/> and everything under it out of the framing of the icons the game draws of the gear it hangs
+    /// on: the renderer frames a gear by every renderer under it, so a mod's addition (a charm, a screen, a hologram) would shrink the gear
+    /// in its icon, or the icon would frame empty space where an addition the icon shading does not draw sits. The addition is still drawn
+    /// where the gear's own framing shows it.</summary>
+    public static void Unframed(GameObject root)
+    {
+        if (root == null) throw new ArgumentNullException(nameof(root));
+        PatchGroups.Ensure(PatchGroup.GearIcons);
+        Decorations.RemoveAll(d => d == null);
+        Decorations.Add(root);
+    }
+
+    /// <summary>The renderer framed <paramref name="job"/>'s gear by all its renderers (<paramref name="bounds"/>): framed again by those
+    /// outside every <see cref="Unframed"/> addition, the same way.</summary>
+    internal static void Frame(GearIconRendering.IconRenderJob job, ref Bounds bounds)
+    {
+        if (Decorations.Count == 0 || job?.loadedGearGO == null) return;
+        Decorations.RemoveAll(d => d == null);
+        var gear = job.loadedGearGO.transform;
+        var mine = new List<Transform>();
+        foreach (var d in Decorations) if (d.transform.IsChildOf(gear)) mine.Add(d.transform);
+        if (mine.Count == 0) return;
+        var framed = false;
+        var result = default(Bounds);
+        foreach (var renderer in job.loadedGearGO.GetComponentsInChildren<Renderer>(false))
+        {
+            if (renderer == null) continue;
+            var t = renderer.transform;
+            var decoration = false;
+            foreach (var d in mine) if (t.IsChildOf(d)) { decoration = true; break; }
+            if (decoration) continue;
+            if (framed) result.Encapsulate(renderer.bounds);
+            else (result, framed) = (renderer.bounds, true);
+        }
+        if (framed) bounds = result;
+    }
+
+    // The game's own icon cache, at the path the game gives (under its persistent data folder): TryGetGearIconSprite reads the file when
+    // there is one, and a new render overwrites it only when the job finishes, so the old picture is dropped here. Registered as a
+    // write-root exception in validate-dependencies for this file only.
     private static void DeleteFile(uint checksum)
     {
         try

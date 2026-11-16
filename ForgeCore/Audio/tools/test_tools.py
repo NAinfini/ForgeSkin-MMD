@@ -211,13 +211,15 @@ class PackageChecks(unittest.TestCase):
                 second = package_common.package_library(folder, "ForgeCore", ("ForgeCore.dll",), root / "artifacts", root / "out", extra=extra)
             self.assertEqual(digest, hashlib.sha256(second.read_bytes()).digest())
             with zipfile.ZipFile(second) as archive:
-                self.assertEqual(archive.read("NVorbis.dll"), b"test decoder")
-                self.assertEqual(archive.read("NVorbis.LICENSE"), (folder / "Audio" / "vendor" / "NVorbis" / "LICENSE").read_bytes())
+                self.assertEqual(archive.read("plugins/ForgeCore/NVorbis.dll"), b"test decoder")
+                self.assertEqual(archive.read("plugins/ForgeCore/NVorbis.LICENSE"), (folder / "Audio" / "vendor" / "NVorbis" / "LICENSE").read_bytes())
                 self.assertEqual(
                     sorted(archive.namelist()),
-                    ["CHANGELOG.md", "DEVELOPERS.md", "ForgeCore.dll", "LICENSE", "NOTICE", "NVorbis.LICENSE", "NVorbis.NOTICE.md", "NVorbis.dll",
-                     "README.md", "fonts/ForgeUI-fonts.bundle", "fonts/OFL-GlowSans.forge", "fonts/OFL-Rajdhani.forge", "icon.png",
-                     "lang/en.forge", "lang/zh.forge", "manifest.json", "web-manifest.forge"],
+                    ["CHANGELOG.md", "README.md", "icon.png", "manifest.json"]
+                    + ["plugins/ForgeCore/" + name for name in (
+                        "DEVELOPERS.md", "ForgeCore.dll", "LICENSE", "NOTICE", "NVorbis.LICENSE", "NVorbis.NOTICE.md", "NVorbis.dll",
+                        "fonts/ForgeUI-fonts.bundle", "fonts/OFL-GlowSans.forge", "fonts/OFL-Rajdhani.forge", "lang/en.forge", "lang/zh.forge",
+                        "web-manifest.forge")],
                 )
 
     def test_release_table_must_match_manifest_version(self):

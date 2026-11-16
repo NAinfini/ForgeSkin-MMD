@@ -68,13 +68,13 @@ Report bugs on [GitHub](https://github.com/NAinfini/GTFO-Forge-Mods/issues), or 
 
 ## Installation
 
-Install with r2modman or the Thunderstore Mod Manager. It also installs BepInExPack_GTFO and GTFO_API. For a manual install, put the files in their own folder under `BepInEx/plugins` and install those two as well.
+Install with r2modman or the Thunderstore Mod Manager. It also installs BepInExPack_GTFO and GTFO_API. For a manual install, unzip the package into the game's `BepInEx` folder (its files land in `BepInEx/plugins/ForgeCore`) and install those two as well.
 
 ## Settings
 
-ForgeCore is one package, but its settings stay in the files they have always had, so nothing you set is lost. They appear after the first launch.
+Every setting is in `BepInEx/config/NAinfini.ForgeCore.cfg`, which appears after the first launch.
 
-`BepInEx/config/NAinfini.ForgeUI.cfg`, the interface. Offsets are in pixels at 1080p. Positive values move right or up.
+The interface. Offsets are in pixels at 1080p. Positive values move right or up.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -97,9 +97,9 @@ ForgeCore is one package, but its settings stay in the files they have always ha
 
 A value that is not a number warns once and uses 0.
 
-Keys you changed are kept in `BepInEx/config/NAinfini.ForgeUI.keys.cfg`; a key you never changed follows the mod's default.
+Keys you changed are kept in `BepInEx/config/NAinfini.ForgeCore.keys.cfg`; a key you never changed follows the mod's default.
 
-`BepInEx/config/NAinfini.ForgeAudio.cfg`, the sound volumes. The game's **Settings → Audio** page has, under the game's own sliders, a **MOD AUDIO** group: one slider for all mod sounds and one for each category. They apply to every mod's sounds on top of the game's own sliders, take effect at once and are saved as **Volume / Master** and one entry per category, 0 to 1, default 1. The page's Reset puts them back to full. Mods that use ForgeCore have no volume settings of their own.
+The sound volumes. The game's **Settings → Audio** page has, under the game's own sliders, a **MOD AUDIO** group: one slider for all mod sounds and one for each category. They apply to every mod's sounds on top of the game's own sliders, take effect at once and are saved as **Volume / Master** and one entry per category, 0 to 1, default 1. The page's Reset puts them back to full. Mods that use ForgeCore have no volume settings of their own.
 
 | Category | Covers |
 |---|---|
@@ -113,7 +113,7 @@ Keys you changed are kept in `BepInEx/config/NAinfini.ForgeUI.keys.cfg`; a key y
 | `device` | Beacons, turrets, supply pods, terminals |
 | `music` | Music |
 
-`BepInEx/config/NAinfini.ForgeVisual.cfg`, the visuals:
+The visuals:
 
 - **Effects / FlashLights** (default on). Turn it off to stop blasts, hits and muzzles from flashing light on the room around them.
 - **Camera / ShakeStrength** (default 1). How strongly blasts, landings and hits shake your view, from 0 (off) to 1, for every mod.

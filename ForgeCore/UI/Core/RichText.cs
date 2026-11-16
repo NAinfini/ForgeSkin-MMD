@@ -26,20 +26,37 @@ internal static class RichText
         var b = new System.Text.StringBuilder(text.Length);
         for (var i = 0; i < text.Length; i++)
         {
-            var c = text[i];
-            if (c == '<')
-            {
-                var start = i + 1 < text.Length && text[i + 1] == '/' ? i + 2 : i + 1;
-                if (start < text.Length && (char.IsLetter(text[start]) || text[start] == '#'))
-                {
-                    var end = start;
-                    while (end < text.Length && text[end] != '>' && text[end] != '<' && text[end] != '\n') end++;
-                    if (end < text.Length && text[end] == '>') { i = end; continue; }
-                }
-            }
-            b.Append(c);
+            if (TagAt(text, i, out _, out _, out var end)) { i = end; continue; }
+            b.Append(text[i]);
         }
         return b.ToString();
+    }
+
+    /// <summary>Whether a TextMeshPro tag opens at <paramref name="i"/>: '&lt;', an optional '/', a letter or '#', up to '&gt;' on the
+    /// same line. The tag's text (name and value) is [<paramref name="start"/>, <paramref name="end"/>) and its '&gt;' is at
+    /// <paramref name="end"/>. This is the one reading of a tag every scan here (and <see cref="PlayerName"/>) uses.</summary>
+    internal static bool TagAt(string text, int i, out bool closing, out int start, out int end)
+    {
+        closing = false;
+        start = end = i + 1;
+        if (text[i] != '<') return false;
+        closing = start < text.Length && text[start] == '/';
+        if (closing) start = end = i + 2;
+        if (start >= text.Length || !(char.IsLetter(text[start]) || text[start] == '#')) return false;
+        while (end < text.Length && text[end] != '>' && text[end] != '<' && text[end] != '\n') end++;
+        return end < text.Length && text[end] == '>';
+    }
+
+    /// <summary>A colour tag pushes its colour (as <paramref name="read"/> reads it) onto <paramref name="stack"/> and its closing tag
+    /// pops it; any other tag changes nothing.</summary>
+    private static void Colours<T>(System.Collections.Generic.List<T> stack, bool closing, string tag, Func<string, T> read)
+    {
+        if (tag.StartsWith("color", StringComparison.OrdinalIgnoreCase))
+        {
+            if (closing) { if (stack.Count > 0) stack.RemoveAt(stack.Count - 1); }
+            else stack.Add(read(tag.IndexOf('=') is var eq and > 0 ? tag.Substring(eq + 1) : ""));
+        }
+        else if (!closing && tag[0] == '#') stack.Add(read(tag));
     }
 
     /// <summary>The game's text without its tags (as <see cref="StripTags"/>), with the stretches the game highlights written into
@@ -57,27 +74,11 @@ internal static class RichText
         for (var i = 0; i < text.Length; i++)
         {
             var c = text[i];
-            if (c == '<')
+            if (TagAt(text, i, out var closing, out var start, out var end))
             {
-                var closing = i + 1 < text.Length && text[i + 1] == '/';
-                var start = closing ? i + 2 : i + 1;
-                if (start < text.Length && (char.IsLetter(text[start]) || text[start] == '#'))
-                {
-                    var end = start;
-                    while (end < text.Length && text[end] != '>' && text[end] != '<' && text[end] != '\n') end++;
-                    if (end < text.Length && text[end] == '>')
-                    {
-                        var tag = text.Substring(start, end - start);
-                        if (tag.StartsWith("color", StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (closing) { if (colours.Count > 0) colours.RemoveAt(colours.Count - 1); }
-                            else colours.Add(Accent(tag.IndexOf('=') is var eq and > 0 ? tag.Substring(eq + 1) : ""));
-                        }
-                        else if (!closing && tag[0] == '#') colours.Add(Accent(tag));
-                        i = end;
-                        continue;
-                    }
-                }
+                Colours(colours, closing, text.Substring(start, end - start), Accent);
+                i = end;
+                continue;
             }
             var lit = colours.Count > 0 && colours[colours.Count - 1];
             if (lit && from < 0) from = b.Length;
@@ -102,27 +103,11 @@ internal static class RichText
         for (var i = 0; i < text.Length; i++)
         {
             var c = text[i];
-            if (c == '<')
+            if (TagAt(text, i, out var closing, out var start, out var end))
             {
-                var closing = i + 1 < text.Length && text[i + 1] == '/';
-                var start = closing ? i + 2 : i + 1;
-                if (start < text.Length && (char.IsLetter(text[start]) || text[start] == '#'))
-                {
-                    var end = start;
-                    while (end < text.Length && text[end] != '>' && text[end] != '<' && text[end] != '\n') end++;
-                    if (end < text.Length && text[end] == '>')
-                    {
-                        var tag = text.Substring(start, end - start);
-                        if (tag.StartsWith("color", StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (closing) { if (tones.Count > 0) tones.RemoveAt(tones.Count - 1); }
-                            else tones.Add(Tone(tag.IndexOf('=') is var eq and > 0 ? tag.Substring(eq + 1) : ""));
-                        }
-                        else if (!closing && tag[0] == '#') tones.Add(Tone(tag));
-                        i = end;
-                        continue;
-                    }
-                }
+                Colours(tones, closing, text.Substring(start, end - start), Tone);
+                i = end;
+                continue;
             }
             var tone = tones.Count > 0 ? tones[tones.Count - 1] : (byte)0;
             if (tone != shown) { Flush(b, run, shown, highlightHex, warningHex); shown = tone; }
@@ -202,6 +187,32 @@ internal static class RichText
         }
         return b.ToString();
     }
+
+    /// <summary><paramref name="text"/> shown as written with every run of Chinese, Japanese or Korean characters set at
+    /// <paramref name="percent"/> of the size: the game's fallback font draws them larger than its own capitals, so the two scripts read
+    /// as one size side by side. Null when the text has none (show it unchanged).</summary>
+    internal static string? ScriptSized(string text, int percent)
+    {
+        var any = false;
+        foreach (var c in text) if (Wide(c)) { any = true; break; }
+        if (!any) return null;
+        var b = new System.Text.StringBuilder(text.Length + 32);
+        var i = 0;
+        while (i < text.Length)
+        {
+            var wide = Wide(text[i]);
+            var j = i + 1;
+            while (j < text.Length && Wide(text[j]) == wide) j++;
+            var piece = Plain(text.Substring(i, j - i));
+            if (wide) b.Append("<size=").Append(percent).Append("%>").Append(piece).Append("</size>");
+            else b.Append(piece);
+            i = j;
+        }
+        return b.ToString();
+    }
+
+    /// <summary>A character the game's fallback font draws: CJK ideographs, kana, hangul and the full-width forms and punctuation.</summary>
+    private static bool Wide(char c) => c is >= '⺀' and <= '鿿' or >= '가' and <= '힯' or >= '豈' and <= '﫿' or >= '＀' and <= '￯';
 
     private static bool Lit(int index, System.Collections.Generic.IReadOnlyList<(int Start, int End)> spans)
     {

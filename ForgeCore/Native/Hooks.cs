@@ -30,8 +30,9 @@ public static class Hooks
     private static readonly HashSet<MethodBase> Reported = new();
     private static readonly Dictionary<MethodBase, string?> Entries = new();
 
-    /// <summary>Puts <paramref name="owner"/>'s whole callback set on <paramref name="target"/>, each part its own Harmony patch in
-    /// the order given (Harmony then orders them by priority, then by that order). Declaring the same set again does nothing; a
+    /// <summary>Puts <paramref name="owner"/>'s whole callback set on <paramref name="target"/>, each part's callbacks in the order
+    /// given (Harmony then orders each kind by priority, then by that order), in as few Harmony calls as the set has callbacks of one
+    /// kind. Declaring the same set again does nothing; a
     /// different set, another owner or an unsupported target throws <see cref="NotSupportedException"/> with the native-hook-* reason
     /// before anything is written. A patch that fails takes the owner's parts off again and releases the claim.</summary>
     public static void Own(string owner, MethodBase target, IReadOnlyList<HookPart> parts)
@@ -47,7 +48,14 @@ public static class Hooks
         try
         {
             HookBridge.Prepare(target);
-            foreach (var part in parts) writer.Patch(target, prefix: part.Prefix, postfix: part.Postfix, finalizer: part.Finalizer);
+            // Harmony numbers each kind's patches on their own and orders them by priority, then that number, so the k-th prefix,
+            // postfix and finalizer of the set go on in one call: every kind keeps its order and the target is rebuilt once per
+            // call, not once per part.
+            var prefixes = parts.Select(part => part.Prefix).OfType<HarmonyMethod>().ToArray();
+            var postfixes = parts.Select(part => part.Postfix).OfType<HarmonyMethod>().ToArray();
+            var finalizers = parts.Select(part => part.Finalizer).OfType<HarmonyMethod>().ToArray();
+            for (var i = 0; i < Math.Max(prefixes.Length, Math.Max(postfixes.Length, finalizers.Length)); i++)
+                Patch(writer, target, new HookPart(prefixes.ElementAtOrDefault(i), postfixes.ElementAtOrDefault(i), finalizers.ElementAtOrDefault(i)));
         }
         catch
         {
@@ -156,7 +164,7 @@ public static class Hooks
         try
         {
             HookBridge.Prepare(target);
-            writer.Patch(target, prefix: part.Prefix, postfix: part.Postfix, finalizer: part.Finalizer);
+            Patch(writer, target, part);
         }
         catch
         {
@@ -243,6 +251,12 @@ public static class Hooks
         if (info == null) return Enumerable.Empty<(string, MethodInfo)>();
         return info.Prefixes.Concat(info.Postfixes).Concat(info.Finalizers).Concat(info.Transpilers).Concat(info.ILManipulators)
             .Select(patch => (patch.owner, patch.PatchMethod));
+    }
+
+    private static void Patch(Harmony writer, MethodBase target, HookPart part)
+    {
+        StartupOperationTiming.CountPatch(target);
+        writer.Patch(target, prefix: part.Prefix, postfix: part.Postfix, finalizer: part.Finalizer);
     }
 
     private static Harmony Writer(string id)

@@ -72,7 +72,7 @@ internal sealed class MenuCanvas
         internal Color Colour;
         internal int Order;
         internal HudAlign Align;
-        internal bool Wrap, Rich;
+        internal bool Wrap, Rich, Wide;
     }
 
     private readonly GameObject _root;
@@ -86,6 +86,9 @@ internal sealed class MenuCanvas
     private readonly List<int> _textMeshes = new();
     private readonly List<TextLast> _textLast = new();
     private int _usedSprites, _usedTexts, _next;
+    // What VeilOriginals and SilenceOriginalTexts switched off on the object drawn on, switched back on by Destroy.
+    private readonly List<Renderer> _veiled = new();
+    private readonly List<TextMeshPro> _silenced = new();
 
     /// <param name="parent">The object drawn on; the canvas root is its child at its origin.</param>
     /// <param name="name">The root object's name.</param>
@@ -119,7 +122,8 @@ internal sealed class MenuCanvas
     /// switched off with <c>forceRenderingOff</c>, a flag apart from <c>enabled</c>. The game turns <c>enabled</c> on and off by itself
     /// (hover, intro, show and hide, a page coming back), so a renderer switched off with <c>enabled</c> shows again the next time it does;
     /// <c>forceRenderingOff</c> is never touched by the game, and the object's order or layer no longer decides what is on top. Call it
-    /// again after the game may have added renderers.
+    /// again after the game may have added renderers. <see cref="Destroy"/> switches them back on, so an object the game reuses (the
+    /// pop-up window's pooled tab headers) shows again.
     /// </summary>
     internal void VeilOriginals()
     {
@@ -129,7 +133,9 @@ internal sealed class MenuCanvas
         foreach (var renderer in parent.GetComponentsInChildren<Renderer>(true))
         {
             if (renderer == null || renderer.WasCollected || renderer.transform.IsChildOf(_root.transform)) continue;
-            if (!renderer.forceRenderingOff) renderer.forceRenderingOff = true;
+            if (renderer.forceRenderingOff) continue;
+            renderer.forceRenderingOff = true;
+            _veiled.Add(renderer);
         }
     }
 
@@ -137,7 +143,8 @@ internal sealed class MenuCanvas
     /// Empties every text of the object this canvas sits on that is not one of this canvas's pieces and turns it off, so the game's own
     /// label makes no content at all: no glyph mesh, no fallback-font sub-mesh (Chinese, among others), no offset ghost copy a text
     /// script derives from the label. <see cref="VeilOriginals"/> only hides renderers that exist when it runs; these appear later. For
-    /// an object the game fills with its own words (a tab header) call it after each time it does.
+    /// an object the game fills with its own words (a tab header) call it after each time it does. <see cref="Destroy"/> turns the texts
+    /// back on; their words stay empty until the game sets them again (it does each time it shows a header).
     /// </summary>
     internal void SilenceOriginalTexts()
     {
@@ -148,7 +155,9 @@ internal sealed class MenuCanvas
         {
             if (text == null || text.WasCollected || text.transform.IsChildOf(_root.transform)) continue;
             NativeUi.SetText(text, "");
-            if (text.enabled) text.enabled = false;
+            if (!text.enabled) continue;
+            text.enabled = false;
+            _silenced.Add(text);
         }
     }
 
@@ -256,34 +265,37 @@ internal sealed class MenuCanvas
 
     /// <summary>One line of text <paramref name="size"/> tall (the font size, in the canvas's units) on (<paramref name="x"/>,
     /// <paramref name="y"/>): the left end, middle or right end of the line, centred on y. With <paramref name="fit"/> above 0 a longer
-    /// line is drawn smaller (down to 0.6 of the size) and then cut with an ellipsis. Shown as written unless <paramref name="rich"/>.
-    /// Returns the width drawn.</summary>
-    internal float Text(string text, float x, float y, float size, Color colour, HudAlign align = HudAlign.Left, float fit = 0f, bool rich = false)
+    /// line is drawn smaller (down to 0.6 of the size, or not at all without <paramref name="shrink"/>) and then cut with an ellipsis.
+    /// Shown as written unless <paramref name="rich"/>; plain text with Chinese, Japanese or Korean in it has those runs set a little
+    /// smaller (<see cref="RichText.ScriptSized"/>). Returns the width drawn.</summary>
+    internal float Text(string text, float x, float y, float size, Color colour, HudAlign align = HudAlign.Left, float fit = 0f, bool rich = false, bool shrink = true)
     {
         if (string.IsNullOrEmpty(text)) return 0f;
         var label = TakeText(out var index);
         if (label == null) return 0f;
         var last = _textLast[index];
         var order = _order + _next++;
+        var minimum = shrink ? 0.6f : 1f;
         if (last.Text == text && !last.Wrap && last.X == x && last.Y == y && last.Size == size && last.Colour == colour && last.Align == align && last.Fit == fit
-            && last.Rich == rich && last.Order == order) return last.Shown;
+            && last.Rich == rich && last.Order == order && last.Height == minimum) return last.Shown;
         var scale = _textScale;
-        label.richText = rich;
+        var shownText = rich ? text : RichText.ScriptSized(text, WideScript) ?? text;
+        label.richText = rich || !ReferenceEquals(shownText, text);
         label.enableWordWrapping = false;
         label.enableAutoSizing = false;
         label.fontSize = size / Math.Max(1e-5f, scale.y);
-        NativeUi.SetText(label, text);
-        var width = label.GetPreferredValues(text, float.PositiveInfinity, float.PositiveInfinity).x * scale.x;
+        NativeUi.SetText(label, shownText);
+        var width = label.GetPreferredValues(shownText, float.PositiveInfinity, float.PositiveInfinity).x * scale.x;
         var shown = width;
         label.overflowMode = TextOverflowModes.Overflow;
         var box = Math.Max(width, 1f) + size;
         if (fit > 0f && width > fit)
         {
-            var shrink = Math.Max(0.6f, fit / width);
-            label.fontSize = size * shrink / Math.Max(1e-5f, scale.y);
-            shown = Math.Min(fit, width * shrink);
+            var factor = Math.Max(minimum, fit / width);
+            label.fontSize = size * factor / Math.Max(1e-5f, scale.y);
+            shown = Math.Min(fit, width * factor);
             box = fit;
-            if (width * shrink > fit) label.overflowMode = TextOverflowModes.Ellipsis;
+            if (width * factor > fit) label.overflowMode = TextOverflowModes.Ellipsis;
         }
         var t = label.rectTransform;
         t.pivot = new Vector2(align == HudAlign.Left ? 0f : align == HudAlign.Centre ? 0.5f : 1f, 0.5f);
@@ -292,9 +304,12 @@ internal sealed class MenuCanvas
         label.transform.localPosition = new Vector3(x, y, 0f);
         label.color = colour;
         Settle(index, label, order);
-        _textLast[index] = new TextLast { Text = text, X = x, Y = y, Size = size, Colour = colour, Align = align, Fit = fit, Rich = rich, Order = order, Shown = shown };
+        _textLast[index] = new TextLast { Text = text, X = x, Y = y, Size = size, Colour = colour, Align = align, Fit = fit, Rich = rich, Order = order, Shown = shown, Height = minimum, Wide = !ReferenceEquals(shownText, text) };
         return shown;
     }
+
+    /// <summary>The size of Chinese, Japanese and Korean runs in a line of plain text, in percent of the line's size.</summary>
+    private const int WideScript = 86;
 
     /// <summary>A number with its unit (<c>600</c> then <c>s</c>) as one line: the unit is set smaller inside the same string, so both
     /// sit on the line's one baseline whatever the font's metrics are, with a small gap between them. Returns the width drawn.</summary>
@@ -318,9 +333,13 @@ internal sealed class MenuCanvas
             _textLast[0] = default;
         }
         var before = label.fontSize;
+        var shown = RichText.ScriptSized(text, WideScript);
+        label.richText = shown != null;
         label.fontSize = size / Math.Max(1e-5f, _textScale.y);
-        var width = label.GetPreferredValues(text, float.PositiveInfinity, float.PositiveInfinity).x * _textScale.x;
+        var width = label.GetPreferredValues(shown ?? text, float.PositiveInfinity, float.PositiveInfinity).x * _textScale.x;
         label.fontSize = before;
+        // Back to what the label shows (it is the canvas's first text): the last draw's own setting.
+        label.richText = _textLast[0].Rich || _textLast[0].Wide;
         if (_widths.Count >= MaxWidths) _widths.Clear();
         return _widths[(text, size)] = width;
     }
@@ -373,6 +392,10 @@ internal sealed class MenuCanvas
 
     internal void Destroy()
     {
+        foreach (var renderer in _veiled) if (renderer != null && !renderer.WasCollected) renderer.forceRenderingOff = false;
+        foreach (var text in _silenced) if (text != null && !text.WasCollected) text.enabled = true;
+        _veiled.Clear();
+        _silenced.Clear();
         if (!Alive) return;
         _root.SetActive(false);
         Object.Destroy(_root);
@@ -404,9 +427,9 @@ internal sealed class MenuCanvas
         var order = _order + _next++;
         var sliced = cut > 0f;
         var last = _spriteLast[index];
-        if (ReferenceEquals(last.Sprite, sprite) && last.X == x && last.Y == y && last.W == w && last.H == h && last.Cut == cut && last.Degrees == degrees
+        if (ForgeCore.NativeObjects.Same(last.Sprite, sprite) && last.X == x && last.Y == y && last.W == w && last.H == h && last.Cut == cut && last.Degrees == degrees
             && last.Colour == colour && last.Order == order && last.Sliced == sliced) return;
-        if (!ReferenceEquals(piece.sprite, sprite)) piece.sprite = sprite;
+        if (!ForgeCore.NativeObjects.Same(piece.sprite, sprite)) piece.sprite = sprite;
         var t = piece.transform;
         t.localPosition = new Vector3(x, y, 0f);
         t.localRotation = degrees == 0f ? Quaternion.identity : Quaternion.Euler(0f, 0f, degrees);

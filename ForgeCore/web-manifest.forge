@@ -3,7 +3,7 @@
   "schemaVersion": "1.0.0",
   "library": "ForgeCore",
   "packageName": "NAinfini-ForgeCore",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "parts": [
     {
       "id": "core",
@@ -379,6 +379,31 @@
                   "module": "GameHooks.HibernateWakeActivated",
                   "type": "Enemies.ES_HibernateWakeUp",
                   "method": "ActivateState"
+                },
+                {
+                  "module": "GameHooks.HibernateWakeupStarted",
+                  "type": "Enemies.ES_HibernateWakeUp",
+                  "method": "DoWakeup"
+                },
+                {
+                  "module": "GameHooks.HibernateDetectionStarted",
+                  "type": "Enemies.ES_Hibernate",
+                  "method": "DoStartDetection"
+                },
+                {
+                  "module": "GameHooks.HibernateDetectionEnded",
+                  "type": "Enemies.ES_Hibernate",
+                  "method": "DoEndDetection"
+                },
+                {
+                  "module": "GameHooks.HibernatingNoiseHeard",
+                  "type": "Enemies.EB_Hibernating",
+                  "method": "OnNoiseDetected"
+                },
+                {
+                  "module": "GameHooks.EnemyTargetInjected",
+                  "type": "Enemies.EnemyAI",
+                  "method": "InjectPropagatedTarget"
                 },
                 {
                   "module": "GameHooks.EnemyScreamStarted",
@@ -844,6 +869,17 @@
             {
               "id": "Hash",
               "summary": "SHA-256 as lowercase hex over bytes, UTF-8 text or a stream, the one spelling of a content hash."
+            },
+            {
+              "id": "Progression",
+              "summary": "Local clear progress for every Rundown: each machine records its own clears and the game's own Rundown page and unlock rules read them; per level counts, a clear event and a reset per Rundown.",
+              "patches": [
+                {
+                  "module": "Progression",
+                  "type": "RundownManager",
+                  "method": "UpdateRundownProgression"
+                }
+              ]
             }
           ]
         }

@@ -50,29 +50,18 @@ public static class PlayerName
         return found;
     }
 
-    // Each tag (as StripTags finds them: '<', a letter or '#', up to '>' on the same line) is handed to onTag; the text between goes to run.
+    // Each tag (RichText.TagAt) is handed to onTag; the text between goes to run.
     private static void Walk(string text, StringBuilder? run, Action<bool, string> onTag)
     {
         for (var i = 0; i < text.Length; i++)
         {
-            var c = text[i];
-            if (c == '<')
+            if (RichText.TagAt(text, i, out var closing, out var start, out var end))
             {
-                var closing = i + 1 < text.Length && text[i + 1] == '/';
-                var start = closing ? i + 2 : i + 1;
-                if (start < text.Length && (char.IsLetter(text[start]) || text[start] == '#'))
-                {
-                    var end = start;
-                    while (end < text.Length && text[end] != '>' && text[end] != '<' && text[end] != '\n') end++;
-                    if (end < text.Length && text[end] == '>')
-                    {
-                        onTag(closing, text.Substring(start, end - start));
-                        i = end;
-                        continue;
-                    }
-                }
+                onTag(closing, text.Substring(start, end - start));
+                i = end;
+                continue;
             }
-            run?.Append(c);
+            run?.Append(text[i]);
         }
     }
 

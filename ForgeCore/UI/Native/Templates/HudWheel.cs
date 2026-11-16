@@ -254,16 +254,7 @@ public sealed class HudWheel : HudWidget
         _flashSlot = slot;
     }
 
-    private bool Playing()
-    {
-        try
-        {
-            if (GameStateManager.CurrentStateName != eGameStateName.InLevel || HudFocus.Away) return false;
-            if (FocusStateManager.CurrentState != eFocusState.FPS) return false;
-        }
-        catch (Exception error) { Plugin.Error("ui-wheel-could-not-read-game-state", Id + ": the wheel could not read the game state: " + error); return false; }
-        return CanOpen?.Invoke() ?? true;
-    }
+    private bool Playing() => UIKitFrame.InPlay() && (CanOpen?.Invoke() ?? true);
 
     // The mouse's own movement, as the HUD pointer reads it, turned into wheel radii; the pointer stays a little past the rim.
     private void MovePointer(HudElement hud)

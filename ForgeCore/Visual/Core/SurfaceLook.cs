@@ -13,8 +13,8 @@ public sealed record SurfaceSlot(int Index, float[]? Tint, float[]? GlowColor, f
 /// <summary>
 /// The one surface look of every host (the website's <c>ModelPartAppearance</c>): a tint that replaces the surface colour (sRGB, may exceed
 /// one), a uniform glow of <see cref="GlowColor"/> x <see cref="GlowBrightness"/> (sRGB), whether it is invisible (true: not drawn, its
-/// shadow still cast, as the game's shadow enemies; false: shown, overriding an inner true; null keeps the source), and per-slot overrides. Colours are converted to linear once, when a material is written
-/// (<see cref="Glow.Srgb"/>).
+/// shadow still cast, as the game's shadow enemies; false: shown, overriding an inner true; null keeps the source), and per-slot overrides. Colours are converted once, when a material is written,
+/// as the property's kind needs (<see cref="ColourSpace"/>).
 /// </summary>
 public sealed record SurfaceAppearance(float[]? Tint, float[]? GlowColor, float GlowBrightness, bool? Invisible = null,
     IReadOnlyList<SurfaceSlot>? Slots = null)

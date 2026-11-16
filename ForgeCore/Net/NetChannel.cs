@@ -423,14 +423,14 @@ public sealed class NetChannel
     }
 
     /// <summary>Sends <paramref name="body"/> as <paramref name="route"/>'s message to <paramref name="to"/>, or to every compatible
-    /// member when it is 0. Nothing leaves outside a session or toward a player who is not compatible.</summary>
-    internal void Send(Route route, ReadOnlySpan<byte> body, ulong to) => Send(route, body, null, to);
+    /// member when it is 0 (but <paramref name="except"/>). Nothing leaves outside a session or toward a player who is not compatible.</summary>
+    internal void Send(Route route, ReadOnlySpan<byte> body, ulong to, ulong except = 0) => Send(route, body, null, to, except);
 
-    /// <summary><see cref="Send(Route, ReadOnlySpan{byte}, ulong)"/> of an array the caller hands over and never changes: a body that
+    /// <summary><see cref="Send(Route, ReadOnlySpan{byte}, ulong, ulong)"/> of an array the caller hands over and never changes: a body that
     /// waits for the budget keeps it instead of a copy, so one array sent to several players is held once.</summary>
-    internal void SendOwned(Route route, byte[] body, ulong to) => Send(route, body, body, to);
+    internal void SendOwned(Route route, byte[] body, ulong to) => Send(route, body, body, to, 0);
 
-    private void Send(Route route, ReadOnlySpan<byte> body, byte[]? owned, ulong to)
+    private void Send(Route route, ReadOnlySpan<byte> body, byte[]? owned, ulong to, ulong except)
     {
         if (_node.Host == 0) return;
         if (body.Length > route.MaxBytes) throw new ArgumentException(ModId + " message " + route.Name + " takes at most " + route.MaxBytes + " bytes, not " + body.Length + ".");
@@ -442,7 +442,7 @@ public sealed class NetChannel
             var copy = owned ?? body.ToArray();
             if (to != 0) { if (Compatible(to)) _node.Enqueue(route, to, head, copy); return; }
             for (var i = 0; i < _node.MemberCount; i++)
-                if (Compatible(_node.Member(i))) _node.Enqueue(route, _node.Member(i), head, copy);
+                if (_node.Member(i) != except && Compatible(_node.Member(i))) _node.Enqueue(route, _node.Member(i), head, copy);
             return;
         }
         if (to != 0 && !Compatible(to)) return;
@@ -452,7 +452,7 @@ public sealed class NetChannel
         body.CopyTo(packet.AsSpan(size));
         if (to != 0) { _node.Send(route.Event, packet, to, route.Delivery); return; }
         for (var i = 0; i < _node.MemberCount; i++)
-            if (Compatible(_node.Member(i))) _node.Send(route.Event, packet, _node.Member(i), route.Delivery);
+            if (_node.Member(i) != except && Compatible(_node.Member(i))) _node.Send(route.Event, packet, _node.Member(i), route.Delivery);
     }
 
     /// <summary>The host as a recipient, or 0 when this player is the host, there is none or it is not compatible.</summary>
@@ -466,7 +466,12 @@ public sealed class NetChannel
             if (sender == 0 || sender == _node.Local || data == null) return;
             if (!_node.IsMember(sender)) { _node.NoteUnlisted(sender); Net.Drop(Net.DropPeerUnverified); return; }
             var state = State(sender);
-            if (state != PeerState.Compatible) { Net.Drop(state == PeerState.Refused ? Net.DropPeerRefused : Net.DropPeerUnverified); return; }
+            if (state != PeerState.Compatible)
+            {
+                var code = state == PeerState.Refused ? Net.DropPeerRefused : Net.DropPeerUnverified;
+                if (Net.FirstDrop(ModId, code)) Net.NoteDrop(ModId, code, "message '" + route.Name + "' from player " + sender + " arrived while that player's copy of " + ModId + " is " + (state == PeerState.Refused ? "refused" : "not yet judged the same as this one"));
+                return;
+            }
             var at = HeadSize(route);
             if (data.Length < at + (route.Chunked ? 1 : 0)) { Malformed(route, sender, data.Length); return; }
             if (route.Scope != NetScope.Session)
@@ -576,11 +581,15 @@ public sealed class NetEvent<T> where T : unmanaged
     }
 
     /// <summary>To every other compatible player.</summary>
-    public void Broadcast(T message)
+    public void Broadcast(T message) => BroadcastExcept(message, 0);
+
+    /// <summary>To every other compatible player but <paramref name="except"/> (0: nobody left out): the host passing on a player's
+    /// message to the others without sending it back to the player it came from.</summary>
+    public void BroadcastExcept(T message, ulong except)
     {
         Span<byte> body = stackalloc byte[Unsafe.SizeOf<T>()];
         MemoryMarshal.Write(body, ref message);
-        _channel.Send(_route, body, 0);
+        _channel.Send(_route, body, 0, except);
     }
 }
 

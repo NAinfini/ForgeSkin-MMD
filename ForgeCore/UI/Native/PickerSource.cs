@@ -17,7 +17,9 @@ public sealed class PickerCard
     /// <summary>The colour of the category mark and text on a row, and of a slot's edge. Pictures are always drawn in their own colours.</summary>
     public Color? Accent;
 
-    /// <summary>On a list row: the slot (from 1) that holds this entry, shown as a numbered tag; 0 for none.</summary>
+    /// <summary>On a list row: the slot (from 1) that holds this entry, shown as a numbered tag; 0 for none. On a grid card (and on a slot
+    /// of a source without <see cref="PickerSource.NumberSlots"/>) any value above 0 marks it as in use: an amber bar down its left edge and
+    /// a tick in its top right corner.</summary>
     public int Equipped;
 
     /// <summary>The card's picture; null shows none.</summary>
@@ -26,6 +28,60 @@ public sealed class PickerCard
     /// <summary>A colour the card stands for (a colour choice), shown as a filled tile in the picture's place when there is no
     /// <see cref="Icon"/>; null for none.</summary>
     public Color? Swatch;
+}
+
+/// <summary>How the list shows its cards.</summary>
+public enum PickerLayout
+{
+    /// <summary>One row per card: the picture at the left, the title and category beside it.</summary>
+    Rows,
+
+    /// <summary>Two cards side by side, each twice a row's height: the picture large on top, the title and category under it, each one
+    /// line, cut with an ellipsis.</summary>
+    Grid
+}
+
+/// <summary>The side panel under the details: what the thing in the chosen slot is wearing can be changed here, and a card under the
+/// cursor shows its own (<see cref="PickerSource.Panel"/>). A section with nothing in it is not shown, title included.</summary>
+public sealed class PickerPanel
+{
+    /// <summary>The heading over <see cref="Schemes"/>.</summary>
+    public string SchemesTitle = "";
+
+    /// <summary>A row of scheme cards (more than fit are paged with arrows beside the heading); a press calls
+    /// <see cref="PickerSource.PickScheme"/>.</summary>
+    public IReadOnlyList<PickerScheme> Schemes = Array.Empty<PickerScheme>();
+
+    /// <summary>Controls in the schemes section, one row each right under the cards and not paged (such as one row of swatches per colour
+    /// of a scheme the player makes); shown only with <see cref="Schemes"/>.</summary>
+    public IReadOnlyList<UIControl> SchemeControls = Array.Empty<UIControl>();
+
+    /// <summary>The heading over <see cref="Controls"/>.</summary>
+    public string ControlsTitle = "";
+
+    /// <summary>Controls, one row each (more than fit are paged with arrows beside the heading); the picker reads and writes their values
+    /// itself, as on an adjust page.</summary>
+    public IReadOnlyList<UIControl> Controls = Array.Empty<UIControl>();
+
+    /// <summary>The scheme section's controls that are shown (none without schemes).</summary>
+    internal int SchemeControlCount => Schemes.Count > 0 ? SchemeControls.Count : 0;
+
+    /// <summary>Every control shown, numbered as presses and focus number them: the scheme section's first, then <see cref="Controls"/>.</summary>
+    internal int ControlCount => SchemeControlCount + Controls.Count;
+
+    internal UIControl Control(int i) => i < SchemeControlCount ? SchemeControls[i] : Controls[i - SchemeControlCount];
+}
+
+/// <summary>One card of <see cref="PickerPanel.Schemes"/>: its colours side by side over its name.</summary>
+public sealed class PickerScheme
+{
+    public string Name = "";
+
+    /// <summary>At most eight are shown.</summary>
+    public IReadOnlyList<Color> Colours = Array.Empty<Color>();
+
+    /// <summary>The scheme in use: framed in amber with a tick.</summary>
+    public bool Chosen;
 }
 
 /// <summary>What was pressed, for <see cref="PickerSource.Clicked"/>.</summary>
@@ -136,7 +192,30 @@ public abstract class PickerSource
     /// <summary>What slot <paramref name="slot"/> holds; <paramref name="chosen"/> is true for the slot being filled (the picker marks it).</summary>
     public abstract PickerCard SlotCard(int slot, bool chosen);
 
-    /// <summary>Tab names along the top of the list, at most five; by default one tab, ALL in the current language.</summary>
+    /// <summary>How the list shows its cards; by default one row per card.</summary>
+    public virtual PickerLayout Layout => PickerLayout.Rows;
+
+    /// <summary>Whether slot tiles show their number; without it a slot whose card has <see cref="PickerCard.Equipped"/> above 0 shows a tick.</summary>
+    public virtual bool NumberSlots => true;
+
+    /// <summary>Settings that apply to every slot, opened by a gear button in the title bar: while open they take the side panel's place.
+    /// Null (the default) shows no gear.</summary>
+    public virtual IReadOnlyList<UIControl>? Settings => null;
+
+    /// <summary>The details over the side panel while <see cref="Settings"/> are open (a title, and what the settings do as the description).</summary>
+    public virtual PickerInfo SettingsInfo => new();
+
+    /// <summary>The side panel drawn under the details of <paramref name="entry"/> while <paramref name="slot"/> is chosen, or with
+    /// <paramref name="entry"/> −1 of what the slot holds: it follows the details, so a card under the cursor shows its own panel. Null (the
+    /// default) shows none.</summary>
+    public virtual PickerPanel? Panel(int slot, int entry) => null;
+
+    /// <summary>A press on scheme <paramref name="scheme"/> of the panel last drawn (<see cref="Panel"/>); return null when accepted, else the
+    /// reason (shown in red).</summary>
+    public virtual string? PickScheme(int slot, int scheme) => null;
+
+    /// <summary>Tab names along the top of the list, at most five; by default one tab, ALL in the current language. With one tab there is no
+    /// tab strip: its name heads a title bar instead.</summary>
     public virtual IReadOnlyList<string> Tabs
     {
         get

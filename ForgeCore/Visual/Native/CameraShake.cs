@@ -50,9 +50,9 @@ public static class CameraShake
     /// out of range, turned off or the cap is full).</summary>
     public static float Shake(Vector3 at, in ShakeSpec spec, Vector3 direction = default)
     {
-        var camera = Camera(out var eye);
+        var camera = Camera(out var feet);
         if (camera == null) return 0f;
-        var amplitude = spec.Amplitude * ShakeMath.Falloff(Vector3.Distance(eye, at), spec.Inner, spec.Range) * Strength;
+        var amplitude = spec.Amplitude * ShakeMath.Falloff(Vector3.Distance(feet, at), spec.Inner, spec.Range) * Strength;
         return Apply(camera, amplitude, spec, direction);
     }
 
@@ -68,7 +68,7 @@ public static class CameraShake
     /// <summary>Whether a shake of <paramref name="spec"/> for something at <paramref name="at"/> reaches the local camera at all
     /// (inside its range), whatever the strength setting and the cap then make of it.</summary>
     public static bool InRange(Vector3 at, in ShakeSpec spec)
-        => Camera(out var eye) != null && ShakeMath.Falloff(Vector3.Distance(eye, at), spec.Inner, spec.Range) > 0f;
+        => Camera(out var feet) != null && ShakeMath.Falloff(Vector3.Distance(feet, at), spec.Inner, spec.Range) > 0f;
 
     /// <summary>A shake with no distance falloff, in a world direction when <paramref name="direction"/> is not zero (a camera
     /// shake the author aimed at the viewer); under the same setting and cap. Returns the amplitude that reached the camera.</summary>
@@ -91,14 +91,14 @@ public static class CameraShake
 
     internal static void Clear() => Running.Clear();
 
-    private static FPSCamera? Camera(out Vector3 eye)
+    private static FPSCamera? Camera(out Vector3 feet)
     {
-        eye = default;
+        feet = default;
         var agent = ForgeCore.Players.Local;
         if (agent == null || agent.WasCollected) return null;
         var camera = agent.FPSCamera;
         if (camera == null || camera.WasCollected) return null;
-        eye = agent.transform.position;
+        feet = agent.transform.position;
         return camera;
     }
 }

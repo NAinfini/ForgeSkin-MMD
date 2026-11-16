@@ -6,10 +6,12 @@ using UnityEngine;
 namespace ForgeAudio;
 
 /// <summary>The audio part of ForgeCore: started by ForgeCore's plugin (<see cref="Load"/>), stepped by its driver (<see cref="AudioDriver"/>).
-/// <see cref="Id"/> names its configuration file, log source, Harmony patches and network channel.</summary>
+/// <see cref="Id"/> (ForgeCore's own) names its settings, log source and Harmony patches.</summary>
 internal static class Plugin
 {
-    internal const string Id = "NAinfini.ForgeAudio";
+    internal const string Id = ForgeCore.Plugin.Id;
+    /// <summary>The synchronized plays' network channel. Its name is part of the wire, so it stays as it was.</summary>
+    internal const string Channel = "NAinfini.ForgeAudio";
     private static readonly ForgeCore.ModLog Logger = ForgeCore.Log.For(Id);
     private static ConfigEntry<float>? _master;
     private static readonly ConfigEntry<float>?[] Volumes = new ConfigEntry<float>?[AudioCategories.Count];
@@ -133,7 +135,8 @@ internal static class AudioDriver
     }
 }
 
-/// <summary>Which claims a lazily installed hook serves.</summary>
+/// <summary>Which claims a lazily installed hook serves. <c>Reserved</c> is the game's sound-event posts (<c>ReservedEventHooks</c>):
+/// they serve both the reserved event IDs (<c>ReserveGameEvent</c>) and the observation of game events (<c>ObserveGameEvents</c>).</summary>
 internal enum HookGroup { Body, Weapon, Reserved }
 
 /// <summary>Marks a Harmony patch class that goes on the game only when <see cref="Plugin.InstallHooks"/> is called for its group.</summary>

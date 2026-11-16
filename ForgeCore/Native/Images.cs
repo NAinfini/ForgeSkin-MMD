@@ -8,8 +8,8 @@ namespace ForgeCore;
 
 /// <summary>PNG or JPEG bytes to a texture, the one decoder the libraries and packages share. The header is read first
 /// (<see cref="Png.TrySize"/>, <see cref="Png.TryJpegSize"/>) so a file that declares more than it may is refused before anything
-/// allocates, and a texture the game could not decode is destroyed instead of left behind. <see cref="Queue"/> spreads the work over
-/// frames; <c>Decode</c> does it at once. Main thread only: the game's decoder and compressor are Unity calls.</summary>
+/// allocates, and a texture the game could not decode is destroyed instead of left behind. <see cref="Queue(byte[], System.Action{UnityEngine.Texture2D, string}, bool, bool, int, bool, bool)"/> spreads the work over
+/// frames, a PNG's decode on a worker thread; <c>Decode</c> does it at once. Called on the main thread: the game's decoder, compressor and uploads are Unity calls.</summary>
 public static class Images
 {
     /// <summary>Milliseconds of queued image work a frame may take; a step is started while the frame has used less. One step (decoding,
@@ -21,7 +21,9 @@ public static class Images
     static bool _pumping;
 
     /// <summary>Decodes <paramref name="image"/> as <c>Decode</c> would with the same options, in two steps on later frames (the decode,
-    /// then the DXT compression and dropping the CPU copy), within <see cref="FrameBudgetMs"/> a frame, in the order queued. On the main
+    /// then the DXT compression and dropping the CPU copy), within <see cref="FrameBudgetMs"/> a frame, in the order queued. A PNG is
+    /// decoded on a worker thread (with its mips and the normal-map layout), so its main-thread step is the upload; a JPEG, or a PNG the
+    /// managed reader does not take (interlaced, a transparent key colour), is decoded by the game in its step. On the main
     /// thread <paramref name="done"/> gets the texture (the caller owns it) and an empty failure, or null and why. Cancel the job to drop it;
     /// a texture already decoded for it is destroyed and <paramref name="done"/> is not called.</summary>
     public static ImageJob Queue(byte[] image, Action<Texture2D?, string> done, bool linear = false, bool mipChain = false, int maxSide = 8192,
@@ -29,16 +31,19 @@ public static class Images
         => Enqueue(new ImageJob(image, done, linear, mipChain, maxSide, normalMap, compress));
 
     /// <summary>Uploads texture data that is already in the GPU format (compressed blocks made ahead of time, say) in one step on a
-    /// later frame, in the same queue and frame budget as <see cref="Queue"/>: a <paramref name="width"/> x <paramref name="height"/>
+    /// later frame, in the same queue and frame budget as <see cref="Queue(byte[], System.Action{UnityEngine.Texture2D, string}, bool, bool, int, bool, bool)"/>: a <paramref name="width"/> x <paramref name="height"/>
     /// <paramref name="format"/> texture (with Unity's full mip chain when <paramref name="mipChain"/>), filled from
     /// <paramref name="data"/> after <paramref name="offset"/> with <c>LoadRawTextureData</c> (levels largest first, rows from the
     /// bottom), then sent to the GPU without a CPU copy. Nothing is decoded or compressed, so the step costs a copy and the upload.
-    /// <paramref name="done"/> as for <see cref="Queue"/>; the failure names why the game refused the data (too little for the size).</summary>
+    /// <paramref name="done"/> as for <see cref="Queue(byte[], System.Action{UnityEngine.Texture2D, string}, bool, bool, int, bool, bool)"/>; the failure names why the game refused the data (too little for the size).</summary>
     public static ImageJob QueueRaw(byte[] data, int offset, int width, int height, TextureFormat format, bool mipChain, bool linear, Action<Texture2D?, string> done)
         => Enqueue(new ImageJob(data, done, linear, mipChain, 0, false, false) { Raw = true, Offset = offset, Width = width, Height = height, Format = format });
 
     static ImageJob Enqueue(ImageJob job)
     {
+        // A PNG decodes on a worker thread (Png.TryDecode, no Unity call), its mips and normal-map swizzle too, so the main thread only
+        // uploads it; one the managed reader does not take (a JPEG, an interlaced PNG) is decoded by the game on the main thread as before.
+        if (!job.Raw) job.Pixels = System.Threading.Tasks.Task.Run(() => Pixels(job));
         Jobs.Enqueue(job);
         if (!_pumping) { _pumping = true; Frame.OnUpdate("NAinfini.ForgeCore", Pump); }
         return job;
@@ -66,7 +71,11 @@ public static class Images
             }
             if (job.Texture == null)
             {
-                job.Texture = Read(job.Image, out var failure, job.Linear, false, job.MipChain, job.MaxSide, 0, 0, job.NormalMap, job.Compress);
+                if (!job.Pixels!.IsCompleted) break; // the worker is still decoding it; the queue keeps its order
+                var failure = "";
+                job.Texture = job.Pixels.Result is { } pixels
+                    ? Upload(pixels, job.PixelWidth, job.PixelHeight, job.Linear || job.NormalMap, job.MipChain, job.Compress)
+                    : Read(job.Image, out failure, job.Linear, false, job.MipChain, job.MaxSide, 0, 0, job.NormalMap, job.Compress);
                 if (job.Texture == null) { Jobs.Dequeue(); job.Finish(failure); continue; }
                 if (job.Compress) continue; // compressed on the next step
             }
@@ -137,6 +146,7 @@ public static class Images
     static unsafe Texture2D? Upload(ImageJob job, out string failure)
     {
         failure = "";
+        if ((uint)job.Offset > (uint)job.Image.Length) { failure = "the offset " + job.Offset + " is outside the " + job.Image.Length + " bytes of data"; return null; }
         var texture = new Texture2D(job.Width, job.Height, job.Format, job.MipChain, job.Linear);
         try
         {
@@ -156,11 +166,58 @@ public static class Images
     static void Finish(Texture2D texture, bool readable, bool normalMap, bool compress)
     {
         if (compress && texture.width % 4 == 0 && texture.height % 4 == 0) texture.Compress(true);
-        if ((normalMap || compress) && !readable) texture.Apply(false, true);
+        if ((normalMap || compress) && !readable && texture.isReadable) texture.Apply(false, true);
+    }
+
+    // Worker thread: the job's PNG as RGBA32 in the layout LoadRawTextureData takes (levels largest first, rows from the bottom), with
+    // the mip chain (each level the 2 x 2 average of the one above, as the game's own mip build) and the normal-map swizzle Read does.
+    // Null when the managed reader does not take the file.
+    static byte[]? Pixels(ImageJob job)
+    {
+        try
+        {
+            if (!Png.TryDecode(job.Image, job.MaxSide, out var w, out var h, out var top)) return null;
+            if (job.NormalMap)
+                for (var i = 0; i < top.Length; i += 4) (top[i], top[i + 2], top[i + 3]) = (255, 255, top[i]);
+            // One buffer for every level (large arrays are what the collector stops the game's thread for).
+            long total = 0;
+            for (int lw = w, lh = h; ; lw = Math.Max(1, lw / 2), lh = Math.Max(1, lh / 2))
+            {
+                total += (long)lw * lh * 4;
+                if (!job.MipChain || (lw == 1 && lh == 1)) break;
+            }
+            var all = new byte[total];
+            for (int y = 0, row = w * 4; y < h; y++) Buffer.BlockCopy(top, (h - 1 - y) * row, all, y * row, row);
+            for (int lw = w, lh = h, at = 0; job.MipChain && (lw > 1 || lh > 1);)
+            {
+                int nw = Math.Max(1, lw / 2), nh = Math.Max(1, lh / 2), next = at + lw * lh * 4;
+                for (var y = 0; y < nh; y++)
+                    for (var x = 0; x < nw; x++)
+                    {
+                        int x0 = Math.Min(x * 2, lw - 1), x1 = Math.Min(x * 2 + 1, lw - 1), y0 = Math.Min(y * 2, lh - 1), y1 = Math.Min(y * 2 + 1, lh - 1);
+                        for (var k = 0; k < 4; k++)
+                            all[next + (y * nw + x) * 4 + k] = (byte)((all[at + (y0 * lw + x0) * 4 + k] + all[at + (y0 * lw + x1) * 4 + k] + all[at + (y1 * lw + x0) * 4 + k] + all[at + (y1 * lw + x1) * 4 + k] + 2) / 4);
+                    }
+                (at, lw, lh) = (next, nw, nh);
+            }
+            job.PixelWidth = w;
+            job.PixelHeight = h;
+            return all;
+        }
+        catch (Exception) { return null; } // left to the game's decoder
+    }
+
+    // Main thread: RGBA32 pixels from Pixels sent to the GPU; the CPU copy kept only when asked (to compress it next).
+    static unsafe Texture2D Upload(byte[] pixels, int width, int height, bool linear, bool mipChain, bool keepReadable)
+    {
+        var texture = new Texture2D(width, height, TextureFormat.RGBA32, mipChain, linear);
+        fixed (byte* p = pixels) texture.LoadRawTextureData((IntPtr)p, pixels.Length);
+        texture.Apply(false, !keepReadable);
+        return texture;
     }
 }
 
-/// <summary>One picture queued with <see cref="Images.Queue"/>.</summary>
+/// <summary>One picture queued with <see cref="Images.Queue(byte[], System.Action{UnityEngine.Texture2D, string}, bool, bool, int, bool, bool)"/>.</summary>
 public sealed class ImageJob
 {
     internal readonly byte[] Image;
@@ -170,6 +227,8 @@ public sealed class ImageJob
     internal bool Raw; // QueueRaw: Image holds GPU-format data
     internal int Offset, Width, Height;
     internal TextureFormat Format;
+    internal System.Threading.Tasks.Task<byte[]?>? Pixels; // the worker's decode (Images.Pixels), null for QueueRaw
+    internal int PixelWidth, PixelHeight;
     readonly Action<Texture2D?, string> _done;
 
     internal ImageJob(byte[] image, Action<Texture2D?, string> done, bool linear, bool mipChain, int maxSide, bool normalMap, bool compress)

@@ -14,7 +14,7 @@ namespace ForgeVisual;
 [Flags]
 public enum BodyParts { None = 0, Head = 1, Torso = 2, Legs = 4, Arms = 8 }
 
-/// <summary>How <see cref="Models.WearFirstPerson"/> puts a model on the local player's first-person body.</summary>
+/// <summary>How <c>Models.WearFirstPerson</c> puts a model on the local player's first-person body.</summary>
 public sealed class FirstPersonWearOptions
 {
     /// <summary>The model's bones and the game bones they sit on (<see cref="WearBone"/>). Must list <c>LeftUpperArm</c>,
@@ -27,6 +27,14 @@ public sealed class FirstPersonWearOptions
 
     /// <summary>Model bones whose skin counts as their parent bone's (parts hinged directly on a worn bone, which stay shut on it).</summary>
     public IReadOnlyCollection<string>? FollowParent { get; set; }
+
+    /// <summary>Bones below a worn bone that are not worn themselves (twist bones, sleeves, fingers the game's body lacks) ride on it
+    /// as the model has them and their skin is kept, up to a listed bone that only lines up. A worn bone the game's body lacks then rides
+    /// too and is not reported. Default false: only the worn bones' own skin is kept.</summary>
+    public bool Descendants { get; set; }
+
+    /// <summary>Submeshes of the model not drawn on the body (by index).</summary>
+    public IReadOnlyCollection<int>? LeaveOut { get; set; }
 
     /// <summary>Names the wearer in error lines (for example <c>Pack:model</c>); default the model's name.</summary>
     public string? Label { get; set; }
@@ -65,15 +73,17 @@ internal static class BodyConvert
 }
 
 /// <summary>
-/// A model worn on the local player's first-person body (<see cref="Models.WearFirstPerson"/>), which the game animates as always
+/// A model worn on the local player's first-person body (<c>Models.WearFirstPerson</c>), which the game animates as always
 /// (holding, aiming, swinging, reloading, throwing, walking). Nothing animates or offsets anything frame by frame: every worn model bone
 /// is parented once onto its game bone with a fixed rotation (both rest poses matched, see <see cref="WearBone"/>), its joint on the
 /// game's joint and scaled to the game's lengths, so in every pose the game plays the model's joints coincide with the game's. A copy of
 /// the model's mesh keeps only the triangles skinned to the worn bones. The model sits beside the game's own first-person arm models, on
-/// their layer and the game's first-person rendering setup (<c>PlayerBackpackManager.SetFPSRendering</c>, which keeps it out of walls),
-/// and shows exactly while the game shows its arms.
+/// their layer, shadowed as they are and with the game's first-person rendering setup (<c>PlayerBackpackManager.SetFPSRendering</c>,
+/// which keeps it out of walls, and the item camera's projection by <c>FPS_Content</c>), and shows exactly while the game shows its arms.
+/// Worn on the arms (<see cref="BodyParts.Arms"/> hidden, <c>HumanRig.ArmWear</c>), the model's hands are the game's hands: on the grip
+/// of whatever the player holds, whatever the model's proportions.
 /// <para>Building (spawning, matching, cutting, drawing once off screen so its GPU work is done) is the expensive part and happens in
-/// <see cref="Models.WearFirstPerson"/>, with nothing changed on the game's body; <see cref="Activate"/> and <see cref="Deactivate"/> only
+/// <c>Models.WearFirstPerson</c>, with nothing changed on the game's body; <see cref="Activate"/> and <see cref="Deactivate"/> only
 /// hold the chosen game parts off (<c>forceRenderingOff</c>, giving back the value each had) and show or hide the model, creating nothing.
 /// Arms resolve through the game's two hand IK solvers (upper arm, forearm, hand), every other bone through the first-person animator's
 /// humanoid bones; a bone that does not resolve, or has no bind pose on the game's body, is reported and left out.</para>
@@ -88,11 +98,13 @@ public sealed class FirstPersonWear
     private readonly Mesh _mesh;
     private readonly List<Material> _materials = new();
     private readonly List<Renderer> _hidden = new();
-    private readonly bool[] _wasOff;
-    private readonly GameObject[] _arms;
+    private readonly List<bool> _wasOff = new();
+    private readonly List<GameObject> _arms = new();
+    private readonly BodyParts _hide;
     private bool _active, _shown, _held;
+    private float _retry; // the body had no arms: when to look again
 
-    private FirstPersonWear(GameObject root, Transform[] worn, Transform?[] on, PlayerFPSBody body, SkinnedMeshRenderer renderer, Mesh mesh, GameObject[] arms, BodyParts hide)
+    private FirstPersonWear(GameObject root, Transform[] worn, Transform?[] on, PlayerFPSBody body, SkinnedMeshRenderer renderer, Mesh mesh, BodyParts hide)
     {
         _root = root;
         _worn = worn;
@@ -100,13 +112,35 @@ public sealed class FirstPersonWear
         _body = body;
         _renderer = renderer;
         _mesh = mesh;
-        _arms = arms;
+        _hide = hide;
         foreach (var material in renderer.materials) _materials.Add(material);
-        if ((hide & BodyParts.Torso) != 0) Collect(body.m_gfxTorso);
-        if ((hide & BodyParts.Legs) != 0) Collect(body.m_gfxLegs);
-        if ((hide & BodyParts.Head) != 0) Collect(body.m_gfxHead);
-        if ((hide & BodyParts.Arms) != 0) Collect(body.m_gfxArms);
-        _wasOff = new bool[_hidden.Count];
+        ReadParts();
+    }
+
+    // The game's arm objects (shown with them) and the renderers of the parts held off, read from the body. The game builds those parts
+    // again once the player's clothing is known, after a wear may have been built: the old ones are destroyed and read here anew.
+    private void ReadParts()
+    {
+        _arms.Clear();
+        _hidden.Clear();
+        if (_body.m_gfxArms != null)
+            foreach (var go in _body.m_gfxArms)
+                if (go != null) _arms.Add(go);
+        if ((_hide & BodyParts.Torso) != 0) Collect(_body.m_gfxTorso);
+        if ((_hide & BodyParts.Legs) != 0) Collect(_body.m_gfxLegs);
+        if ((_hide & BodyParts.Head) != 0) Collect(_body.m_gfxHead);
+        if ((_hide & BodyParts.Arms) != 0) Collect(_body.m_gfxArms);
+        _wasOff.Clear();
+        for (var i = 0; i < _hidden.Count; i++) _wasOff.Add(false);
+        if (_arms.Count > 0) DrawAs(_root, _renderer, _arms[0].GetComponentInChildren<Renderer>(true), _body);
+    }
+
+    // On the game arm's layer and shadowed as it is (no arm: the body's layer, no shadow).
+    private static void DrawAs(GameObject root, SkinnedMeshRenderer renderer, Renderer? sample, PlayerFPSBody body)
+    {
+        renderer.shadowCastingMode = sample != null ? sample.shadowCastingMode : UnityEngine.Rendering.ShadowCastingMode.Off;
+        renderer.receiveShadows = sample != null && sample.receiveShadows;
+        Models.SetLayer(root.transform, sample != null ? sample.gameObject.layer : body.gameObject.layer);
     }
 
     private bool RootAlive => _root != null && !_root.WasCollected;
@@ -122,15 +156,25 @@ public sealed class FirstPersonWear
 
     internal static FirstPersonWear? Build(PlayerAgent agent, ModelHandle look, FirstPersonWearOptions options)
     {
-        var label = options.Label ?? look.Name;
-        var bones = options.Bones;
-        if (bones.Count == 0) { Error(label, "lists no bones"); return null; }
-        var body = agent.FPItemHolder == null ? null : agent.FPItemHolder.FPSArms;
-        if (body == null || body.WasCollected) { Error(label, "the player has no first-person body"); return null; }
         // Not reported to ForgeCore.Recording: only its owner's first-person view draws it.
         var root = look.Make(Vector3.zero, Quaternion.identity);
         if (root == null) return null;
         root.name = "ForgeVisual.Wear." + look.Name;
+        return Build(agent, root, options, options.Label ?? look.Name);
+    }
+
+    /// <summary>Wears <paramref name="root"/>, a fresh instance at the origin with no parent, which becomes the wear's (destroyed when
+    /// building fails).</summary>
+    internal static FirstPersonWear? Build(PlayerAgent agent, GameObject root, FirstPersonWearOptions options, string label)
+    {
+        var bones = options.Bones;
+        var body = agent.FPItemHolder == null ? null : agent.FPItemHolder.FPSArms;
+        if (bones.Count == 0 || body == null || body.WasCollected)
+        {
+            Error(label, bones.Count == 0 ? "lists no bones" : "the player has no first-person body");
+            Object.Destroy(root);
+            return null;
+        }
         root.SetActive(false);
         foreach (var animation in root.GetComponentsInChildren<Animation>(true)) animation.enabled = false;
         var built = (FirstPersonWear?)null;
@@ -168,7 +212,7 @@ public sealed class FirstPersonWear
             on[i] = Resolve(body, bones[i].Body);
             if (on[i] == null) unresolved += (unresolved.Length > 0 ? ", " : "") + bones[i].Body;
         }
-        if (unresolved.Length > 0)
+        if (unresolved.Length > 0 && !options.Descendants)
             Error(label, "the game's first-person body has no " + unresolved + " bone (its animator " + (body.m_anim != null && body.m_anim.isHuman ? "is humanoid" : "has no humanoid avatar") + "); those parts are left out", fatal: false);
 
         var renderer = root.GetComponentInChildren<SkinnedMeshRenderer>(true);
@@ -200,19 +244,20 @@ public sealed class FirstPersonWear
             if (!bindRest.TryGetValue(on[i]!.Pointer, out var m)) { noPose += (noPose.Length > 0 ? ", " : "") + bones[i].Body; on[i] = null; continue; }
             gameRest[i] = new RestPose(BodyConvert.N(m.GetColumn(3)), BodyConvert.N(m.rotation));
         }
-        if (noPose.Length > 0) Error(label, "the game's first-person body has no bind pose for " + noPose + "; those parts are left out", fatal: false);
+        if (noPose.Length > 0 && !options.Descendants) Error(label, "the game's first-person body has no bind pose for " + noPose + "; those parts are left out", fatal: false);
         if (WearSolver.Solve(bones, parents, modelRest, gameRest, out var offset, out var scale) is { } why) { Error(label, why); return null; }
 
         var wornBone = new bool[n];
         for (var i = 0; i < n; i++) wornBone[i] = on[i] != null && bones[i].Worn;
-        var mesh = Cut(source, skin, model, wornBone, options.FollowParent);
+        var alignOnly = new bool[n];
+        for (var i = 0; i < n; i++) alignOnly[i] = !bones[i].Worn;
+        var mesh = Cut(source, skin, model, wornBone, alignOnly, options);
         if (mesh == null) { Error(label, "no triangle of the model is skinned to a worn bone on the game's body"); return null; }
         renderer.sharedMesh = mesh;
         renderer.updateWhenOffscreen = true;
-        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        renderer.receiveShadows = false;
 
-        // Beside the game's own arm models, on their layer, set up for first-person rendering the way the game sets up that body.
+        // Beside the game's own arm models, on their layer, set up for first-person rendering the way the game sets up that body, and
+        // shadowed as they are.
         var arms = new List<GameObject>();
         Renderer? sample = null;
         if (body.m_gfxArms != null)
@@ -225,8 +270,14 @@ public sealed class FirstPersonWear
         var parent = arms.Count > 0 && arms[0].transform.parent != null ? arms[0].transform.parent
             : body.m_modelRoot != null ? body.m_modelRoot.transform : body.transform;
         root.transform.SetParent(parent, false);
-        Models.SetLayer(root.transform, sample != null ? sample.gameObject.layer : body.gameObject.layer);
+        DrawAs(root, renderer, sample, body);
+        // Set up while active, as the game sets up its own body. The keyword alone leaves the model in the world's projection while the
+        // game's body and item are drawn in the item camera's: the shader blends to it by _FPSWeight, which the FPS_Content on the
+        // game's body set on its own renderers only.
+        root.SetActive(true);
         PlayerBackpackManager.SetFPSRendering(root, true);
+        FPS_Content.SetEnabledForGameObject(root, true, 1f);
+        root.SetActive(false);
 
         // Every worn bone onto its game bone: joint on the game's joint, the fixed rotation, the scale.
         var bodyScale = body.transform.lossyScale.x;
@@ -242,7 +293,7 @@ public sealed class FirstPersonWear
             worn.Add(model[i]);
             wornOn.Add(on[i]);
         }
-        var wear = new FirstPersonWear(root, worn.ToArray(), wornOn.ToArray(), body, renderer, mesh, arms.ToArray(), options.Hide);
+        var wear = new FirstPersonWear(root, worn.ToArray(), wornOn.ToArray(), body, renderer, mesh, options.Hide);
         wear.DrawOnce(label);
         return wear;
     }
@@ -294,12 +345,14 @@ public sealed class FirstPersonWear
         }
     }
 
-    /// <summary>Puts the model on: the chosen game parts stop being drawn and the model shows while the game shows its arms. Creates nothing.</summary>
+    /// <summary>Puts the model on: the chosen game parts stop being drawn and the model shows while the game shows its arms (this library
+    /// follows them every frame). Creates nothing.</summary>
     public void Activate()
     {
         if (_active) return;
         _active = true;
         Hold(true);
+        Worn.Add(this);
     }
 
     /// <summary>Takes the model off: the game's body is exactly as it was.</summary>
@@ -309,21 +362,43 @@ public sealed class FirstPersonWear
         _active = false;
         _shown = false;
         Hold(false);
+        Worn.Remove(this);
         if (RootAlive) _root.SetActive(false);
     }
 
-    /// <summary>Every frame while worn (after the game set its arms' visibility): follows the game's own arm visibility (terminals,
-    /// downed, grabs hide the model with the game's arms) and keeps the held-off game parts off should the game switch one back on.</summary>
-    public void Follow()
+    private static readonly List<FirstPersonWear> Worn = new();
+
+    /// <summary>Every late frame (after the game set its arms' visibility): each model worn follows its arms; one whose body is gone drops out.</summary>
+    internal static void TickAll()
     {
-        if (!_active || !RootAlive || _body == null || _body.WasCollected) return;
+        for (var i = Worn.Count - 1; i >= 0; i--)
+        {
+            var wear = Worn[i];
+            if (wear.Alive) wear.Follow();
+            else
+            {
+                wear._active = wear._shown = false;
+                wear.Hold(false);
+                Worn.RemoveAt(i);
+            }
+        }
+    }
+
+    // Follows the game's own arm visibility (terminals, downed, grabs hide the model with the game's arms) and keeps the held-off game
+    // parts off should the game switch one back on. Arms the game destroyed (it builds them again for the player's clothing): the parts
+    // are read again and held instead.
+    private void Follow()
+    {
+        if (_arms.Count == 0 && Scene.Now >= _retry) { _retry = Scene.Now + 1f; Reread(); }
+        for (var i = 0; i < _arms.Count; i++)
+            if (_arms[i] == null || _arms[i].WasCollected) { Reread(); break; }
         for (var i = 0; i < _hidden.Count; i++)
         {
             var renderer = _hidden[i];
             if (renderer != null && !renderer.WasCollected && !renderer.forceRenderingOff) renderer.forceRenderingOff = true;
         }
         var shown = false;
-        for (var i = 0; i < _arms.Length; i++)
+        for (var i = 0; i < _arms.Count; i++)
             if (_arms[i] != null && !_arms[i].WasCollected && _arms[i].activeSelf) { shown = true; break; }
         if (shown == _shown) return;
         _shown = shown;
@@ -335,6 +410,15 @@ public sealed class FirstPersonWear
     {
         foreach (var material in _materials)
             if (material != null && !material.WasCollected && material.HasProperty(property)) material.SetColor(property, colour);
+    }
+
+    // The game parts read again (worn: the old ones given back, the new ones held).
+    private void Reread()
+    {
+        var held = _held;
+        Hold(false);
+        ReadParts();
+        Hold(held);
     }
 
     private void Hold(bool hide)
@@ -358,6 +442,7 @@ public sealed class FirstPersonWear
     public void Destroy()
     {
         _active = false;
+        Worn.Remove(this);
         Hold(false);
         _hidden.Clear();
         for (var i = 0; i < _worn.Length; i++)
@@ -400,21 +485,20 @@ public sealed class FirstPersonWear
     }
 
     /// <summary>A copy of the mesh with only the triangles whose three corners are skinned at least half to worn bones (or to
-    /// <paramref name="followParent"/> bones hinged directly on one), those corners' weights renormalised over them.</summary>
-    private static Mesh? Cut(Mesh source, Il2CppReferenceArray<Transform> skin, Transform[] model, bool[] worn, IReadOnlyCollection<string>? followParent)
+    /// <see cref="FirstPersonWearOptions.FollowParent"/> bones hinged directly on one, or with <see cref="FirstPersonWearOptions.Descendants"/>
+    /// to bones below one short of a bone that only lines up), those corners' weights renormalised over them; the
+    /// <see cref="FirstPersonWearOptions.LeaveOut"/> submeshes empty. Runs before any bone moves onto the game's body.</summary>
+    private static Mesh? Cut(Mesh source, Il2CppReferenceArray<Transform> skin, Transform[] model, bool[] worn, bool[] alignOnly, FirstPersonWearOptions options)
     {
+        var followParent = options.FollowParent;
         var follow = followParent != null && followParent.Count > 0 ? new HashSet<string>(followParent, StringComparer.Ordinal) : null;
-        var kept = new bool[skin.Length];
-        for (var b = 0; b < skin.Length; b++)
-        {
-            var bone = skin[b];
-            if (bone == null) continue;
-            var owner = bone;
-            // Each bone's name is read once (a call into the game and a new string per read).
-            if (follow != null && bone.parent != null && follow.Contains(bone.name)) owner = bone.parent;
-            for (var i = 0; i < model.Length; i++)
-                if (worn[i] && model[i].Pointer == owner.Pointer) { kept[b] = true; break; }
-        }
+        var listed = new Dictionary<IntPtr, int>(model.Length);
+        for (var i = 0; i < model.Length; i++) listed[model[i].Pointer] = i;
+        var bones = new Transform?[skin.Length];
+        for (var b = 0; b < skin.Length; b++) bones[b] = skin[b];
+        // Each bone's name is read once (a call into the game and a new string per read).
+        var kept = MeshCut.KeptBones(bones, bone => follow != null && bone.parent != null && follow.Contains(bone.name) ? bone.parent : bone,
+            t => t.parent, t => listed.TryGetValue(t.Pointer, out var i) ? i : -1, worn, alignOnly, options.Descendants);
         var native = ForgeCore.Il2CppArrays.ToManaged(source.boneWeights);
         var weights = new Weights4[native.Length];
         for (var v = 0; v < native.Length; v++)
@@ -428,7 +512,8 @@ public sealed class FirstPersonWear
         var any = false;
         for (var sub = 0; sub < source.subMeshCount; sub++)
         {
-            var cut = MeshCut.KeepTriangles(ForgeCore.Il2CppArrays.ToManaged(source.GetTriangles(sub)), keep);
+            var cut = options.LeaveOut != null && System.Linq.Enumerable.Contains(options.LeaveOut, sub) ? Array.Empty<int>()
+                : MeshCut.KeepTriangles(ForgeCore.Il2CppArrays.ToManaged(source.GetTriangles(sub)), keep);
             any |= cut.Length > 0;
             mesh.SetTriangles(ForgeCore.Il2CppArrays.ToGame(cut), sub, true);
         }

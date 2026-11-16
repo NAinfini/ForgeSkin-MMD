@@ -112,20 +112,25 @@ internal static class OutlineRules
     }
 }
 
-/// <summary>Which of a target's renderers the outline draws: only those still drawn by the game (alive, enabled), at most a fixed
-/// number. A limb shot off takes its renderers out of this set the next time the set is read from the game.</summary>
+/// <summary>Which of a target's renderers the outline draws: only those still drawn by the game (alive, enabled), every part of each
+/// (all its submeshes) within one draw budget for the whole target. A limb shot off takes its renderers out of this set the next time
+/// the set is read from the game.</summary>
 internal static class OutlineDrawSet
 {
-    /// <summary>Fills <paramref name="into"/> (cleared first) with the candidates <paramref name="drawn"/> accepts, in order, at most
-    /// <paramref name="max"/>; returns how many were skipped because they are no longer drawn.</summary>
-    public static int Collect<T>(IEnumerable<T> candidates, Func<T, bool> drawn, int max, List<T> into)
+    /// <summary>Fills <paramref name="into"/> (cleared first) with the candidates <paramref name="drawn"/> accepts, in order, while their
+    /// draws (<paramref name="draws"/> each) fit in <paramref name="budget"/> together; one that does not fit is left out and a smaller one
+    /// after it may still fit. Returns how many were skipped because they are no longer drawn.</summary>
+    public static int Collect<T>(IEnumerable<T> candidates, Func<T, bool> drawn, Func<T, int> draws, int budget, List<T> into)
     {
         into.Clear();
-        int skipped = 0;
+        int skipped = 0, used = 0;
         foreach (var candidate in candidates)
         {
             if (!drawn(candidate)) { skipped++; continue; }
-            if (into.Count < max) into.Add(candidate);
+            var cost = draws(candidate);
+            if (used + cost > budget) continue;
+            used += cost;
+            into.Add(candidate);
         }
         return skipped;
     }
@@ -360,39 +365,5 @@ public sealed class EnemyOutlineTracker
         Array.Resize(ref _generation, size);
         Array.Resize(ref _x, size); Array.Resize(ref _y, size); Array.Resize(ref _z, size);
         Array.Resize(ref _state, size);
-    }
-}
-
-/// <summary>
-/// The automatic enemy outlines every mod switched on. Outlines are drawn while any is on; the style is that of the one switched on
-/// most recently.
-/// </summary>
-internal sealed class OutlineScopes<T> where T : class
-{
-    private readonly List<(T Scope, long Stamp)> _on = new();
-    private long _clock;
-
-    /// <summary>The scope whose style is drawn, or null when none is on.</summary>
-    public T? Current { get; private set; }
-
-    /// <summary>Switches <paramref name="scope"/> on or off. Returns whether <see cref="Current"/> changed.</summary>
-    public bool Set(T scope, bool on)
-    {
-        int index = -1;
-        for (int i = 0; i < _on.Count; i++) if (ReferenceEquals(_on[i].Scope, scope)) { index = i; break; }
-        if (on && index < 0) _on.Add((scope, ++_clock));
-        else if (!on && index >= 0) _on.RemoveAt(index);
-        else return false;
-        var before = Current;
-        Current = null;
-        long best = long.MinValue;
-        foreach (var (s, stamp) in _on) if (stamp > best) { best = stamp; Current = s; }
-        return !ReferenceEquals(before, Current);
-    }
-
-    public bool IsOn(T scope)
-    {
-        foreach (var (s, _) in _on) if (ReferenceEquals(s, scope)) return true;
-        return false;
     }
 }

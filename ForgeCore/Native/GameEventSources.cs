@@ -17,13 +17,23 @@ internal static class GameEventSources
 {
     private static Il2CppSystem.Action? _session;
 
+    /// <summary>The game's state (<c>GameStateManager.CurrentStateName</c>) as of its last change, kept from the same event as the lobby flag, so
+    /// per-frame code reads a field instead of the game. Updated before <see cref="GameEvents.StateChanged"/> is raised.</summary>
+    internal static eGameStateName State { get; private set; }
+
+    internal static bool InLevel => State == eGameStateName.InLevel;
+
+    /// <summary>The elevator has stopped or the level runs: the moment landing warm-ups may start.</summary>
+    internal static bool Landed => State is eGameStateName.StopElevatorRide or eGameStateName.InLevel;
+
     internal static void Start()
     {
         GameEvents.NeedLanguage = static () => Patches.Ensure(Modules.Language, typeof(LanguageHooks));
         GameEvents.NeedLocalPlayerDown = static () => LocalPlayerDownHooks.Ensure();
         GameEvents.NeedExpeditionSelected = static () => Patches.Ensure(Modules.ExpeditionSelected, typeof(ExpeditionSelectedHooks));
         EventAPI.OnGameStateChanged += StateChanged;
-        GameEvents.SeedLobby(GameStateManager.CurrentStateName == eGameStateName.Lobby);
+        State = GameStateManager.CurrentStateName;
+        GameEvents.SeedLobby(State == eGameStateName.Lobby);
         // The game's events are IL2CPP delegates: the system delegate is materialized first and the implicit conversion takes it.
         _session = (Action)ReadMaster;
         SNet_Events.OnMasterChanged += _session;
@@ -54,6 +64,7 @@ internal static class GameEventSources
 
     private static void StateChanged(eGameStateName oldState, eGameStateName newState)
     {
+        State = newState;
         GameEvents.NoteLobby(newState == eGameStateName.Lobby);
         GameEvents.NoteState();
     }

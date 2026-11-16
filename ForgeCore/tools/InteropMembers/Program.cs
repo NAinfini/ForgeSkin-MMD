@@ -22,11 +22,12 @@ var broken = new Scanner(interop, new ReaderParameters { AssemblyResolver = reso
 broken.Scan(fixture);
 File.Delete(fixture);
 if (broken.Direct.Count != 1 || !broken.Direct.Keys.Single().Contains(Fixture.Missing)
-    || broken.Indirect.Count != 3 || !broken.Indirect.Keys.Any(k => k.Contains("get_loop"))
+    || broken.Indirect.Count != 4 || !broken.Indirect.Keys.Any(k => k.Contains("get_loop"))
     || !broken.Indirect.Keys.Any(k => k.Contains("icall " + Fixture.Icall))
-    || !broken.Indirect.Keys.Any(k => k.Contains("Vector3.ToString") && k.Contains("System.Single::ToString")))
+    || !broken.Indirect.Keys.Any(k => k.Contains("Vector3.ToString") && k.Contains("System.Single::ToString"))
+    || !broken.Indirect.Keys.Any(k => k.Contains("CellGridBase`3.GetCell") && k.Contains("method of a type parameter")))
 {
-    Console.WriteLine("FAIL detection: the broken fixture gave " + broken.Direct.Count + " direct and " + broken.Indirect.Count + " indirect, expected one direct, the stripped get_loop, the absent engine call and Vector3.ToString(string) reaching a standard library method with a game type.");
+    Console.WriteLine("FAIL detection: the broken fixture gave " + broken.Direct.Count + " direct and " + broken.Indirect.Count + " indirect, expected one direct, the stripped get_loop, the absent engine call, Vector3.ToString(string) reaching a standard library method with a game type and CellGridBase.GetCell(Vector3, out C) constructing its type parameter.");
     return 2;
 }
 var patchFixture = PatchFixture.Write(interop, resolver);
@@ -40,7 +41,7 @@ if (brokenPatches.Findings.Count != 3 || !brokenPatches.Findings.Keys.Any(k => k
     return 2;
 }
 Console.WriteLine("detection: the broken patch fixture is caught (a parameter name the target lacks, an overloaded target without argument types, an absent target; the correct patch not reported)");
-Console.WriteLine("detection: the broken fixture is caught (a missing member, a stripped body, an engine call the player lacks, a standard library call with a game type; the valid and standard library calls not reported)");
+Console.WriteLine("detection: the broken fixture is caught (a missing member, a stripped body, an engine call the player lacks, a standard library call with a game type, an out parameter built on a type parameter; the valid and standard library calls not reported)");
 if (player == null) Console.WriteLine("engine call names not checked: no UnityPlayer.dll given");
 
 foreach (var dll in args.Skip(2)) scanner.Scan(dll);
@@ -124,6 +125,9 @@ internal sealed class Scanner
             if (instruction.Operand is not (MethodReference or FieldReference)) continue;
             var member = (MemberReference)instruction.Operand;
             if (member.DeclaringType == null) continue;
+            // A method of a type parameter (Il2CppInterop writes `new C(pointer)` for an out or ref parameter of a generic class's type) binds to nothing: the call throws
+            // MissingMethodException `System.__Canon..ctor(IntPtr)` (CellGridBase<LG_Grid, LG_Tile, LG_Cell>.GetCell(Vector3, out C), 2026-11-13).
+            if (member is MethodReference && member.DeclaringType is GenericParameter) { found.Add("method of a type parameter " + member.FullName); continue; }
             if (!IsInterop(member.DeclaringType))
             {
                 // A standard library method whose signature names a game type cannot exist (Vector3.ToString(string) calls Single.ToString(string, Il2CppSystem.IFormatProvider)).
@@ -221,7 +225,8 @@ internal sealed class Scanner
 
 /// <summary>A small assembly that makes the mistakes this check exists for: a call of the stripped ParticleSystem.loop (its interop body names a MainModule method that does not exist),
 /// a call of a method the interop does not have at all, a call whose engine name the player lacks (scanned against an empty player), a call of Vector3.ToString(string) (its body calls a
-/// Single.ToString that takes Il2CppSystem.IFormatProvider, which no standard library has), and a valid call and a standard library call that must not be reported.</summary>
+/// Single.ToString that takes Il2CppSystem.IFormatProvider, which no standard library has), a call of CellGridBase.GetCell(Vector3, out C) (its body builds the out cell
+/// as `new C(pointer)` on the type parameter), and a valid call and a standard library call that must not be reported.</summary>
 internal static class Fixture
 {
     internal const string Missing = "get_doesNotExist";
@@ -244,8 +249,10 @@ internal static class Fixture
         var standard = new MethodReference("ToString", module.TypeSystem.String, new TypeReference("System", "NotThere", module, netstandard)) { HasThis = true };
         using var core = AssemblyDefinition.ReadAssembly(Path.Combine(interop, "UnityEngine.CoreModule.dll"), new ReaderParameters { AssemblyResolver = resolver });
         var formatted = core.MainModule.GetType("UnityEngine.Vector3").Methods.First(m => m.Name == "ToString" && m.Parameters.Count == 1 && m.Parameters[0].ParameterType.FullName == "System.String");
+        using var game = AssemblyDefinition.ReadAssembly(Path.Combine(interop, "Modules-ASM.dll"), new ReaderParameters { AssemblyResolver = resolver });
+        var outOfTypeParameter = game.MainModule.GetType("LevelGeneration.Core.CellGridBase`3").Methods.First(m => m.Name == "GetCell" && m.Parameters.Count == 2 && m.Parameters[1].ParameterType.IsByReference);
         var index = 0;
-        foreach (var call in new[] { module.ImportReference(stripped), module.ImportReference(valid), absent, module.ImportReference(engine), standard, module.ImportReference(formatted) })
+        foreach (var call in new[] { module.ImportReference(stripped), module.ImportReference(valid), absent, module.ImportReference(engine), standard, module.ImportReference(formatted), module.ImportReference(outOfTypeParameter) })
         {
             var method = new MethodDefinition("Call" + index++, MethodAttributes.Public | MethodAttributes.Static, module.TypeSystem.Void);
             var il = method.Body.GetILProcessor();

@@ -45,6 +45,31 @@ public static class GameText
     public static bool TryRenderOptional(string literal, GameLanguage language, out string rendered, out bool empty, out Exception? error)
         => TryRender(literal, language, true, out rendered, out empty, out error);
 
+    /// <summary>One column of the Text block <paramref name="id"/>, with no fallback: an empty column is true with empty
+    /// <paramref name="text"/>, so the caller chooses what a missing translation shows. False when the block is absent or a
+    /// native read threw (<paramref name="error"/>).</summary>
+    public static bool TryColumn(uint id, GameLanguage language, out string text, out Exception? error)
+    {
+        text = "";
+        error = null;
+        try
+        {
+            var block = GameDataBlockBase<TextDataBlock>.GetBlock(id);
+            if (block == null || block.WasCollected) return false;
+            text = Column(block, language) ?? "";
+            return true;
+        }
+        catch (Exception contained) { error = contained; return false; }
+    }
+
+    /// <summary>A game localized text as the game shows it now: its Text block in the game's current language (the game's own
+    /// lookup), or the inline text it carries without an id; empty for none. "is null": the type's == throws on a null.</summary>
+    public static string Read(LocalizedText? text)
+        => text is null ? "" : text.Id != 0 ? Read(text.Id) : text.UntranslatedText ?? "";
+
+    /// <summary>The Text block <paramref name="id"/> in the game's current language, through the game's own lookup.</summary>
+    public static string Read(uint id) => global::Localization.Text.Get(id) ?? "";
+
     /// <summary>The native localized literal that carries an already rendered text and, by default, no translation
     /// id. A caller whose consumer identifies the content by its id alone (a replication packet that carries only
     /// <c>Id</c>) passes that id; it is written as given and read back. The interop string constructor invokes the

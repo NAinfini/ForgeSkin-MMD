@@ -39,6 +39,42 @@ public static partial class Combat
         return new(before, receiver.Health);
     }
 
+    /// <summary>Ends an enemy's life whatever its health, resistance or immortal flag. <c>Dam_EnemyDamageBase.InstantDead</c> cannot:
+    /// it is a 1000-point melee hit, and the melee receiver drops it for an immortal enemy, caps it at <c>DamageMax</c> and scales it
+    /// by the melee resistance modifier before it reaches <c>ProcessReceivedDamage</c>. That funnel, which every received hit on an
+    /// enemy ends in, checks none of them: it takes the health, raises the death hit reaction itself when the health reaches zero
+    /// (which clears <c>Alive</c> before this returns), credits the source and runs the death the game runs for any kill (death
+    /// state, drops and <c>EnemyAgent.OnDead</c> on a later frame). On the host this calls it directly with the hit a lethal melee
+    /// hit hands it (a heavy, forced reaction), carrying <c>DamageMax</c> (twice <c>HealthMax</c>): the host's own melee request sends
+    /// no packet either (<c>SendPacket</c> answers false on the master), and the enemy's death replicates as for any kill. Every
+    /// observer of received damage sees one change from the health the enemy had to zero. The settlement is marked
+    /// <see cref="EnemyDamageCall.Unruled"/>, so no damage rule rewrites its amount. Elsewhere it asks the host through the enemy's own
+    /// melee request instead, which the host settles with its resistance and rules. Nothing is read back here: whether the life ended
+    /// is the caller's to read from <c>Alive</c>.</summary>
+    public static void Kill(Dam_EnemyDamageBase receiver)
+    {
+        if (receiver == null) throw new System.ArgumentNullException(nameof(receiver));
+        // The funnel, unlike the receivers in front of it, does not ask whether the enemy still lives.
+        if (receiver.Owner == null || !receiver.Owner.Alive) return;
+        var position = receiver.transform.position;
+        if (!Session.IsHost) { Melee(receiver, receiver.DamageMax, null, position, Vector3.up, 0, 1f, 1f); return; }
+        _killing = receiver.Pointer;
+        try { receiver.ProcessReceivedDamage(receiver.DamageMax, null, position, Vector3.up, ES_HitreactType.Heavy, true); }
+        finally { _killing = System.IntPtr.Zero; }
+    }
+
+    /// <summary>The receiver <see cref="Kill"/> is settling right now, zero otherwise.</summary>
+    private static System.IntPtr _killing;
+
+    /// <summary>Whether this entry into the funnel is the kill's own: true once, for the first entry on the receiver being killed, so a
+    /// hit the death itself sets off (on this or another enemy) is ruled as usual.</summary>
+    internal static bool TakeKill(Dam_EnemyDamageBase receiver)
+    {
+        if (_killing == System.IntPtr.Zero || receiver.Pointer != _killing) return false;
+        _killing = System.IntPtr.Zero;
+        return true;
+    }
+
     /// <summary>Explosion damage to an enemy naming the limb (position in the limb array).</summary>
     public static DamageSettlement ExplosionDamage(Dam_EnemyDamageBase receiver, float damage, Vector3 position, Vector3 force, int limbIndex)
     {

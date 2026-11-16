@@ -1,5 +1,3 @@
-using System;
-
 namespace ForgeUI;
 
 /// <summary>
@@ -12,8 +10,6 @@ namespace ForgeUI;
 /// </summary>
 internal static class HudFocus
 {
-    private static bool _logged;
-
     /// <summary>True while, in a level, the game shows one of its own full screens.</summary>
     internal static bool Away { get; private set; }
 
@@ -24,20 +20,10 @@ internal static class HudFocus
         HudPointer.Update();
     }
 
+    /// <summary>From the state and focus ForgeCore keeps (<c>GameEventSources.State</c>, <c>Frame.Focus</c>), not from the game.</summary>
     private static void Track()
     {
-        bool away;
-        eFocusState focus = default;
-        try
-        {
-            focus = FocusStateManager.CurrentState;
-            away = GameStateManager.CurrentStateName == eGameStateName.InLevel && IsAway(focus);
-        }
-        catch (Exception error)
-        {
-            if (!_logged) { _logged = true; Plugin.Error("ui-reading-games-focus-state-failed", "Reading the game's focus state failed: " + error); }
-            away = false;
-        }
+        var away = ForgeCore.GameEventSources.InLevel && IsAway(ForgeCore.Frame.Focus);
         if (away == Away) return;
         Away = away;
         ScreenLayer.Refresh();

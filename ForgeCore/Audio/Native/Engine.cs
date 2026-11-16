@@ -141,6 +141,9 @@ internal static class Engine
     private static readonly bool[] Eligible = new bool[VoicePolicy.Capacity];
     private static readonly VoiceRank?[] Ranks = new VoiceRank?[VoicePolicy.Capacity];
     private static readonly OcclusionSchedule Occlusion = new();
+    // Built once from the limits, so the rejection text follows them and a rejection allocates nothing for it.
+    private static readonly string StatesFull = "all " + VoicePolicy.LogicalCapacity + " sound states are in use.";
+    private static readonly string VoicesBusy = "all " + VoicePolicy.Capacity + " voices are busy with sounds that may not be stolen.";
     private static readonly System.Random Random = new();
     private static readonly Queue<AudioHandle> EndNotifications = new();
     private static bool _clearing;
@@ -252,7 +255,7 @@ internal static class Engine
             count++; if (key != null && key.Equals(p.Emitter.Key)) { emitterCount++; clash = p; }
         }
         if (free < 0 || count >= definition.MaxVoices || emitterCount >= definition.MaxPerEmitter)
-            return Reject(cue, free < 0 ? "all 256 sound states are in use." : count >= definition.MaxVoices
+            return Reject(cue, free < 0 ? StatesFull : count >= definition.MaxVoices
                 ? "maxVoices " + definition.MaxVoices + " reached." : "maxPerEmitter " + definition.MaxPerEmitter + " reached for emitter '" + key
                 + "' (held by a play of the same cue " + (now - clash!.Started).ToString("0.00", Inv) + " s old, " + clash.State
                 + (clash.FadeEnd > 0 ? ", fading out" : "") + ").",
@@ -298,7 +301,7 @@ internal static class Engine
         if (admission == CategoryAdmission.PushOut && request.Prewarm)
             return Reject(cue, "a silent prewarm never pushes out a sound of category '" + AudioCategories.Name(category) + "'.", quiet: true);
         var slot = playback.Audibility > 0 || !definition.Loop ? FindVoice(playback, now) : -1;
-        if (slot < 0 && !definition.Loop) return Reject(cue, "all 64 voices are busy with sounds that may not be stolen.");
+        if (slot < 0 && !definition.Loop) return Reject(cue, VoicesBusy);
         for (var i = 0; i < evictions; i++) FadeOut(BusPlays[Victims[i]]!, BusPolicy.ReplaceFade, EndReason.Replaced);
         if (admission == CategoryAdmission.PushOut)
         {

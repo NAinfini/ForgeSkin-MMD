@@ -72,7 +72,7 @@ internal static class EnemyHealthBars
     private const float SightEvery = 0.1f, HeadClearance = 0.3f;
     private const int SightPerFrame = 3;
     private static readonly Dictionary<string, EnemyHealthBar> Registered = new(StringComparer.Ordinal);
-    private static readonly ScopeSwitches<EnemyHealthBar> Scopes = new();
+    private static readonly ForgeCore.ScopeSwitches<EnemyHealthBar> Scopes = new();
     internal static readonly EnemyBarBook Book = new();
     private static readonly Dam_EnemyDamageBase?[] Damage = new Dam_EnemyDamageBase?[EnemyBarBook.Capacity];
     private static readonly Transform?[] Body = new Transform?[EnemyBarBook.Capacity];

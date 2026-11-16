@@ -61,7 +61,7 @@ public sealed class EnemyHealthBarStyle
     public bool Bars { get; init; } = true;
 
     /// <summary>How many bars may show at once (1..<see cref="EnemyBarBook.Capacity"/>). A hit on another enemy when all are in use
-    /// takes the place of the bar hit longest ago, and the kit's log says so.</summary>
+    /// takes the place of the bar hit longest ago.</summary>
     public int MaxBars { get; init; } = 6;
 
     /// <summary>Seconds a bar stays after the last hit before it fades (0.5..30).</summary>

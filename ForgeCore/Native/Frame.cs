@@ -26,11 +26,42 @@ public static class Frame
 
     public static int ScreenHeight { get; private set; }
 
+    /// <summary><c>Time.frameCount</c> as of the same moment: a per-frame cache keyed on it is read again once per driver frame. Input edges, which must
+    /// match the game's own input frame, keep <c>Time.frameCount</c>.</summary>
+    internal static int Count { get; private set; }
+
+    /// <summary>The game's focus state (<c>FocusStateManager.CurrentState</c>) for the HUD, the input leases and the wheel: read from the game by the
+    /// first reader of a frame and kept for that frame (keyed on <c>Time.frameCount</c>), so a reader before the driver sees this frame's focus too.</summary>
+    internal static eFocusState Focus
+    {
+        get
+        {
+            var frame = Time.frameCount;
+            if (frame == _focusFrame) return _focus;
+            _focusFrame = frame;
+            try { _focus = FocusStateManager.CurrentState; }
+            catch (Exception error)
+            {
+                if (!_focusFailed)
+                {
+                    _focusFailed = true;
+                    Plugin.Logger.ErrorOnce("core-reading-focus-state-failed", "Reading the game's focus state failed: " + error);
+                }
+            }
+            return _focus;
+        }
+    }
+
+    private static eFocusState _focus;
+    private static int _focusFrame = -1;
+    private static bool _focusFailed;
+
     /// <summary>Read once at the start of the driver's <c>Update</c>, and once when ForgeCore loads so a reader before the first frame sees real values.</summary>
     internal static void Stamp()
     {
         UnscaledTime = Time.unscaledTime; UnscaledDeltaTime = Time.unscaledDeltaTime; GameTime = Time.time;
         ScreenWidth = Screen.width; ScreenHeight = Screen.height;
+        Count = Time.frameCount;
     }
 
     /// <summary>Runs in the game's <c>FixedUpdate</c>, before the physics step.</summary>

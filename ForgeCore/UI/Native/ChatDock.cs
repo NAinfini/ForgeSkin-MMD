@@ -281,7 +281,7 @@ internal static class ChatDock
     private static void Focus(HudBox? moved, bool docked)
     {
         if (_failed) return;
-        var typing = GameStateManager.CurrentStateName == eGameStateName.InLevel && !HudFocus.Away && PlayerChatManager.InChatMode;
+        var typing = ForgeCore.GameEventSources.InLevel && !HudFocus.Away && PlayerChatManager.InChatMode;
         var now = ForgeCore.Frame.UnscaledTime;
         var dt = _last > 0f ? now - _last : 0f;
         _last = now;

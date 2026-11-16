@@ -66,7 +66,7 @@ internal static class SyncPlays
     {
         try
         {
-            var channel = Net.Open(Plugin.Id);
+            var channel = Net.Open(Plugin.Channel);
             _lossy = channel.Event<SyncedPlay>("play", Receive, NetDelivery.Lossy);
             _reliable = channel.Event<SyncedPlay>("play-reliable", Receive);
         }

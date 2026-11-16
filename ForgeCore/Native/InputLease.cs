@@ -134,38 +134,48 @@ public sealed class InputLease : IDisposable
         _watchingDown = true;
     }
 
+    /// <summary>The focus is ForgeCore's per-frame read (<see cref="Frame.Focus"/>), not a read of the game for every query.</summary>
     private static bool Blocks(InputAction action)
-        => _wrapped && Book.Blocks((int)action) && FocusStateManager.CurrentState is not (eFocusState.MainMenu or eFocusState.Map or eFocusState.GlobalPopupMessage);
+        => _wrapped && Book.Blocks((int)action) && Frame.Focus is not (eFocusState.MainMenu or eFocusState.Map or eFocusState.GlobalPopupMessage);
 
-    /// <summary>Ends every lease whose guard says its owner is gone, before the query is answered.</summary>
-    private static void Admit(string member)
+    /// <summary>The wrapped input query a lease answers; its name goes into a guard's end reason.</summary>
+    private enum Query { GetButton, GetButtonDown, GetButtonUp, GetAxis }
+
+    /// <summary>Ends every lease whose guard says its owner is gone, before the query is answered. Walks the held leases newest first
+    /// by index, so a lease released (or taken) by a guard's callback neither breaks the walk nor needs a copy of the list.</summary>
+    private static void Admit(Query query)
     {
         if (!Book.HasGuard()) return;
-        foreach (var entry in Book.Snapshot())
+        for (var i = Book.Count - 1; i >= 0; i--)
         {
+            if (i >= Book.Count) continue;
+            var entry = Book.At(i);
             if (entry.Guard == null) continue;
             string? reason;
             try { reason = entry.Guard(); }
             catch (Exception error) { reason = "lifecycle-guard-threw:" + error; }
             if (reason == null) continue;
             if (Book.Release(entry)) Apply();
-            try { entry.Invalidated?.Invoke(reason + ";query=" + member); }
+            try { entry.Invalidated?.Invoke(reason + ";query=" + query); }
             catch (Exception error) { Plugin.Logger.ErrorOnce("core-input-lease-guards-end-callback-threw", "An input lease guard's end callback threw: " + error); }
         }
     }
 
-    private static bool Pressed(InputAction action, string member, out bool value)
+    /// <summary>The frame is read only when some lease presses <paramref name="action"/>: the press and release edges belong to the
+    /// game's own input frame, so this keeps <c>Time.frameCount</c>.</summary>
+    private static bool Pressed(InputAction action, Query query, out bool value)
     {
         value = false;
+        if (!_wrapped || !Book.MayPress((int)action)) return false;
         var frame = UnityEngine.Time.frameCount;
-        if (!_wrapped || !Book.Presses((int)action, frame)) return false;
-        Admit(member);
         if (!Book.Presses((int)action, frame)) return false;
-        value = member switch
+        Admit(query);
+        if (!Book.Presses((int)action, frame)) return false;
+        value = query switch
         {
-            "GetButton" => Book.Held((int)action),
-            "GetButtonDown" => Book.Down((int)action, UnityEngine.Time.frameCount),
-            _ => Book.Up((int)action, UnityEngine.Time.frameCount)
+            Query.GetButton => Book.Held((int)action),
+            Query.GetButtonDown => Book.Down((int)action, frame),
+            _ => Book.Up((int)action, frame)
         };
         return true;
     }
@@ -174,7 +184,7 @@ public sealed class InputLease : IDisposable
     {
         value = 0f;
         if (!_wrapped || !Book.Drives((int)action)) return false;
-        Admit("GetAxis");
+        Admit(Query.GetAxis);
         if (!Book.Drives((int)action)) return false;
         value = Book.Axis((int)action);
         return true;
@@ -256,9 +266,9 @@ public sealed class InputLease : IDisposable
         _axis = InputMapper.GetAxis;
         if (_button == null || _down == null || _up == null || _axis == null) throw new InvalidOperationException("The game's input delegates are not available.");
         var button = _button; var down = _down; var up = _up; var axis = _axis;
-        _ownButton = DelegateSupport.ConvertDelegate<InputMapper.DelGetButton>(new Func<InputAction, eFocusState, bool>((a, f) => Pressed(a, "GetButton", out var v) ? v : !Blocks(a) && button.Invoke(a, f)));
-        _ownDown = DelegateSupport.ConvertDelegate<InputMapper.DelGetButton>(new Func<InputAction, eFocusState, bool>((a, f) => Pressed(a, "GetButtonDown", out var v) ? v : !Blocks(a) && down.Invoke(a, f)));
-        _ownUp = DelegateSupport.ConvertDelegate<InputMapper.DelGetButton>(new Func<InputAction, eFocusState, bool>((a, f) => Pressed(a, "GetButtonUp", out var v) ? v : !Blocks(a) && up.Invoke(a, f)));
+        _ownButton = DelegateSupport.ConvertDelegate<InputMapper.DelGetButton>(new Func<InputAction, eFocusState, bool>((a, f) => Pressed(a, Query.GetButton, out var v) ? v : !Blocks(a) && button.Invoke(a, f)));
+        _ownDown = DelegateSupport.ConvertDelegate<InputMapper.DelGetButton>(new Func<InputAction, eFocusState, bool>((a, f) => Pressed(a, Query.GetButtonDown, out var v) ? v : !Blocks(a) && down.Invoke(a, f)));
+        _ownUp = DelegateSupport.ConvertDelegate<InputMapper.DelGetButton>(new Func<InputAction, eFocusState, bool>((a, f) => Pressed(a, Query.GetButtonUp, out var v) ? v : !Blocks(a) && up.Invoke(a, f)));
         _ownAxis = DelegateSupport.ConvertDelegate<InputMapper.DelGetAxis>(new Func<InputAction, eFocusState, float>((a, f) => Drives(a, out var v) ? v : Blocks(a) ? Steered(a) : axis.Invoke(a, f)));
         InputMapper.GetButton = _ownButton;
         InputMapper.GetButtonDown = _ownDown;
@@ -281,11 +291,8 @@ public sealed class InputLease : IDisposable
 
     private static void Restore<T>(T? current, T? owned, T? original, string name, Action<T?> set) where T : Il2CppSystem.Object
     {
-        if (Same(current, owned)) set(original);
-        else if (!Same(current, original))
+        if (NativeObjects.Same(current, owned)) set(original);
+        else if (!NativeObjects.Same(current, original))
             Plugin.Logger.ErrorOnce("core-input-delegate-wrapped-over-by-another", "Input delegate " + name + " was wrapped over by another mod while input was leased; left as that mod set it (ForgeCore's wrapper now forwards everything).");
     }
-
-    private static bool Same(Il2CppSystem.Object? left, Il2CppSystem.Object? right)
-        => ReferenceEquals(left, right) || left != null && right != null && left.Pointer == right.Pointer;
 }

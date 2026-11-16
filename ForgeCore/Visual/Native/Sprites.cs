@@ -67,11 +67,13 @@ public sealed class SpriteSheet
         return sheet;
     }
 
+    private static readonly string SoftDotName = VisualNames.Join(VisualNames.Forge, ForgeCatalog.SoftDot), SoftLineName = VisualNames.Join(VisualNames.Forge, ForgeCatalog.SoftLine);
+
     /// <summary>The sheet <paramref name="name"/>, or null (logged once).</summary>
     public static SpriteSheet? Get(string name)
     {
-        if (name == VisualNames.Join(VisualNames.Forge, ForgeCatalog.SoftDot)) return SoftDot;
-        if (name == VisualNames.Join(VisualNames.Forge, ForgeCatalog.SoftLine)) return SoftLine;
+        if (name == SoftDotName) return SoftDot;
+        if (name == SoftLineName) return SoftLine;
         if (All.TryGet(name, out var sheet)) return sheet;
         if (Missing.First("sprite sheet", name)) Plugin.Logger.ErrorOnce("visual-has-no-sprite-sheet-sprite-sheet", "ForgeVisual has no sprite sheet " + name + ": " + Missing.Why(name, p => p == VisualNames.Forge || SheetPack(p), "sprite sheet") + ".");
         return null;
@@ -511,7 +513,8 @@ public static class SpritePool
         }
         if (p.FlipCount > 0)
         {
-            var frame = p.FlipFps > 0f ? (int)((now - p.T0) * p.FlipFps) % p.FlipCount : Math.Min(p.FlipCount - 1, (int)(k * p.FlipCount));
+            // The loop's frame wraps into 0..count-1 even when the time is negative (a negative FlipPhase).
+            var frame = p.FlipFps > 0f ? ((int)((now - p.T0) * p.FlipFps) % p.FlipCount + p.FlipCount) % p.FlipCount : Math.Min(p.FlipCount - 1, (int)(k * p.FlipCount));
             if (frame != p.Cell) { p.Cell = frame; p.F.sharedMesh = p.Sheet.Cells[frame]; }
         }
         switch (p.Face)

@@ -25,11 +25,14 @@ public sealed class LocalItemGate
         _patches = patches;
     }
 
-    /// <summary>Asked while the game reports a slot as held: true makes the game read it as empty. The first subscription puts the patch on.</summary>
-    public void Hide(Func<InventorySlot, bool> hide)
+    /// <summary>Asked while the game reports a slot as held: true makes the game read it as empty. The first subscription puts the
+    /// patch on (it stays on). Disposing the result ends the subscription.</summary>
+    public IDisposable Hide(Func<InventorySlot, bool> hide)
     {
+        if (hide == null) throw new ArgumentNullException(nameof(hide));
         Patches.Ensure(_module, _patches);
         _hides = [.. _hides, hide];
+        return new Subscription(() => _hides = Array.FindAll(_hides, other => !ReferenceEquals(other, hide)));
     }
 
     internal bool Hidden(InventorySlot slot)

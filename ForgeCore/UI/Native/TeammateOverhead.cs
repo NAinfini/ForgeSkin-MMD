@@ -24,6 +24,9 @@ internal static class TeammateOverheads
     {
         internal TextMeshPro? Text;
         internal IntPtr Anchor;
+        // What was last written to Text, so an unchanged refresh reads nothing back and builds no string.
+        internal string Shown = "";
+        internal Color Colour;
     }
 
     private static readonly Dictionary<IntPtr, Line> Lines = new();
@@ -64,12 +67,17 @@ internal static class TeammateOverheads
         if (line == null) Lines[key] = line = new Line();
         // A rebuilt marker or name must not keep drawing through the old native object.
         if (line.Text != null && line.Anchor != name.Pointer) Release(line);
-        var text = line.Text ??= Create(name);
+        if (line.Text == null)
+        {
+            line.Text = Create(name);
+            line.Shown = "";
+            line.Colour = line.Text.color;
+        }
+        var text = line.Text;
         line.Anchor = name.Pointer;
-        var wanted = Join.ToString();
-        if (text.text != wanted) text.SetText(wanted);
+        if (!Join.Equals(line.Shown.AsSpan())) text.SetText(line.Shown = Join.ToString());
         if (!text.gameObject.activeSelf) text.gameObject.SetActive(true);
-        text.color = colour!.Value;
+        if (line.Colour != colour!.Value) text.color = line.Colour = colour.Value;
         // Directly above the rendered name, in the name mesh's own local space (textBounds is local to it): no screen or parent
         // coordinate and no icon gutter is assumed.
         var bounds = name.textBounds;

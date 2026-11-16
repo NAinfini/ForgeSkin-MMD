@@ -126,13 +126,13 @@ internal static class CrosshairAttachments
             var rect = parent.TryCast<RectTransform>();
             var size = rect != null ? rect.rect.size : new Vector2(1920f, 1080f);
             var unit = size.y > 1f ? size.y / 1080f : 1f;
-            var now = ForgeCore.Frame.UnscaledDeltaTime;
+            var dt = ForgeCore.Frame.UnscaledDeltaTime;
             for (var i = 0; i < list.Count; i++)
             {
                 var a = list[i];
                 if (!Built.TryGetValue(a, out var pieces) || pieces.Root == null || pieces.Root.WasCollected)
                     Built[a] = pieces = Build(a, circle.m_crosshairImage, parent);
-                Place(a, pieces, circle.transform.localPosition, size, unit, now);
+                Place(a, pieces, circle.transform.localPosition, size, unit, dt);
             }
         }
         catch (Exception error) { Plugin.Error("ui-crosshair-attachments-failed-update", "Crosshair attachments failed to update: " + error); }
@@ -207,10 +207,10 @@ internal static class CrosshairAttachments
             var along = radius + a.TickLength * unit / 2f + 2f * unit;
             Size(p.Ticks[i], new Vector2(Mathf.Cos(r) * along, Mathf.Sin(r) * along), a.TickLength * unit, 2f * unit, angle);
         }
-        var marked = CrosshairRules.Graphics(true, a.HideWhileAiming, UIKit.Inventory.Aiming, false, false, 0, a.HasMark) > 0 && Project(a.MarkAt, size, out var at);
+        var at = Vector2.zero;
+        var marked = CrosshairRules.Graphics(true, a.HideWhileAiming, UIKit.Inventory.Aiming, false, false, 0, a.HasMark) > 0 && Project(a.MarkAt, size, out at);
         Show(p.Mark, marked);
         if (!marked) return;
-        Project(a.MarkAt, size, out at);
         var colour = a.MarkOk ? UIKitColors.Accent : UIKitColors.Dim;
         if (p.Mark.color != colour) p.Mark.color = colour;
         Size(p.Mark, at - new Vector2(centre.x, centre.y), 22f * unit, 22f * unit, 0f);

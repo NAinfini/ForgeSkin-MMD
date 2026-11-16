@@ -14,7 +14,7 @@ internal sealed class IkPause
 {
     internal static readonly IkPause None = new(System.Array.Empty<Behaviour>(), System.Array.Empty<bool[]>(), null);
 
-    private static readonly int[] Spine = { 7, 8, 9, 18, 19 };
+    private static readonly int[] Spine = { ClipRig.Spine0, ClipRig.Spine1, ClipRig.Spine2, ClipRig.Neck, ClipRig.Head };
 
     private readonly Behaviour[] _solvers;
     private readonly bool[][] _moves;
@@ -50,8 +50,8 @@ internal sealed class IkPause
                     for (var j = 0; j < ClipRig.Count; j++)
                         if (b?.transform != null && bones[j] != null && b.transform.Pointer == bones[j]!.Pointer) move[j] = true;
                 // An arm limb also turns its shoulder's child chain from the shoulder joint up.
-                if (move[11] || move[12] || move[13]) move[10] = true;
-                if (move[15] || move[16] || move[17]) move[14] = true;
+                if (move[ClipRig.LeftUpperArm] || move[ClipRig.LeftLowerArm] || move[ClipRig.LeftHand]) move[ClipRig.LeftShoulder] = true;
+                if (move[ClipRig.RightUpperArm] || move[ClipRig.RightLowerArm] || move[ClipRig.RightHand]) move[ClipRig.RightShoulder] = true;
                 continue;
             }
             var type = solvers[i].GetIl2CppType().Name;
@@ -94,7 +94,7 @@ internal sealed class IkPause
         Release();
         _held = true;
         for (var j = 0; j < _holdJoints.Length; j++) _holdJoints[j] = covered[j] > 0f;
-        var hips = covered[0] > 0f;
+        var hips = covered[ClipRig.Hip] > 0f;
         for (var i = 0; i < _solvers.Length; i++)
         {
             var solver = _solvers[i];
@@ -108,8 +108,8 @@ internal sealed class IkPause
         if (_sync == null || _sync.WasCollected) return;
         _syncWas = hips && _sync.IsEnabled();
         if (_syncWas) _sync.Disable();
-        _heldLeft = Any(covered, 10, 13);
-        _heldRight = Any(covered, 14, 17);
+        _heldLeft = Any(covered, ClipRig.LeftShoulder, ClipRig.LeftHand);
+        _heldRight = Any(covered, ClipRig.RightShoulder, ClipRig.RightHand);
         _heldAim = Touches(Spine, covered);
         if (_heldLeft) { _left = _sync.m_leftArmWeightTarget; _sync.SetLeftArmWeight(0f); }
         if (_heldRight) { _right = _sync.m_rightArmSolver != null ? _sync.m_rightArmSolver.IKPositionWeight : 0f; _sync.SetRightArmWeight(0f); }

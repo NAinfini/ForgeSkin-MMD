@@ -34,7 +34,7 @@ public sealed class OwnBodyView : IDisposable
     private readonly List<(Renderer Renderer, ShadowCastingMode Mode, int Layer, bool Off, bool Enabled)> _drawn = new();
     private readonly List<(GameObject Part, bool Active)> _parts = new();
     private readonly List<Renderer> _first = new();
-    private bool _showing;
+    private bool _showing, _whole;
 
     internal OwnBodyView(PlayerAgent agent, OwnBodyOptions options)
     {
@@ -54,24 +54,41 @@ public sealed class OwnBodyView : IDisposable
                 foreach (var part in model.m_gfxArms)
                     if (part != null) Part(part);
             foreach (var r in model.GetComponentsInChildren<Renderer>(true))
-            {
-                if (head.Contains(r.Pointer) || Skipped(r.name, options.Skip) || r.name.StartsWith(RigEffect, StringComparison.Ordinal)) continue;
-                _drawn.Add((r, r.shadowCastingMode, r.gameObject.layer, r.forceRenderingOff, r.enabled));
-                r.shadowCastingMode = ShadowCastingMode.On;
-                r.forceRenderingOff = false;
-                r.enabled = true;
-                if ((mask & (1 << r.gameObject.layer)) == 0) r.gameObject.layer = 0;
-            }
+                if (!head.Contains(r.Pointer)) Draw(r, options, mask);
         }
+        var animator = agent.AnimatorBody;
+        var body = animator != null ? animator.transform : null;
+        // A look hung on the body (PlayerLooks.Hang) is drawn with it, wherever the animator sits against the model.
+        if (body != null && (model == null || !body.IsChildOf(model.transform)))
+            foreach (var r in animator!.GetComponentsInChildren<Renderer>(true))
+                if (PlayerLooks.Worn(r.transform)) Draw(r, options, mask);
         HeldOff.HoldAll(agent.FPItemHolder, _first);
+        // A look cut for first person is whole again, as the game's head and arm parts are.
+        _whole = options.HeadAndArms;
+        if (_whole) OwnBodyCut.ShowWhole(true);
         // A view from inside the body (BodyClip, no head and arms) keeps the game's scale: its framing is made for that.
-        if (options.HeadAndArms && agent.AnimatorBody != null)
+        if (options.HeadAndArms && body != null)
         {
-            _body = agent.AnimatorBody.transform;
+            _body = body;
             _bodyScale = _body.localScale;
             _body.localScale = Vector3.one;
         }
         _showing = true;
+    }
+
+    // Drawn and casting a shadow. Its "off" is set under its holders (HeldOff): a person another mod hides (Persons.Hide, a look replacing it)
+    // stays hidden, and what comes back at Dispose is what the renderer had apart from its holders.
+    private void Draw(Renderer r, OwnBodyOptions options, int mask)
+    {
+        var name = r.name;
+        if (Skipped(name, options.Skip) || name.StartsWith(RigEffect, StringComparison.Ordinal)) return;
+        var holder = r.gameObject;
+        var layer = holder.layer;
+        _drawn.Add((r, r.shadowCastingMode, layer, HeldOff.IsOff(r), r.enabled));
+        r.shadowCastingMode = ShadowCastingMode.On;
+        HeldOff.SetUnder(r, false);
+        r.enabled = true;
+        if ((mask & (1 << layer)) == 0) holder.layer = 0;
     }
 
     private void Part(GameObject part)
@@ -98,10 +115,11 @@ public sealed class OwnBodyView : IDisposable
             if (r == null || r.WasCollected) continue;
             r.shadowCastingMode = mode;
             r.gameObject.layer = layer;
-            r.forceRenderingOff = off;
+            HeldOff.SetUnder(r, off);
             r.enabled = enabled;
         }
         foreach (var (part, active) in _parts) if (part != null && !part.WasCollected) part.SetActive(active);
         HeldOff.ReleaseAll(_first);
+        if (_whole) OwnBodyCut.ShowWhole(false);
     }
 }

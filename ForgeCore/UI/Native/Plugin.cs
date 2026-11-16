@@ -4,10 +4,10 @@ using BepInEx;
 namespace ForgeUI;
 
 /// <summary>The UI part of ForgeCore: started by ForgeCore's plugin (<see cref="Load"/>), stepped by its driver (<see cref="UIKitFrame"/>).
-/// <see cref="Id"/> names its configuration file, log source, Harmony patches and HUD elements.</summary>
+/// <see cref="Id"/> (ForgeCore's own) names its settings, log source, Harmony patches and HUD elements.</summary>
 internal static class Plugin
 {
-    internal const string Id = "NAinfini.ForgeUI";
+    internal const string Id = ForgeCore.Plugin.Id;
 
     /// <summary>This library's ForgeCore log.</summary>
     internal static readonly ForgeCore.ModLog Logger = ForgeCore.Log.For(Id);
@@ -88,11 +88,7 @@ internal static class UIKitFrame
     private static bool _playing;
 
     /// <summary>In a level with the player in control (no menu, map or chat open).</summary>
-    internal static bool InPlay()
-    {
-        try { return GameStateManager.CurrentStateName == eGameStateName.InLevel && FocusStateManager.CurrentState == eFocusState.FPS; }
-        catch (Exception error) { Plugin.Error("ui-forge-ui-could-not-read-game", "Forge UI could not read the game state: " + error); return false; }
-    }
+    internal static bool InPlay() => ForgeCore.GameEventSources.InLevel && ForgeCore.Frame.Focus == eFocusState.FPS;
 
     internal static void Update()
     {

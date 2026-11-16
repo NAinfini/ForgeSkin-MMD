@@ -35,9 +35,10 @@ internal static class ProceduralChecks
                  })
             check(Refused(text), "procedural: a catalogue with " + label + " is refused");
 
-        // The shipped bundle matches its sources (ShaderBuild.cs hashes the four shaders, then the programs, then the catalogue).
+        // The shipped bundle matches its sources (ShaderBuild.cs hashes the shaders, then the toon include, the programs and the catalogue).
         var all = new StringBuilder();
-        foreach (var name in new[] { "ForgeVisualParticle.shader", "ForgeVisualMarker.shader", "ForgeVisualOutline.shader", "ForgeVisualProcedural.shader" })
+        foreach (var name in new[] { "ForgeVisualParticle.shader", "ForgeVisualMarker.shader", "ForgeVisualOutline.shader", "ForgeVisualProcedural.shader",
+                     "ForgeVisualToonForward.shader", "ForgeVisualToonDeferred.shader", "ForgeVisualToonOverlay.shader", "ForgeVisualLitCutout.shader", "ForgeToon.hlsl" })
             all.Append(File.ReadAllText(Path.Combine(shaders, name)).Replace("\r\n", "\n"));
         all.Append(programs.Replace("\r\n", "\n")).Append(json.Replace("\r\n", "\n"));
         var sha = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(all.ToString()))).ToLowerInvariant();

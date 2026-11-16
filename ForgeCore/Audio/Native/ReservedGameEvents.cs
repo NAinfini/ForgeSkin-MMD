@@ -5,27 +5,19 @@ using UnityEngine;
 
 namespace ForgeAudio;
 
-/// <summary>Plays a mod's own sound for a reserved event (<see cref="AudioKit.ReserveGameEvent"/>). Called on the main
-/// thread from inside the game's post, once per post; the game's post is dropped whatever the handler does.</summary>
-public interface IReservedEventHandler
-{
-    /// <summary>The game posted <paramref name="eventId"/>. <paramref name="soundPlayer"/> is the native pointer of the
-    /// game sound player it was posted on (zero when the post has none, as the game's static posts). When
-    /// <paramref name="positioned"/> is true the post named <paramref name="position"/>; otherwise it plays where
-    /// its sound player is, which the game keeps inside the sound engine and no script can read back.</summary>
-    void Play(uint eventId, IntPtr soundPlayer, Vector3 position, bool positioned);
-}
-
 public static partial class AudioKit
 {
     /// <summary>Gives a mod its own sound event ID to write into a place the game reads an event ID from (a data block
     /// field, say). The game then posts it like any event of its own, on every path that reads that place, and instead of
-    /// reaching the sound engine the post calls <paramref name="handler"/>. Nothing else posting other IDs is touched:
+    /// reaching the sound engine the post calls <paramref name="handler"/> on the main thread, once per post, with the event ID,
+    /// the native pointer of the game sound player it was posted on (zero when the post has none, as the game's static posts),
+    /// the position and whether the post named it (when it did not, the post plays where its sound player is, which the game keeps
+    /// inside the sound engine and no script can read back); the game's post is dropped whatever the handler does. Nothing else posting other IDs is touched:
     /// this replaces one place, unlike matching a game event ID, which many places share. The ID is never one of the
     /// game's events and stays reserved until the game closes. The hooks go on the game at the first reservation. Main
     /// thread only. Returns 0 (and logs why) on an invalid argument, off the main thread, when all IDs are taken or when
     /// the game's posts cannot be hooked; write nothing then, and the game's own sound stays.</summary>
-    public static uint ReserveGameEvent(string modId, IReservedEventHandler handler) => ReservedEvents.Reserve(modId, handler);
+    public static uint ReserveGameEvent(string modId, Action<uint, IntPtr, Vector3, bool> handler) => ReservedEvents.Reserve(modId, handler);
 }
 
 /// <summary>The range of reserved IDs and who answers each. The hooks ask only whether an ID falls in the range, so
@@ -33,14 +25,14 @@ public static partial class AudioKit
 internal static class ReservedEvents
 {
     private const uint Capacity = 4096, FirstCandidate = 0xF0A00000;
-    private static readonly IReservedEventHandler[] Handlers = new IReservedEventHandler[Capacity];
+    private static readonly Action<uint, IntPtr, Vector3, bool>[] Handlers = new Action<uint, IntPtr, Vector3, bool>[Capacity];
     private static readonly bool[] Failed = new bool[Capacity];
     private static readonly string[] Owners = new string[Capacity];
     private static uint _first;
     private static uint _count;
     private static bool _disabled;
 
-    internal static uint Reserve(string modId, IReservedEventHandler handler)
+    internal static uint Reserve(string modId, Action<uint, IntPtr, Vector3, bool> handler)
     {
         string? problem = null;
         if (!AudioKit.ValidIdentity(modId)) problem = "invalid mod ID";
@@ -105,7 +97,7 @@ internal static class ReservedEvents
     {
         var index = id - _first;
         if (index >= _count) return false;
-        try { Handlers[index].Play(id, soundPlayer, position, positioned); }
+        try { Handlers[index](id, soundPlayer, position, positioned); }
         catch (Exception error)
         {
             if (!Failed[index]) AudioLog.Report(AudioError.CallbackFailed, Owners[index] + ": reserved game event handler failed (" + error + ").");

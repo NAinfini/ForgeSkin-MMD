@@ -225,6 +225,11 @@ public static class WorldStates
         else terminal.m_command.AddOutput(line, false);
     }
 
+    /// <summary>A prefixed line printed as the game prints its command list: <paramref name="text"/> (its written <c>\n</c> breaks included)
+    /// indented under the column after <paramref name="prefix"/>, with the game's <paramref name="spacing"/>.</summary>
+    public static void TerminalPrint(LG_ComputerTerminal terminal, string prefix, string text, bool spacing)
+        => terminal.m_command.AddOutputWithPrefixAndTabbedIndentation(prefix, text, spacing);
+
     /// <summary>What is typed at a terminal so far. With <paramref name="sound"/> through the terminal's receive handler for another player's
     /// typing (<c>SyncIncomingTerminalString</c>), which plays a key sound per new character; otherwise the input line is only shown.</summary>
     public static void TerminalTyping(LG_ComputerTerminal terminal, string typed, bool sound)

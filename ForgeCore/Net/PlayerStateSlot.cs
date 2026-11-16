@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace ForgeCore;
@@ -34,13 +35,17 @@ public sealed class PlayerStateSlot<T> where T : unmanaged
     /// <summary>A player's value arrived (true) or went (false). The local player's own never raises it.</summary>
     public event Action<ulong, bool>? Changed;
 
-    /// <summary>Sets the local player's value, begun at <paramref name="start"/> (this peer's clock), and sends it to the others.</summary>
+    /// <summary>Sets the local player's value, begun at <paramref name="start"/> (this peer's clock), and sends it to the others. The
+    /// value it already holds, begun at the same moment, is no change and sends nothing.</summary>
     public void Publish(T value, float start)
     {
+        if (_row.Local != null && start == _ownStart && BytesOf(ref value).SequenceEqual(BytesOf(ref _own))) return;
         _own = value;
         _ownStart = start;
-        _row.Set(Frame());
+        _row.Keep(Frame());
     }
+
+    private static ReadOnlySpan<byte> BytesOf(ref T value) => MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref value, 1));
 
     /// <summary>Takes the local player's value back; nothing happens when there is none.</summary>
     public void Clear() => _row.Set(null);
@@ -68,7 +73,7 @@ public sealed class PlayerStateSlot<T> where T : unmanaged
     /// <summary>The seconds since it began, then the value; written at the moment of sending.</summary>
     private byte[] Frame()
     {
-        var data = new byte[4 + Marshal.SizeOf<T>()];
+        var data = new byte[4 + Unsafe.SizeOf<T>()];
         BitConverter.TryWriteBytes(data.AsSpan(0), _node.Clock() - _ownStart);
         MemoryMarshal.Write(data.AsSpan(4), ref _own);
         return data;
@@ -81,7 +86,7 @@ public sealed class PlayerStateSlot<T> where T : unmanaged
             if (_values.Remove(sender)) Changed?.Invoke(sender, false);
             return;
         }
-        if (data.Length != 4 + Marshal.SizeOf<T>())
+        if (data.Length != 4 + Unsafe.SizeOf<T>())
         {
             Net.Drop(Net.DropStateSize);
             _log.ErrorOnce(Net.DropStateSize, "A player state of " + _log.ModId + " came with " + data.Length + " bytes; it was dropped.");
@@ -89,8 +94,8 @@ public sealed class PlayerStateSlot<T> where T : unmanaged
         }
         var ago = BitConverter.ToSingle(data, 0);
         var value = MemoryMarshal.Read<T>(data.AsSpan(4));
-        // A packet the sender could not have written (seconds that are not a finite non-negative number, a float field that is NaN or
-        // infinite) is counted and dropped; the sender's earlier value stays.
+        // A packet the sender could not have written (seconds that are not a finite non-negative number, a top-level float field that is NaN
+        // or infinite) is counted and dropped; the sender's earlier value stays.
         if (!float.IsFinite(ago) || ago < 0f || !Finite(value))
         {
             Net.Drop(Net.DropStateInvalid);
@@ -101,22 +106,34 @@ public sealed class PlayerStateSlot<T> where T : unmanaged
         Changed?.Invoke(sender, true);
     }
 
-    private static readonly System.Reflection.FieldInfo[] FloatFields = FloatsOf(typeof(T));
+    /// <summary>Where each top-level float (size 4) and double (size 8) field of <typeparamref name="T"/> lies in its bytes, found once:
+    /// a default value with only that field set to a pattern whose every byte is non-zero shows the field's first byte. Floats inside a
+    /// nested struct (a Vector3 field, say) are not checked.</summary>
+    private static readonly (int At, int Size)[] FloatFields = FloatsOf();
 
-    private static System.Reflection.FieldInfo[] FloatsOf(Type type)
+    private static (int At, int Size)[] FloatsOf()
     {
-        var found = new List<System.Reflection.FieldInfo>();
-        foreach (var field in type.GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
-            if (field.FieldType == typeof(float) || field.FieldType == typeof(double)) found.Add(field);
+        var found = new List<(int, int)>();
+        foreach (var field in typeof(T).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
+        {
+            var single = field.FieldType == typeof(float);
+            if (!single && field.FieldType != typeof(double)) continue;
+            object probe = default(T);
+            field.SetValue(probe, single ? (object)BitConverter.Int32BitsToSingle(0x01010101) : BitConverter.Int64BitsToDouble(0x0101010101010101));
+            var value = (T)probe;
+            var bytes = BytesOf(ref value);
+            var at = 0;
+            while (bytes[at] == 0) at++;
+            found.Add((at, single ? 4 : 8));
+        }
         return found.ToArray();
     }
 
     private static bool Finite(T value)
     {
-        if (FloatFields.Length == 0) return true;
-        object boxed = value;
-        foreach (var field in FloatFields)
-            if (field.GetValue(boxed) is float single ? !float.IsFinite(single) : !double.IsFinite((double)field.GetValue(boxed)!)) return false;
+        var bytes = BytesOf(ref value);
+        foreach (var (at, size) in FloatFields)
+            if (size == 4 ? !float.IsFinite(BitConverter.ToSingle(bytes.Slice(at))) : !double.IsFinite(BitConverter.ToDouble(bytes.Slice(at)))) return false;
         return true;
     }
 }

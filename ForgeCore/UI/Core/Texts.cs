@@ -90,15 +90,16 @@ public sealed class UITexts
     public IReadOnlyCollection<string> Languages => (IReadOnlyCollection<string>?)_tables?.Keys ?? Array.Empty<string>();
 
     /// <summary>The text of <paramref name="key"/> in the current language; the <c>en</c> text (and one logged error) when the
-    /// current language lacks it; the key itself (and one logged error) when <c>en</c> lacks it too.</summary>
+    /// current language lacks it; an empty text (and one logged error naming the key) when <c>en</c> lacks it too, so a key name never
+    /// reaches the screen.</summary>
     public string Text(string key)
     {
         if (key == null) throw new ArgumentNullException(nameof(key));
         if (_builtFor != Version) Build();
         if (_current.TryGetValue(key, out var text)) return text;
         if (Fallback(key, out text)) return text;
-        _once.Report(key, (o: _owner, k: key, l: Language, r: Reference), static s => s.o + ": '" + s.k + "' has no text in " + s.l + " or " + s.r + "; showing the key.");
-        return key;
+        _once.Report(key, (o: _owner, k: key, l: Language, r: Reference), static s => s.o + ": '" + s.k + "' has no text in " + s.l + " or " + s.r + "; showing nothing.");
+        return "";
     }
 
     /// <summary><see cref="Text(string)"/> with its placeholders filled from <paramref name="args"/> (invariant culture). A text whose
@@ -222,7 +223,7 @@ public sealed class UITexts
         if (tables.Count == 0) return;
         if (!tables.TryGetValue(Reference, out var reference))
         {
-            _error(_owner + ": no " + Reference + ".json, the language every other falls back to; a missing text shows its key.");
+            _error(_owner + ": no " + Reference + ".forge, the language every other falls back to; a missing text shows its key.");
             return;
         }
         foreach (var (code, table) in tables)
@@ -237,10 +238,10 @@ public sealed class UITexts
                 var ours = Placeholders(text);
                 var theirs = Placeholders(english);
                 if (ours != theirs)
-                    _error(_owner + " " + code + ".json: '" + key + "' has placeholders " + Describe(ours) + " but " + Reference + ".json has " + Describe(theirs) + ".");
+                    _error(_owner + " " + code + ".forge: '" + key + "' has placeholders " + Describe(ours) + " but " + Reference + ".forge has " + Describe(theirs) + ".");
             }
-            if (missing.Count > 0) _error(_owner + " " + code + ".json: missing " + missing.Count + " text(s) that " + Reference + ".json has: " + string.Join(", ", missing) + ".");
-            if (extra.Count > 0) _error(_owner + " " + code + ".json: " + extra.Count + " text(s) that " + Reference + ".json does not have: " + string.Join(", ", extra) + ".");
+            if (missing.Count > 0) _error(_owner + " " + code + ".forge: missing " + missing.Count + " text(s) that " + Reference + ".forge has: " + string.Join(", ", missing) + ".");
+            if (extra.Count > 0) _error(_owner + " " + code + ".forge: " + extra.Count + " text(s) that " + Reference + ".forge does not have: " + string.Join(", ", extra) + ".");
         }
     }
 

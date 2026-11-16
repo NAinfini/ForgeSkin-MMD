@@ -24,22 +24,24 @@ public abstract class UIControl
 }
 
 /// <summary>An on/off switch. A press flips it; right turns it on, left off. <c>on</c> and <c>off</c> are the words shown beside it
-/// (default "ON" and "OFF").</summary>
+/// (default the library's "on" and "off" in the game's language).</summary>
 public sealed class UIToggle : UIControl
 {
     private readonly Func<bool> _get;
     private readonly Action<bool> _set;
+    private readonly string? _on;
+    private readonly string? _off;
 
     public UIToggle(string label, Func<bool> get, Action<bool> set, string? on = null, string? off = null) : base(label)
     {
         _get = get ?? throw new ArgumentNullException(nameof(get));
         _set = set ?? throw new ArgumentNullException(nameof(set));
-        On = on ?? "ON";
-        Off = off ?? "OFF";
+        _on = on;
+        _off = off;
     }
 
-    public string On { get; }
-    public string Off { get; }
+    public string On => _on ?? UIKit.Kit.Text("toggle.on");
+    public string Off => _off ?? UIKit.Kit.Text("toggle.off");
     public bool Value => _get();
 
     /// <summary>Puts <paramref name="value"/> through the setter when it differs.</summary>
@@ -170,6 +172,25 @@ public sealed class UISlider : UIControl
 /// for what is set). Each returns the rectangle a press or drag acts on, in the canvas's units.</summary>
 internal static class MenuControlLook
 {
+    /// <summary>A control as one row over <paramref name="r"/>: a chamfered plate, its frame and an edge bar (amber while pressed or held),
+    /// and the control inside it. Returns the span a press maps to a value.</summary>
+    internal static Rect Row(MenuCanvas c, Rect r, UIControl control, bool focus, bool held)
+    {
+        float left = r.XMin(), right = r.XMax(), bottom = r.YMin(), top = r.YMax(), h = top - bottom;
+        var lit = focus || held;
+        c.Plate(r, h * 0.12f, lit ? MenuLook.Raised : MenuLook.Panel);
+        c.Frame(r, h * 0.12f, lit ? MenuLook.Line : MenuLook.LineDim);
+        c.Rect(Rect.MinMaxRect(left + 2f, bottom + h * 0.16f, left + (focus ? 6f : 4f), top - h * 0.16f), lit ? MenuLook.Amber : MenuLook.LineDim);
+        var inner = Rect.MinMaxRect(left + 10f, bottom, right - 4f, top);
+        return control switch
+        {
+            UISlider slider => Slider(c, inner, slider, focus, held),
+            UIToggle toggle => Toggle(c, inner, toggle, focus),
+            UIPick pick => Pick(c, inner, pick, focus),
+            _ => default,
+        };
+    }
+
     /// <summary>A slider row inside <paramref name="r"/>: the label top left, the number top right, the track below, filled in amber up to the
     /// value, with a handle; <paramref name="focus"/> brightens it, <paramref name="held"/> (a drag in progress) widens the handle. Returns the
     /// track, the span a press maps to a value.</summary>

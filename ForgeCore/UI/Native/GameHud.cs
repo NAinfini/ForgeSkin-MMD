@@ -210,6 +210,8 @@ internal static class GameHud
     internal static readonly GameHudClaims Claims = new();
     private static readonly Registry<object> Handles = new();
     private static readonly Dictionary<string, object> ById = new(StringComparer.Ordinal);
+    // The low 16 GameHudPart bits, the ones the per-part loops walk. GlassCurve (bit 16) lies past them on purpose: like GlassReflection it
+    // has no pieces and goes through Glass(). A new part with pieces placed past bit 15 must raise this, or the loops skip it.
     private const int Parts = 16;
     // The glass reflection and the glass curve are the game's HUD blit parameters, not pieces: hidden, they are set to 0 (again whenever
     // the game sets them back) and the game's own values are put back on release.
@@ -250,6 +252,9 @@ internal static class GameHud
     /// <summary>The parts hidden now.</summary>
     internal static GameHudPart Hidden { get; private set; }
 
+    /// <summary>The scale <paramref name="node"/> has when shown: the scale remembered while a hidden part keeps it collapsed, else its own.</summary>
+    internal static Vector3 HomeScale(Transform node) => Applied.TryGetValue(node.Pointer, out var c) ? c.Home : node.localScale;
+
     private static List<T>[] NewLists<T>()
     {
         var lists = new List<T>[Parts];
@@ -288,7 +293,7 @@ internal static class GameHud
     private static string? Problem(out GameHudRelease reason)
     {
         reason = GameHudRelease.LeftLevel;
-        if (GameStateManager.CurrentStateName != eGameStateName.InLevel)
+        if (!ForgeCore.GameEventSources.InLevel)
         {
             reason = SNet.IsInLobby ? GameHudRelease.LeftLevel : GameHudRelease.Disconnected;
             return "not in a level";
@@ -340,7 +345,7 @@ internal static class GameHud
     private static void Apply()
     {
         var hidden = HudFocus.Away ? GameHudPart.None : Claims.Hidden;
-        var inLevel = GameStateManager.CurrentStateName == eGameStateName.InLevel;
+        var inLevel = ForgeCore.GameEventSources.InLevel;
         if (inLevel) GiveBackDeferred();
         var released = Hidden & ~hidden;
         if (released != GameHudPart.None)

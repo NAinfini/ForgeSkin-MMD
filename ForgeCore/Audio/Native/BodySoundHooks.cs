@@ -2,7 +2,6 @@ using System;
 using System.Runtime.InteropServices;
 using Feedback;
 using HarmonyLib;
-using Il2CppInterop.Runtime;
 using UnityEngine;
 
 namespace ForgeAudio;
@@ -19,7 +18,7 @@ internal static class BodySounds
     private const BodySound AllKinds = BodySound.Footstep | BodySound.Movement;
     private static int _rootOffset = -1;
 
-    internal static BodySoundClaim? Claim(string modId, GameObject root, BodySound kinds, IBodySoundHandler handler, int priority)
+    internal static BodySoundClaim? Claim(string modId, GameObject root, BodySound kinds, Func<BodySound, Vector3, bool> handler, int priority)
     {
         string? problem = null;
         if (!AudioKit.ValidIdentity(modId)) problem = "invalid mod ID";
@@ -63,9 +62,7 @@ internal static class BodySounds
         if (_rootOffset == int.MinValue) return false;
         try
         {
-            var field = IL2CPP.GetIl2CppField(Il2CppClassPointerStore<FeedbackPlayer>.NativeClassPtr, "m_root");
-            if (field == IntPtr.Zero) throw new InvalidOperationException("FeedbackPlayer has no m_root field");
-            _rootOffset = (int)IL2CPP.il2cpp_field_get_offset(field);
+            _rootOffset = ForgeCore.NativeObjects.FieldOffset<FeedbackPlayer>("m_root");
             return true;
         }
         catch (Exception error)
@@ -92,7 +89,7 @@ internal static class BodySounds
         try
         {
             if (!positioned) position = claim.RootTransform.position;
-            return claim.Handler.Play(kind, position);
+            return claim.Handler(kind, position);
         }
         catch (Exception error)
         {

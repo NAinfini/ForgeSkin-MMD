@@ -7,11 +7,12 @@ namespace ForgeVisual;
 /// <summary>
 /// Materials for a <see cref="SurfaceAppearance"/>: stateless construction, the caller owns and destroys what it gets. Every host (model
 /// placements, weapon surfaces, enemy parts, imported models) paints through <see cref="Paint"/>; a glow is written only by
-/// <see cref="Glow.Write"/>. Invisible is not a material: the surface keeps its own and only its shadow is drawn (<see cref="SetShadowOnly"/>).
+/// <see cref="Glow.Write(Material, Color, Texture)"/>. Invisible is not a material: the surface keeps its own and only its shadow is drawn (<see cref="SetShadowOnly"/>).
 /// </summary>
 public static partial class SurfaceLook
 {
-    private static readonly int ColorId = Shader.PropertyToID("_Color"), BumpMap = Shader.PropertyToID("_BumpMap"),
+    private const string ColorName = "_Color";
+    private static readonly int ColorId = Shader.PropertyToID(ColorName), BumpMap = Shader.PropertyToID("_BumpMap"),
         MetallicGlossMap = Shader.PropertyToID("_MetallicGlossMap");
     private static Shader? _surfaceShader;
 
@@ -26,7 +27,7 @@ public static partial class SurfaceLook
         try
         {
             if (look.GlowColor is { } glow)
-                Glow.Write(material, Glow.Srgb(glow, look.GlowBrightness * (Glow.IsSurface(material) ? Glow.SurfaceEmissionPerBrightness : 1f)));
+                Glow.Write(material, new Color(glow[0], glow[1], glow[2]), look.GlowBrightness * (Glow.IsSurface(material) ? Glow.SurfaceEmissionPerBrightness : 1f));
             return material;
         }
         catch { UnityEngine.Object.Destroy(material); throw; }
@@ -44,7 +45,9 @@ public static partial class SurfaceLook
         srgb = Array.Empty<float>(); alpha = 1f;
         if (material == null || !material.HasProperty(ColorId)) return false;
         var colour = material.GetColor(ColorId);
-        srgb = new[] { Glow.LinearToSrgb(colour.r), Glow.LinearToSrgb(colour.g), Glow.LinearToSrgb(colour.b) };
+        srgb = Glow.IsHdr(material, ColorName)
+            ? new[] { ColourSpace.ToSrgb(colour.r), ColourSpace.ToSrgb(colour.g), ColourSpace.ToSrgb(colour.b) }
+            : new[] { colour.r, colour.g, colour.b };
         alpha = colour.a;
         return true;
     }
@@ -62,7 +65,7 @@ public static partial class SurfaceLook
             CopyTexture(source, material, BumpMap);
             CopyTexture(source, material, MetallicGlossMap);
             float alpha = source.HasProperty(ColorId) ? source.GetColor(ColorId).a : 1f;
-            material.SetColor(ColorId, Glow.Srgb(tint, 1f, alpha));
+            material.SetColor(ColorId, Glow.Value(material, ColorName, new Color(tint[0], tint[1], tint[2], alpha), 1f));
             Glow.Preserve(source, material);
             return material;
         }

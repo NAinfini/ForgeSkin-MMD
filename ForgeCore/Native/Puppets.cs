@@ -17,7 +17,8 @@ public static class Puppets
 {
     /// <summary>True while the level only shows a recording: set by the package that plays it (ForgeReplay) from the moment the
     /// recording's level is asked for until the playback ends. Nothing played in such a level is the game's own: Forge's behaviour does
-    /// not run in it (ForgeEngine adopts no plan for it, so no trigger fires and no zone is judged).</summary>
+    /// not run in it (ForgeEngine adopts no plan for it, so no trigger fires and no zone is judged) and no enemy is spawned, while the
+    /// level's own content (placed models and text, task objects, fixed items, containers) is built as in any level.</summary>
     public static bool Playback { get; set; }
 
     /// <summary>Whether <paramref name="enemy"/> is held as a puppet now. One set lookup, none while no enemy is held.</summary>
@@ -448,10 +449,7 @@ public sealed class EnemyPuppet : IDisposable
         if (!Held) return false;
         PuppetAttackHook.Held.Remove(_pointer);
         Agent.Anim.enabled = true;
-        Agent.Damage.IsImortal = false;
-        // The game's instant death is a melee hit of 1000: an enemy with more health (a Tank) would keep standing, its death sound played.
-        Agent.Damage.Health = 0.01f;
-        Agent.Damage.InstantDead(true);
+        Combat.Kill(Agent.Damage);
         _disposed = true;
         return !Agent.Alive;
     }

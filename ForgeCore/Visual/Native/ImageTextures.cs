@@ -33,21 +33,47 @@ public sealed class ImageTextures : IDisposable
         if (_textures.TryGetValue(slot, out texture)) return true;
         // ForgeCore reads the header first, so a PNG of another size is refused before it decodes, and destroys a texture the game could not decode.
         texture = ForgeCore.Images.Decode(png, out var failure, linear, readable: _surface, mipChain: _surface, maxSide: Math.Max(width, height), width: width, height: height, normalMap: normalMap);
+        texture = Adopt(slot, texture, failure, width, height, out code, out error);
+        return texture != null;
+    }
+
+    /// <summary><see cref="TryGet"/>'s decode spread over later frames (<see cref="ForgeCore.Images.Queue(byte[], System.Action{UnityEngine.Texture2D, string}, bool, bool, int, bool, bool)"/>, within its frame budget):
+    /// true when the texture is already decoded or failed (<see cref="TryGet"/> then answers at once), false while it is still queued.
+    /// The first call for a slot queues it.</summary>
+    public bool Prepare(string key, byte[] png, int width, int height, bool linear = false, bool normalMap = false)
+    {
+        var slot = normalMap ? key + "|normal" : linear ? key + "|linear" : key;
+        if (_textures.ContainsKey(slot) || _failures.ContainsKey(slot)) return true;
+        if (_queued.ContainsKey(slot)) return false;
+        _queued[slot] = ForgeCore.Images.Queue(png, (texture, failure) =>
+        {
+            _queued.Remove(slot);
+            Adopt(slot, texture, failure, width, height, out _, out _);
+        }, linear, _surface, Math.Max(width, height), normalMap);
+        return false;
+    }
+
+    private readonly Dictionary<string, ForgeCore.ImageJob> _queued = new(StringComparer.Ordinal);
+
+    // A decoded texture checked against the size the caller expects and kept in its slot, or the slot remembered as failed.
+    private Texture2D? Adopt(string slot, Texture2D? texture, string failure, int width, int height, out string code, out Exception? error)
+    {
+        code = ""; error = null;
         if (texture == null || texture.width != width || texture.height != height)
         {
             if (texture != null) UnityEngine.Object.Destroy(texture);
-            texture = null;
             _failures[slot] = code = "image-decode-failed";
             if (failure.Length != 0) error = new InvalidOperationException(failure);
-            return false;
+            return null;
         }
         texture.name = "Forge image " + slot;
         texture.filterMode = _surface ? FilterMode.Trilinear : FilterMode.Bilinear;
         texture.wrapMode = _surface ? TextureWrapMode.Repeat : TextureWrapMode.Clamp;
-        if (_surface) texture.Apply(true, true);
+        // TryGet's decode keeps the CPU copy to build the mips here; the queue's arrives with them, already on the GPU.
+        if (_surface && texture.isReadable) texture.Apply(true, true);
         if (_keep) ForgeCore.Assets.Keep(texture);
         _textures.Add(slot, texture);
-        return true;
+        return texture;
     }
 
     /// <summary>One PNG or JPEG of unknown size (at most <paramref name="maxSide"/> on a side, read from its header first) as a texture the
@@ -61,6 +87,8 @@ public sealed class ImageTextures : IDisposable
     /// <summary>Destroys every texture and forgets the failures.</summary>
     public void Dispose()
     {
+        foreach (var job in _queued.Values) job.Cancel();
+        _queued.Clear();
         foreach (var texture in _textures.Values) if (texture != null) UnityEngine.Object.Destroy(texture);
         _textures.Clear();
         _failures.Clear();

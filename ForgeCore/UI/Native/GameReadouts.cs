@@ -234,7 +234,7 @@ public sealed class GameTeammates
     private const int Max = 8;
     private readonly TeammateState[] _states = new TeammateState[Max];
     private readonly Cache[] _cache = new Cache[Max];
-    private int _count, _frame = -1;
+    private int _count, _frame = -1, _lastFrame = -1;
     private float _nextNames, _nextSlow;
     private ulong _speaker;
     /// <summary>What was read for one teammate on an earlier frame, found again by the agent's pointer whatever the order.</summary>
@@ -281,7 +281,8 @@ public sealed class GameTeammates
         for (var i = 0; i < Max; i++)
         {
             if (_cache[i].Agent == agent) return i;
-            if (free < 0 && (_cache[i].Agent == IntPtr.Zero || _cache[i].Frame != _frame)) free = i;
+            // Free: never used, or not read on the last read either (a teammate not reached yet this read keeps its entry).
+            if (free < 0 && (_cache[i].Agent == IntPtr.Zero || (_cache[i].Frame != _frame && _cache[i].Frame != _lastFrame))) free = i;
         }
         free = Math.Max(free, 0);
         _cache[free] = new Cache { Agent = agent, Frame = _frame, Name = null, Ammo = -1f };
@@ -291,6 +292,7 @@ public sealed class GameTeammates
     private void Read()
     {
         if (_frame == Time.frameCount) return;
+        _lastFrame = _frame;
         _frame = Time.frameCount;
         _count = 0;
         try
@@ -443,6 +445,18 @@ public sealed class GameObjectives
     internal GameObjectives()
     {
         for (var i = 0; i < 3; i++) _layers[i] = new ObjectiveLayer((ObjectiveTier)i, "", "", "", default, false);
+        ForgeCore.GameEvents.LanguageChanged += ForgetTags;
+    }
+
+    /// <summary>The layer tags are read once and kept; a new level or a language switch reads them again (in the game's new language).</summary>
+    private void ForgetTags()
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            var old = _layers[i];
+            _layers[i] = new ObjectiveLayer(old.Tier, "", old.Main, old.Sub, old.Status, old.Visible);
+        }
+        _dirty = true;
     }
 
     public int Version { get; private set; }
@@ -594,7 +608,7 @@ public sealed class GameObjectives
         for (var i = 0; i < 3; i++) { _main[i] = null; _data[i] = null; _visible[i] = false; }
         _header = null;
         _progressionCount = 0;
-        _dirty = true;
+        ForgetTags();
         _timerSecond = int.MinValue;
         SetTimer(false, "", "");
     }

@@ -2,6 +2,7 @@ using System;
 using AIGraph;
 using Agents;
 using Gear;
+using Player;
 using UnityEngine;
 
 namespace ForgeCore;
@@ -40,20 +41,21 @@ public static partial class Combat
     public static bool Noise(Vector3 position, float radius, int preferredDimension = -1)
         => radius > 0f && Level.CourseNodeAt(position, 1f, out var node, out _, preferredDimension) && Noise(position, radius, node);
 
-    /// <summary>The game's one noise entry (<c>NoiseManager.MakeNoise</c>) with every field of the request given: no noise maker, a
-    /// loudness band from <paramref name="radiusMin"/> to <paramref name="radiusMax"/>, how much the vertical distance counts
-    /// (<paramref name="verticalScale"/>), the noise <paramref name="type"/>, whether it spreads into neighbouring areas and whether
-    /// the first node is raycast. Returns false (and makes nothing) for a radius of 0 or less or without a course node. A request
-    /// the game rejects because the node or maker was collected in between throws the game's own exception.</summary>
+    /// <summary>The game's one noise entry (<c>NoiseManager.MakeNoise</c>) with every field of the request given: who made it
+    /// (<paramref name="maker"/>, the request's <c>noiseMaker</c>; a player is the game's one noise maker, null for none, as the
+    /// game's own loud events give), a loudness band from <paramref name="radiusMin"/> to <paramref name="radiusMax"/>, how much the
+    /// vertical distance counts (<paramref name="verticalScale"/>), the noise <paramref name="type"/>, whether it spreads into
+    /// neighbouring areas and whether the first node is raycast. Returns false (and makes nothing) for a radius of 0 or less or
+    /// without a course node. A request the game rejects because the node or maker was collected in between throws the game's own exception.</summary>
     public static bool Noise(Vector3 position, float radiusMin, float radiusMax, float verticalScale, AIG_CourseNode? node,
-        NM_NoiseType type, bool includeNeighbours, bool raycastFirstNode)
+        NM_NoiseType type, bool includeNeighbours, bool raycastFirstNode, PlayerAgent? maker = null)
     {
         if (radiusMax <= 0f || node == null || node.WasCollected) return false;
         // The parameterless constructor boxes the native value correctly (the generated nine-argument one reads this.Pointer
-        // before boxing), so every field is set here.
+        // before boxing), so every field is set here. The maker field is the game's interface type; the player object is it.
         NoiseManager.MakeNoise(new NM_NoiseData
         {
-            noiseMaker = null,
+            noiseMaker = maker == null ? null : new INM_NoiseMaker(maker.Pointer),
             node = node,
             position = position,
             radiusMin = radiusMin,

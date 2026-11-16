@@ -25,6 +25,7 @@ public sealed class EnemyDamageCall
         StaggerDamageMulti = staggerDamageMulti;
         NoiseLevel = noiseLevel;
         GearCategoryId = gearCategoryId;
+        Unruled = Combat.TakeKill(receiver);
     }
 
     public Dam_EnemyDamageBase Receiver { get; }
@@ -38,6 +39,10 @@ public sealed class EnemyDamageCall
     public float StaggerDamageMulti { get; }
     public DamageNoiseLevel NoiseLevel { get; }
     public uint GearCategoryId { get; }
+
+    /// <summary>This settlement is the one <see cref="Combat.Kill"/> asked for: no damage rule may rewrite <see cref="Damage"/>, so
+    /// the kill lands whatever rule stands on the enemy. Only that call sets it, for its own first entry here.</summary>
+    public bool Unruled { get; }
 
     /// <summary>The receiver's answer that the damage landed; false in <c>Before</c>.</summary>
     public bool Applied { get; internal set; }

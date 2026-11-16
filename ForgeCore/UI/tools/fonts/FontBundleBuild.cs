@@ -11,18 +11,13 @@ public static class FontBundleBuild
 {
     const string Bundle = "ForgeUI-fonts.bundle";
 
-    public static void Build()
-    {
-        try { Run(); EditorApplication.Exit(0); }
-        catch (Exception e) { Debug.LogException(e); EditorApplication.Exit(1); }
-    }
+    public static void Build() => UnityBatch.Run(Run);
 
     static void Run()
     {
-        if (Application.unityVersion != "2019.4.21f1") throw new InvalidOperationException("Use the game's Unity 2019.4.21f1.");
-        var fonts = (Environment.GetEnvironmentVariable("FORGE_FONTS") ?? throw new InvalidOperationException("FORGE_FONTS is not set.")).Split(';');
-        var output = Environment.GetEnvironmentVariable("FORGE_OUT") ?? throw new InvalidOperationException("FORGE_OUT is not set.");
-        var project = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        var fonts = UnityBatch.Env("FORGE_FONTS").Split(';');
+        var output = UnityBatch.Env("FORGE_OUT");
+        var project = UnityBatch.Project;
         Directory.CreateDirectory(Path.Combine(project, "Assets/Fonts"));
         var assets = new string[fonts.Length];
         for (var i = 0; i < fonts.Length; i++)

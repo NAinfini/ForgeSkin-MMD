@@ -129,6 +129,29 @@ public sealed class ImportedModels : IDisposable
 
     public int Count => _models.Count;
 
+    /// <summary>Decodes the PNGs <see cref="Create"/> will need over later frames (<see cref="ForgeCore.Images.Queue(byte[], System.Action{UnityEngine.Texture2D, string}, bool, bool, int, bool, bool)"/>), so creating the
+    /// model does not decode them all in one frame: true once every one is decoded or failed (a failure is then refused by <see cref="Create"/>
+    /// as before), false while some are still queued. Call it again each frame until it is true; skipping it only moves the decoding into <see cref="Create"/>.</summary>
+    public bool Prepare(ImportedModelDescriptor descriptor, IReadOnlyList<byte[]> textures)
+    {
+        if (_models.ContainsKey(descriptor.Key) || _failures.ContainsKey(descriptor.Key) || textures.Count != descriptor.Textures.Count) return true;
+        var ready = true;
+        bool One(int index, bool linear, bool normal = false)
+        {
+            var t = descriptor.Textures[index];
+            return _images.Prepare(t.Sha256, textures[index], t.Width, t.Height, linear, normal);
+        }
+        foreach (var spec in descriptor.Materials)
+        {
+            if (spec.Glass) continue;
+            if (spec.Texture >= 0) ready &= One(spec.Texture, false);
+            if (spec.MetalTexture >= 0) ready &= One(spec.MetalTexture, true);
+            if (spec.NormalTexture >= 0) ready &= One(spec.NormalTexture, true, normal: true);
+            if (spec.Emissive && spec.EmissiveTexture >= 0) ready &= One(spec.EmissiveTexture, false);
+        }
+        return ready;
+    }
+
     /// <summary>The model of <paramref name="descriptor"/> from its mesh bytes and its PNG textures (in the descriptor's order).</summary>
     public ImportedModelResult Create(ImportedModelDescriptor descriptor, byte[] mesh, IReadOnlyList<byte[]> textures)
     {
@@ -137,9 +160,8 @@ public sealed class ImportedModels : IDisposable
         if (_failures.TryGetValue(key, out var prior)) return new ImportedModelResult(null, prior);
         if (BudgetBytes != 0 && ResidentBytes + descriptor.EstimatedBytes > BudgetBytes)
             return Refuse(descriptor, new ImportedModelFailure(ImportedModelCodes.OverBudget, descriptor.EstimatedBytes + " bytes on top of " + ResidentBytes + " pass the budget of " + BudgetBytes), false);
-        if (textures.Count != descriptor.Textures.Count)
-            return Refuse(descriptor, new ImportedModelFailure(ImportedModelCodes.TextureCount, "the descriptor lists " + descriptor.Textures.Count + " textures, " + textures.Count + " came"), true);
-        var data = ImportedMesh.Read(mesh, descriptor, out var failure);
+        // The one file check an exporter runs too (ImportedModelDescriptor.CheckFiles).
+        var data = descriptor.ReadFiles(mesh, textures, out var failure);
         if (data == null) return Refuse(descriptor, failure, true);
         if (Shader.Find(LitMaterial.ShaderName) == null)
             return Refuse(descriptor, new ImportedModelFailure(ImportedModelCodes.ShaderUnavailable, "the game's gear shader is not loaded yet; models show once a level has been built"), false);

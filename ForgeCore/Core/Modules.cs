@@ -44,6 +44,7 @@ internal static class Modules
         ("Fnv", "FNV-1a 32 and 64 bit over UTF-8 text or bytes, the one hash behind wire formats and saved keys."),
         ("DeterministicRandom", "Random numbers that are a pure function of their keys (SplitMix64): every peer and a replay draw the same value, and the game's own random sequence is untouched."),
         ("Hash", "SHA-256 as lowercase hex over bytes, UTF-8 text or a stream, the one spelling of a content hash."),
+        ("Progression", "Local clear progress for every Rundown: each machine records its own clears and the game's own Rundown page and unlock rules read them; per level counts, a clear event and a reset per Rundown."),
     };
 
     internal const string SpecialSlot = "Gear.SpecialSlot";
@@ -66,6 +67,7 @@ internal static class Modules
     internal const string HoldPointShut = "HoldPoint.Shut";
     internal const string StackedVolumes = "Level.StackedVolumes";
     internal const string InteractionSwitches = "InputLease.Interactions";
+    internal const string Progression = "Progression";
 
     internal static readonly (string Module, Target[] Targets)[] Patched =
     {
@@ -104,6 +106,11 @@ internal static class Modules
         ("GameHooks.EnemyHitreacted", new[] { new Target("ES_Hitreact", "DoHitReact") }),
         ("GameHooks.AnimatorCrossFaded", new[] { new Target("UnityEngine.Animator", "CrossFadeInFixedTime") }),
         ("GameHooks.HibernateWakeActivated", new[] { new Target("Enemies.ES_HibernateWakeUp", "ActivateState") }),
+        ("GameHooks.HibernateWakeupStarted", new[] { new Target("Enemies.ES_HibernateWakeUp", "DoWakeup") }),
+        ("GameHooks.HibernateDetectionStarted", new[] { new Target("Enemies.ES_Hibernate", "DoStartDetection") }),
+        ("GameHooks.HibernateDetectionEnded", new[] { new Target("Enemies.ES_Hibernate", "DoEndDetection") }),
+        ("GameHooks.HibernatingNoiseHeard", new[] { new Target("Enemies.EB_Hibernating", "OnNoiseDetected") }),
+        ("GameHooks.EnemyTargetInjected", new[] { new Target("Enemies.EnemyAI", "InjectPropagatedTarget") }),
         ("GameHooks.EnemyScreamStarted", new[] { new Target("Enemies.ES_Scream", "ActivateState") }),
         ("GameHooks.EnemyScreamed", new[] { new Target("Enemies.ES_Scream", "OnStateShouldBeActivated") }),
         ("GameHooks.PlayerReceived", new[] { new Target("Dam_PlayerDamageBase", "ReceiveBulletDamage"), new Target("Dam_PlayerDamageBase", "ReceiveMeleeDamage"), new Target("Dam_PlayerDamageBase", "ReceiveExplosionDamage"), new Target("Dam_PlayerDamageBase", "ReceiveTentacleAttackDamage"), new Target("Dam_PlayerDamageBase", "ReceiveShooterProjectileDamage"), new Target("Dam_PlayerDamageBase", "ReceiveFallDamage"), new Target("Dam_PlayerDamageLocal", "ReceiveBulletDamage"), new Target("Dam_PlayerDamageLocal", "ReceiveMeleeDamage"), new Target("Dam_PlayerDamageLocal", "ReceiveExplosionDamage"), new Target("Dam_PlayerDamageLocal", "ReceiveTentacleAttackDamage"), new Target("Dam_PlayerDamageLocal", "ReceiveShooterProjectileDamage"), new Target("Dam_PlayerDamageLocal", "ReceiveFallDamage") }),
@@ -181,6 +188,7 @@ internal static class Modules
         (ItemSpawned, new[] { new Target("ItemReplicationManager", "OnItemSpawn") }),
         (ReplicationMisses, new[] { new Target("SNetwork.SNet_Replication", "RecieveBytes"), new Target("SNetwork.SNet_Replication", "AssignReplicatorKey") }),
         (StackedVolumes, new[] { new Target("AIGraph.AIG_GeomorphNodeVolume", "TryGetGeomorphVolume") }),
+        (Progression, new[] { new Target("RundownManager", "UpdateRundownProgression") }),
         (InteractionSwitches, new[] { new Target("PlayerInteraction", "set_CameraRayInteractionEnabled"), new Target("PlayerInteraction", "set_SphereCheckInteractionEnabled"), new Target("PlayerInteraction", "set_LadderInteractionEnabled") }),
     };
 }

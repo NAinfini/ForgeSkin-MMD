@@ -41,45 +41,13 @@ internal static class IconNames
     /// <summary>The reserved pack of the game's own icons.</summary>
     public const string Game = "Game";
 
-    /// <summary>Null when <paramref name="pack"/> can be a pack name, else why not: letters, digits, '_' and '-', and not <c>Game</c>.</summary>
+    /// <summary>Null when <paramref name="pack"/> can be a pack name (<see cref="ForgeCore.PackNames"/>) and is not <c>Game</c>, else why not.</summary>
     public static string? CheckPack(string? pack)
-    {
-        if (string.IsNullOrEmpty(pack)) return "the pack name is empty";
-        foreach (var c in pack)
-            if (!IsNameChar(c) || c == '.') return "the pack name '" + pack + "' may only hold letters, digits, '_' and '-'";
-        if (string.Equals(pack, Game, StringComparison.OrdinalIgnoreCase)) return "'Game' is the game's own icon catalog";
-        return null;
-    }
-
-    /// <summary>Null when <paramref name="item"/> can be an icon name inside a pack, else why not: letters, digits, '_', '-' and '.'.</summary>
-    public static string? CheckItem(string? item)
-    {
-        if (string.IsNullOrEmpty(item)) return "the icon name is empty";
-        foreach (var c in item)
-            if (!IsNameChar(c)) return "the icon name '" + item + "' may only hold letters, digits, '_', '-' and '.'";
-        return null;
-    }
+        => ForgeCore.PackNames.CheckPack(pack)
+            ?? (string.Equals(pack, Game, StringComparison.OrdinalIgnoreCase) ? "'Game' is the game's own icon catalog" : null);
 
     /// <summary><c>pack:item</c>.</summary>
     public static string Join(string pack, string item) => pack + ":" + item;
-
-    /// <summary>Splits <c>Pack:item</c>; false (with the reason) when it is not one. The pack is not checked against <c>Game</c>.</summary>
-    public static bool TrySplit(string? name, out string pack, out string item, out string? why)
-    {
-        pack = item = "";
-        why = null;
-        if (string.IsNullOrEmpty(name)) { why = "the icon name is empty"; return false; }
-        var colon = name.IndexOf(':');
-        if (colon <= 0 || colon == name.Length - 1 || name.IndexOf(':', colon + 1) >= 0) { why = "'" + name + "' is not Pack:item"; return false; }
-        pack = name.Substring(0, colon);
-        item = name.Substring(colon + 1);
-        why = CheckItem(item);
-        foreach (var c in pack)
-            if (!IsNameChar(c) || c == '.') why ??= "the pack name '" + pack + "' may only hold letters, digits, '_' and '-'";
-        return why == null;
-    }
-
-    private static bool IsNameChar(char c) => c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_' or '-' or '.';
 }
 
 /// <summary>One registered icon, for listings.</summary>
@@ -129,7 +97,7 @@ internal sealed class IconBook<T> where T : class
     /// (reported) for a bad name, a pack that is not the owner's, a name already taken or a file that cannot be read.</summary>
     public bool Register(string owner, string pack, string item, string path)
     {
-        var problem = IconNames.CheckItem(item);
+        var problem = ForgeCore.PackNames.CheckItem(item, "icon");
         if (problem != null) return Fail("Icon not registered in '" + pack + "': " + problem + ".");
         var name = IconNames.Join(pack, item);
         if (!_owners.TryGetValue(pack, out var current) || current != owner) return Fail("Icon '" + name + "' not registered: " + owner + " does not own pack '" + pack + "'.");
@@ -145,7 +113,7 @@ internal sealed class IconBook<T> where T : class
     /// reported once when there is none.</summary>
     public T? Find(string? name)
     {
-        if (!IconNames.TrySplit(name, out var pack, out var item, out var why)) { Fail("Icon not found: " + why + "."); return null; }
+        if (!ForgeCore.PackNames.TrySplit(name, "icon", out var pack, out var item, out var why)) { Fail("Icon not found: " + why + "."); return null; }
         if (string.Equals(pack, IconNames.Game, StringComparison.Ordinal))
         {
             if (!GameIcons.Has(item)) { Fail("Icon '" + name + "' is not in the game icon catalog."); return null; }

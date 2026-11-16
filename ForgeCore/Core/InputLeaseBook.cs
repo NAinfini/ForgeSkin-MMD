@@ -151,7 +151,8 @@ internal sealed class InputLeaseBook
         return false;
     }
 
-    internal List<Entry> Snapshot() => new(_held);
+    /// <summary>The held lease at <paramref name="index"/> (0 the oldest, <see cref="Count"/> − 1 the newest).</summary>
+    internal Entry At(int index) => _held[index];
 
     private void Check(Entry entry, int action)
     {
@@ -163,7 +164,7 @@ internal sealed class InputLeaseBook
     /// stops answering, so the player's own press of that key reads through again while the lease is still held.</summary>
     internal bool Presses(int action, int frame)
     {
-        if (action < 0 || action >= Actions || !_pressed[action]) return false;
+        if (!MayPress(action)) return false;
         var retired = false;
         foreach (var entry in _held)
         {
@@ -174,6 +175,10 @@ internal sealed class InputLeaseBook
         if (retired) Recompute();
         return _pressed[action];
     }
+
+    /// <summary>Some lease still holds a press of <paramref name="action"/> (released ones included until <see cref="Presses"/> retires them);
+    /// false means no lease answers it, with no frame needed to tell.</summary>
+    internal bool MayPress(int action) => action >= 0 && action < Actions && _pressed[action];
     internal bool Drives(int action) => action >= 0 && action < Actions && _axes[action];
 
     internal bool Held(int action) => Newest(action)?.Buttons[action].Held ?? false;

@@ -4,13 +4,23 @@ using System.Numerics;
 
 namespace ForgeVisual;
 
-/// <summary>A humanoid body bone, numbered as Unity's <c>HumanBodyBones</c> (so a value casts straight to it). Fingers, eyes and jaw
-/// are not listed: no body mechanism of this library uses them.</summary>
+/// <summary>A humanoid body bone, numbered as Unity's <c>HumanBodyBones</c> (so a value casts straight to it). The 30 finger joints
+/// (24 to 53) are listed for the pose copy (<see cref="PoseFingers"/>); eyes and jaw are not: no body mechanism of this library uses them.</summary>
 public enum BodyBone
 {
     Hips = 0, LeftUpperLeg = 1, RightUpperLeg = 2, LeftLowerLeg = 3, RightLowerLeg = 4, LeftFoot = 5, RightFoot = 6,
     Spine = 7, Chest = 8, Neck = 9, Head = 10, LeftShoulder = 11, RightShoulder = 12, LeftUpperArm = 13, RightUpperArm = 14,
     LeftLowerArm = 15, RightLowerArm = 16, LeftHand = 17, RightHand = 18, LeftToes = 19, RightToes = 20, UpperChest = 54,
+    LeftThumbProximal = 24, LeftThumbIntermediate = 25, LeftThumbDistal = 26,
+    LeftIndexProximal = 27, LeftIndexIntermediate = 28, LeftIndexDistal = 29,
+    LeftMiddleProximal = 30, LeftMiddleIntermediate = 31, LeftMiddleDistal = 32,
+    LeftRingProximal = 33, LeftRingIntermediate = 34, LeftRingDistal = 35,
+    LeftLittleProximal = 36, LeftLittleIntermediate = 37, LeftLittleDistal = 38,
+    RightThumbProximal = 39, RightThumbIntermediate = 40, RightThumbDistal = 41,
+    RightIndexProximal = 42, RightIndexIntermediate = 43, RightIndexDistal = 44,
+    RightMiddleProximal = 45, RightMiddleIntermediate = 46, RightMiddleDistal = 47,
+    RightRingProximal = 48, RightRingIntermediate = 49, RightRingDistal = 50,
+    RightLittleProximal = 51, RightLittleIntermediate = 52, RightLittleDistal = 53,
 }
 
 /// <summary>Which length of the two skeletons sets a worn bone's scale (game over model): the shoulder span (upper arm to upper arm),
@@ -43,12 +53,15 @@ public readonly struct WearBone
 /// else <see cref="TowardBodyAlt"/>) or along from link <see cref="From"/>'s, with the body's front as its up; a bone with neither
 /// takes the body's own frame. Both skeletons are read that way at rest, so different rest poses (arms out, arms down) give one and
 /// the same pose. <see cref="BodyAlt"/> stands in for <see cref="Body"/> on a body without it (an optional bone such as the upper
-/// chest). Link 0 is the root: its position is copied too (height and sway scaled by hip height over hip height).
+/// chest). Link 0 is the root: its position is copied too (height and sway scaled by hip height over hip height). An
+/// <see cref="Optional"/> link is skipped, not an error, when the model or the body lacks its bone; so is every optional link that points
+/// at a skipped one (a finger joint after a missing joint). A link that is not optional may not point at an optional one.
 /// </summary>
 public readonly struct PoseLink
 {
-    public PoseLink(string model, BodyBone body, int toward = -1, int from = -1, BodyBone? bodyAlt = null, BodyBone? towardBody = null, BodyBone? towardBodyAlt = null)
+    public PoseLink(string model, BodyBone body, int toward = -1, int from = -1, BodyBone? bodyAlt = null, BodyBone? towardBody = null, BodyBone? towardBodyAlt = null, bool optional = false)
     {
+        Optional = optional;
         Model = model ?? throw new ArgumentNullException(nameof(model));
         Body = body;
         Toward = toward;
@@ -65,6 +78,106 @@ public readonly struct PoseLink
     public int From { get; }
     public BodyBone? TowardBody { get; }
     public BodyBone? TowardBodyAlt { get; }
+    public bool Optional { get; }
+}
+
+/// <summary>The 30 finger links of a pose copy (<see cref="PoseLink"/>), every joint optional: a model or body without a joint skips it
+/// and the joints after it on that finger. Each joint copies the body's turn (not an IK) with its direction taken from the joint before.</summary>
+public static class PoseFingers
+{
+    /// <summary>Finger joints per hand and in all.</summary>
+    public const int PerHand = 15, Count = 30;
+
+    /// <summary>The 30 links in Unity's order (left hand thumb to little, then right). They go at link indices <paramref name="first"/>
+    /// to <paramref name="first"/> + 29 of the caller's list, after the hand links <paramref name="leftHand"/> and <paramref name="rightHand"/>
+    /// (a finger's first joint points from its hand). <paramref name="modelName"/> gives the model's bone of a joint; null names it as the
+    /// joint is (<c>LeftIndexProximal</c>).</summary>
+    public static PoseLink[] Links(int first, int leftHand, int rightHand, Func<BodyBone, string>? modelName = null)
+    {
+        var links = new PoseLink[Count];
+        for (var i = 0; i < Count; i++)
+        {
+            var bone = (BodyBone)(24 + i);
+            var hand = i < PerHand ? leftHand : rightHand;
+            links[i] = new PoseLink(modelName != null ? modelName(bone) : bone.ToString(), bone, from: i % 3 == 0 ? hand : first + i - 1, optional: true);
+        }
+        return links;
+    }
+}
+
+/// <summary>
+/// The pose copy of a skeleton mapped onto the canonical humanoid (<see cref="ClipRig"/>), for a model with its own humanoid skeleton
+/// that follows a player's body (a character model, a stand-in): link <c>j</c> is canonical joint <c>j</c>, so a caller finds the model
+/// bone of a joint as <c>PoseTarget.Bone(j)</c>. The body joints but the upper chest (<c>spine2</c>) and the shoulders are required; the
+/// upper chest, the shoulders and the 30 finger joints are optional (a hand with only some of its finger joints copies none of them).
+/// </summary>
+public static class HumanRig
+{
+    // ClipRig joint -> humanoid body bone, the fingers after (both in Unity's thumb-to-little order).
+    private static readonly BodyBone[] Body =
+    {
+        BodyBone.Hips, BodyBone.LeftUpperLeg, BodyBone.LeftLowerLeg, BodyBone.LeftFoot, BodyBone.RightUpperLeg, BodyBone.RightLowerLeg, BodyBone.RightFoot,
+        BodyBone.Spine, BodyBone.Chest, BodyBone.UpperChest, BodyBone.LeftShoulder, BodyBone.LeftUpperArm, BodyBone.LeftLowerArm, BodyBone.LeftHand,
+        BodyBone.RightShoulder, BodyBone.RightUpperArm, BodyBone.RightLowerArm, BodyBone.RightHand, BodyBone.Neck, BodyBone.Head,
+    };
+
+    // Per body joint: the joint its frame points at (-1: none), and whether it may be missing.
+    private static readonly int[] Toward = { 7, 2, 3, -1, 5, 6, -1, 8, 18, 18, 11, 12, 13, -1, 15, 16, 17, -1, 19, -1 };
+    private static readonly bool[] Optional = { false, false, false, false, false, false, false, false, false, true, true, false, false, false, true, false, false, false, false, false };
+
+    /// <summary>Both arms bend so each hand lands where the body's does (on the grip), carried over from the chest.</summary>
+    public static readonly PoseReach[] ArmReach = { new(11, 12, 13, 8), new(15, 16, 17, 8) };
+
+    /// <summary>The links for <paramref name="bones"/> (the model bone of each <see cref="ClipRig"/> joint, null for none). Throws
+    /// <see cref="ArgumentException"/> naming a required joint without a bone.</summary>
+    public static PoseLink[] Links(IReadOnlyList<string?> bones)
+    {
+        if (bones.Count != ClipRig.Count) throw new ArgumentException("one bone per ClipRig joint, " + ClipRig.Count + " in all", nameof(bones));
+        // A joint without a bone gets a name no skeleton has, so the optional link is skipped and the names stay unique.
+        string Name(int j) => bones[j] ?? "\0" + ClipRig.Names[j];
+        var links = new PoseLink[ClipRig.Count];
+        for (var j = 0; j < ClipRig.BodyCount; j++)
+        {
+            if (bones[j] == null && !Optional[j]) throw new ArgumentException("the joint " + ClipRig.Names[j] + " has no bone", nameof(bones));
+            links[j] = j switch
+            {
+                8 or 9 => new PoseLink(Name(j), Body[j], toward: 18, towardBody: BodyBone.Neck, optional: Optional[j]),
+                13 or 17 => new PoseLink(Name(j), Body[j], from: j - 1),
+                _ => new PoseLink(Name(j), Body[j], toward: Toward[j], optional: Optional[j]),
+            };
+        }
+        var whole = new bool[2];
+        for (var hand = 0; hand < 2; hand++)
+        {
+            whole[hand] = true;
+            for (var k = 0; k < PoseFingers.PerHand; k++) whole[hand] &= bones[ClipRig.BodyCount + hand * PoseFingers.PerHand + k] != null;
+        }
+        var fingers = PoseFingers.Links(ClipRig.BodyCount, 13, 17, bone =>
+        {
+            var j = ClipRig.BodyCount + (int)bone - (int)BodyBone.LeftThumbProximal;
+            return whole[(j - ClipRig.BodyCount) / PoseFingers.PerHand] ? Name(j) : "\0" + ClipRig.Names[j];
+        });
+        Array.Copy(fingers, 0, links, ClipRig.BodyCount, PoseFingers.Count);
+        return links;
+    }
+
+    /// <summary>The bones that wear the arms of a model on this rig on the first-person body (<c>Models.WearFirstPerson</c> with
+    /// <c>Descendants</c>): the hips line the skeletons up, each upper arm, forearm, hand and finger joint is worn on the game's and sized
+    /// by its own arm. Only whole hands list their fingers (as <see cref="Links"/>); the arm joints are required (throws
+    /// <see cref="ArgumentException"/> as <see cref="Links"/> does).</summary>
+    public static WearBone[] ArmWear(IReadOnlyList<string?> bones)
+    {
+        var links = Links(bones);
+        var wear = new List<WearBone> { new(links[0].Model, BodyBone.Hips, worn: false) };
+        foreach (var j in new[] { 11, 12, 13, 15, 16, 17 })
+            wear.Add(new WearBone(links[j].Model, Body[j], scale: j < 14 ? BodyMeasure.LeftArm : BodyMeasure.RightArm));
+        for (var k = 0; k < PoseFingers.Count; k++)
+        {
+            var j = ClipRig.BodyCount + k;
+            if (links[j].Model[0] != '\0') wear.Add(new WearBone(links[j].Model, links[j].Body, scale: k < PoseFingers.PerHand ? BodyMeasure.LeftArm : BodyMeasure.RightArm));
+        }
+        return wear.ToArray();
+    }
 }
 
 /// <summary>
@@ -297,7 +410,32 @@ internal static class PoseSolver
             for (var j = 0; j < i; j++)
                 if (links[j].Model == link.Model) return "model bone " + link.Model + " is listed twice";
         }
+        for (var i = 0; i < links.Count; i++)
+        {
+            var link = links[i];
+            if (!link.Optional && ((link.Toward >= 0 && links[link.Toward].Optional) || (link.From >= 0 && links[link.From].Optional)))
+                return "link " + i + " (" + link.Model + ") is not optional but points at an optional link";
+        }
         return null;
+    }
+
+    /// <summary>Which links a pose copy leaves out: <paramref name="absent"/>[i] (the model or the body lacks link i's bone, optional links
+    /// only) and every optional link that points at a left-out one, followed through the chain.</summary>
+    internal static bool[] Skipped(IReadOnlyList<PoseLink> links, bool[] absent)
+    {
+        var skip = (bool[])absent.Clone();
+        for (var again = true; again;)
+        {
+            again = false;
+            for (var i = 0; i < skip.Length; i++)
+            {
+                var link = links[i];
+                if (skip[i] || !link.Optional || !((link.Toward >= 0 && skip[link.Toward]) || (link.From >= 0 && skip[link.From]))) continue;
+                skip[i] = true;
+                again = true;
+            }
+        }
+        return skip;
     }
 
     /// <summary>Per link: inverse(frame) × rest rotation, from the model's rest positions and rotations (in its root's space).</summary>
@@ -387,6 +525,27 @@ internal static class HeldPlacement
 /// <summary>Cutting a skinned mesh down to the triangles skinned to a set of bones.</summary>
 internal static class MeshCut
 {
+    /// <summary>Which skin bones a first-person wear keeps (<c>Models.WearFirstPerson</c>): each bone stands for its
+    /// <paramref name="owner"/>; it is kept when the owner is a worn bone of the wear (<paramref name="listed"/> gives its index, -1 for a
+    /// bone the wear does not list), or with <paramref name="descendants"/> when the first listed bone above it is worn; a listed bone
+    /// that only lines the skeletons up (<paramref name="alignOnly"/>) stops the walk. The game and the editor's preview both cut by it.</summary>
+    internal static bool[] KeptBones<T>(IReadOnlyList<T?> skin, Func<T, T> owner, Func<T, T?> parent, Func<T, int> listed, bool[] worn, bool[] alignOnly, bool descendants) where T : class
+    {
+        var kept = new bool[skin.Count];
+        for (var b = 0; b < skin.Count; b++)
+        {
+            if (skin[b] is not { } bone) continue;
+            for (T? t = owner(bone); t != null; t = descendants ? parent(t) : null)
+            {
+                var i = listed(t);
+                if (i < 0) continue;
+                if (worn[i]) { kept[b] = true; break; }
+                if (alignOnly[i]) break;
+            }
+        }
+        return kept;
+    }
+
     /// <summary>Which vertices are skinned at least half to the kept bones (<paramref name="kept"/>, by bone index); each kept vertex's
     /// weights renormalised over the kept bones (written to <paramref name="weights"/>; other vertices are left as they were).</summary>
     internal static bool[] KeepVertices(Weights4[] weights, bool[] kept)

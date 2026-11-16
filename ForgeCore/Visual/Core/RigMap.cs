@@ -43,8 +43,8 @@ public sealed class RigMap
     private const float StandingLimitDegrees = 60f, ShortestBone = 0.005f;
 
     /// <summary>What is wrong with a skeleton's rest pose against the canonical rig, one sentence each, empty when it fits (game axes,
-    /// root space). Called once at bind.</summary>
-    internal static string Check(bool[] present, Vector3[] rest, RigShape shape)
+    /// root space; one entry per <see cref="ClipRig"/> joint). Called once at bind, and by a character model's own check of its map.</summary>
+    public static string Check(bool[] present, Vector3[] rest, RigShape shape)
     {
         var wrong = "";
         for (var j = 0; j < ClipRig.Count; j++)

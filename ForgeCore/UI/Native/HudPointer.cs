@@ -237,11 +237,7 @@ public static class HudPointer
     internal static float Speed => (_speed ??= ForgeCore.Settings.Bind(Plugin.Id, "Hud", "PointerScale", 1f,
         "How fast the HUD pointer and the wheel's pointer move compared with the mouse: 1 moves it by the same share of the screen as the mouse's own movement (the same as the system cursor); 2 is twice as fast.")).Value;
 
-    private static bool InLevelPlay()
-    {
-        try { return GameStateManager.CurrentStateName == eGameStateName.InLevel && !HudFocus.Away; }
-        catch (Exception error) { Plugin.Error("ui-hud-pointer-could-not-read-game", "The HUD pointer could not read the game state: " + error); return false; }
-    }
+    private static bool InLevelPlay() => ForgeCore.GameEventSources.InLevel && !HudFocus.Away;
 
     /// <summary>The pointer itself: an arrow with a dark edge, its tip on the point.</summary>
     private sealed class PointerView : HudWidget

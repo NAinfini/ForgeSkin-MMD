@@ -52,8 +52,8 @@ public static class TestRuntime
         Action<JsonElement>? restore, Action<JsonElement>? validate = null)
     {
         kernel.NativeStateCapture = capture == null ? null : _ => capture();
-        kernel.NativeStateRestore = restore == null ? null : (value, _) => restore(value);
-        kernel.NativeStateValidate = validate == null ? null : (value, _) => validate(value);
+        kernel.NativeStateRestore = restore;
+        kernel.NativeStateValidate = validate;
     }
     public static void PollDiagnosticSummaries(this RuntimeKernel kernel) => kernel.PollDiagnosticSummaries();
     public static void FlushDiagnosticSummaries(this RuntimeKernel kernel) => kernel.FlushDiagnosticSummaries();
@@ -72,9 +72,7 @@ public static class TestRuntime
     public static long RestoreHostMigration(this RuntimeKernel kernel, string json, long newWorldEpoch, bool isHost)
         => kernel.RestoreHostMigration(json, newWorldEpoch, isHost);
     public static string ExportVariables(this RuntimeKernel kernel) => kernel.ExportVariables();
-    public static string ExportVariableDelta(this RuntimeKernel kernel) => kernel.ExportVariableDelta();
     public static void ApplyVariables(this RuntimeKernel kernel, string json) => kernel.ApplyVariables(json);
-    public static void ApplyVariableDelta(this RuntimeKernel kernel, string json) => kernel.ApplyVariableDelta(json);
     public static string CaptureCheckpoint(this RuntimeKernel kernel) => kernel.CaptureCheckpoint();
     public static void RestoreCheckpoint(this RuntimeKernel kernel, string json) => kernel.RestoreCheckpoint(json);
     public static IReadOnlyList<PlanLoadOutcome> RestoreCheckpoint(this RuntimeKernel kernel, string json,
@@ -101,12 +99,20 @@ public static class TestRuntime
                 throw new TestInputsUnavailableException("FORGE_COMPILED_TEST_PLANS has no compiled-plans/index.json (run build-test-plans.ts --prepare).");
             return root;
         }
+        var index = FindInCheckout(Path.Combine("Tests", "Forge", "fixtures", "compiled-plans", "index.json"));
+        if (index != null) return Path.GetDirectoryName(index)!;
+        throw new TestInputsUnavailableException("no compiled-plans/index.json in the checkout and FORGE_COMPILED_TEST_PLANS is not set (run build-test-plans.ts --prepare).");
+    }
+
+    /// <summary>The checkout file at <paramref name="relative"/>, found walking up from the working directory; null when there is none.</summary>
+    public static string? FindInCheckout(string relative)
+    {
         for (var directory = new DirectoryInfo(Environment.CurrentDirectory); directory != null; directory = directory.Parent)
         {
-            var candidate = Path.Combine(directory.FullName, "Tests", "Forge", "fixtures", "compiled-plans");
-            if (File.Exists(Path.Combine(candidate, "index.json"))) return candidate;
+            var candidate = Path.Combine(directory.FullName, relative);
+            if (File.Exists(candidate)) return candidate;
         }
-        throw new TestInputsUnavailableException("no compiled-plans/index.json in the checkout and FORGE_COMPILED_TEST_PLANS is not set (run build-test-plans.ts --prepare).");
+        return null;
     }
 }
 

@@ -450,11 +450,16 @@ internal sealed class NetNode
             _log.ErrorOnce(Net.DropHelloVersion, "Player " + sender + " speaks ForgeCore handshake version " + (data.Length == 0 ? "none" : data[0].ToString()) + ", this build speaks " + HelloVersion + ". No Forge mod talks to that player; both sides need the same ForgeCore.");
             return;
         }
+        // The whole message is read before anything is judged, so one that does not read to the end (it throws, and the handshake
+        // failure is logged) leaves every mod as it was instead of judging some and leaving the rest unheard.
         using var reader = new BinaryReader(new MemoryStream(data), Encoding.UTF8);
         reader.ReadByte();
         var answer = reader.ReadBoolean();
-        _highest = Math.Max(_highest, reader.ReadUInt32());
+        var highest = reader.ReadUInt32();
         var count = reader.ReadByte();
+        var cells = new (string Name, ulong Format, ulong Content, bool Held)[count];
+        for (var i = 0; i < count; i++) cells[i] = (reader.ReadString(), reader.ReadUInt64(), reader.ReadUInt64(), reader.ReadBoolean());
+        _highest = Math.Max(_highest, highest);
         if (!_peers.TryGetValue(sender, out var peer)) _peers[sender] = peer = new Peer();
         // Any greeting or answer proves ForgeCore is there, whatever each mod decides next.
         peer.Answered = true;
@@ -462,12 +467,8 @@ internal sealed class NetNode
         // never answered, so they cannot loop.
         if (!answer) SendHello(sender, true);
         var listed = new HashSet<NetChannel>();
-        for (var i = 0; i < count; i++)
+        foreach (var (name, format, content, held) in cells)
         {
-            var name = reader.ReadString();
-            var format = reader.ReadUInt64();
-            var content = reader.ReadUInt64();
-            var held = reader.ReadBoolean();
             if (!_byName.TryGetValue(name, out var channel)) continue;
             listed.Add(channel);
             Guard(channel, c => c.Judge(sender, format, content, held));

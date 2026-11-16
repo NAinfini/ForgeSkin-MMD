@@ -64,7 +64,32 @@ public static class UIKitSprites
         return Math.Clamp(d - 16f / 1.41421356f + 0.5f, 0f, 1f) * Math.Clamp(32f / 1.41421356f - d + 0.5f, 0f, 1f);
     });
 
-    private static Sprite? _infinity, _cornerBand;
+    private static Sprite? _infinity, _cornerBand, _gear, _tick;
+
+    /// <summary>A gear (eight teeth round a ring), one unit across: a settings button.</summary>
+    public static Sprite Gear => _gear ??= NativeUi.Build("ForgeUI.Gear", 64, 64, 64, (x, y) =>
+    {
+        float dx = (x + 0.5f) / 64f - 0.5f, dy = (y + 0.5f) / 64f - 0.5f, r = MathF.Sqrt(dx * dx + dy * dy);
+        var tooth = MathF.Cos(MathF.Atan2(dy, dx) * 8f) > 0.3f;
+        var outer = tooth ? 0.48f : 0.38f;
+        return Math.Clamp((outer - r) * 64f + 0.5f, 0f, 1f) * Math.Clamp((r - 0.17f) * 64f + 0.5f, 0f, 1f);
+    });
+
+    /// <summary>A tick, one unit across: something in use.</summary>
+    public static Sprite Tick => _tick ??= NativeUi.Build("ForgeUI.Tick", 48, 48, 48, (x, y) =>
+    {
+        var p = new Vector2((x + 0.5f) / 4f, (y + 0.5f) / 4f);
+        var d = Math.Min(Segment(p, new Vector2(1.5f, 6.5f), new Vector2(4.5f, 3.2f)), Segment(p, new Vector2(4.5f, 3.2f), new Vector2(10.5f, 9.5f)));
+        return Math.Clamp((1f - d) * 4f + 0.5f, 0f, 1f);
+    });
+
+    /// <summary>Distance from <paramref name="p"/> to the segment <paramref name="a"/>–<paramref name="b"/>.</summary>
+    private static float Segment(Vector2 p, Vector2 a, Vector2 b)
+    {
+        var ab = b - a;
+        var t = Math.Clamp(Vector2.Dot(p - a, ab) / ab.sqrMagnitude, 0f, 1f);
+        return (p - (a + ab * t)).magnitude;
+    }
 
     // Nine-sliced shapes (see ShapePatterns): drawn by HudCanvas with SpriteDrawMode.Sliced, their border is one unit.
     internal static Sprite Chamfer => _chamfer ??= NativeUi.BuildSliced("ForgeUI.Chamfer", ShapePatterns.Size, ShapePatterns.Border,
@@ -244,6 +269,16 @@ internal static class NativeUi
 
     internal static Sprite Build(string name, int width, int height, float pixelsPerUnit, Func<int, int, float> alpha)
     {
+        var texture = BuildTexture(name, width, height, alpha);
+        var sprite = Sprite.Create(texture, new Rect(0, 0, width, height), new Vector2(0.5f, 0.5f), pixelsPerUnit);
+        sprite.name = name;
+        sprite.hideFlags = HideFlags.HideAndDontSave;
+        return sprite;
+    }
+
+    /// <summary>The white texture under <see cref="Build"/>, alone (for a caller that draws the texture, not a sprite).</summary>
+    internal static Texture2D BuildTexture(string name, int width, int height, Func<int, int, float> alpha)
+    {
         var texture = new Texture2D(width, height, TextureFormat.RGBA32, false)
         {
             name = name,
@@ -257,10 +292,7 @@ internal static class NativeUi
                 pixels[y * width + x] = new Color32(255, 255, 255, (byte)Math.Round(Math.Clamp(alpha(x, y), 0f, 1f) * 255f));
         Il2CppArrays.Upload(texture, pixels);
         texture.Apply(false, true);
-        var sprite = Sprite.Create(texture, new Rect(0, 0, width, height), new Vector2(0.5f, 0.5f), pixelsPerUnit);
-        sprite.name = name;
-        sprite.hideFlags = HideFlags.HideAndDontSave;
-        return sprite;
+        return texture;
     }
 
     /// <summary>A square nine-sliced sprite: <paramref name="border"/> (left, bottom, right, top texels) keeps its shape at any drawn

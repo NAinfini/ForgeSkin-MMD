@@ -3,6 +3,10 @@
     python Mods/Build/verify_release.py --packages <zip folder> --artifacts-path <dotnet artifacts> [--installed <BepInEx/plugins>]
 
 Fails (exit 1) when
+- a zip entry would not install where the plugin reads it: r2modman flattens every folder not named like an install route, so only
+  manifest.json, icon.png, README.md and CHANGELOG.md sit at the zip root and every other file of package <Name> under plugins/<Name>/
+  (package_common.zip_entry, checked by simulating the manager's install, package_common.manager_install);
+- a lang/ folder lacks en.forge or zh.forge, or the two hold different keys (the plugin would show keys instead of text);
 - a dll in a zip is not byte-identical to the Release build output (artifacts/bin/<project>/release/<dll>);
 - a package's main dll version differs from its manifest version, or a NAinfini dependency is missing from the set or
   asks for another version than the set holds;
@@ -10,7 +14,8 @@ Fails (exit 1) when
 - a zip lacks LICENSE (the MIT text with a copyright line) or NOTICE (copyright line and a third-party section), or holds a file named like
   an original game asset (the release carries 0 of them);
 - a type or member that one dll references in another dll of the set does not exist there (check-assembly-refs.ps1);
-- with --installed: any file of a zip is missing or different in plugins/NAinfini-<name>/, or the folder holds a dll no zip owns.
+- with --installed: any file of a zip is missing or different where a mod manager installs it (plugins/NAinfini-<name>/), or the folder
+  holds a dll no zip owns.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ import tempfile
 import zipfile
 import zlib
 
-from package_common import PNG_TEXT_CHUNKS, png_chunks, strip_png_text
+from package_common import PNG_TEXT_CHUNKS, ROOT_FILES, manager_install, png_chunks, strip_png_text
 
 HERE = Path(__file__).resolve().parent
 LICENCE = re.compile(r'(?s)^MIT License\n\nCopyright \(c\) \d{4} \S.*\n\nPermission is hereby granted,.+THE SOFTWARE IS PROVIDED "AS IS"')
@@ -74,7 +79,7 @@ def audiences() -> dict[str, str]:
     """Package name -> audience from Release/release.json; a package it does not list counts as a player package."""
     identity = json.loads((HERE.parent / "Release" / "release.json").read_text(encoding="utf-8"))
     rows = []
-    for key in ("packages", "libraries", "standalone", "payloads"):
+    for key in ("packages", "libraries", "standalone"):
         value = identity.get(key) or []
         rows += value if isinstance(value, list) else [value]
     return {row["packageName"].split("-", 1)[1]: row["audience"] for row in rows}
@@ -83,6 +88,46 @@ def audiences() -> dict[str, str]:
 def config_extension_problems(name: str, files: dict[str, bytes]) -> list[str]:
     return [name + ": " + entry + " would be listed by r2modman as a config file; a player package's own files are .forge" for entry in files
             if entry != "manifest.json" and entry.lower().endswith(CONFIG_LIST_EXTENSIONS)]
+
+
+def install_problems(name: str, entries) -> list[str]:
+    """Each entry where a mod manager installs it (manager_install) must be where the plugin reads it: the root files in
+    plugins/NAinfini-<name>/, every other file at its path beside the DLL in plugins/NAinfini-<name>/<name>/ (the same path a manual
+    unzip into BepInEx gives under plugins/<name>/). An entry the manager would flatten or send elsewhere, or two entries landing on one
+    file, is reported."""
+    package = "NAinfini-" + name
+    problems, landed = [], {}
+    for entry in sorted(entries):
+        installed = manager_install(package, entry)
+        if entry not in ROOT_FILES and not entry.startswith("plugins/" + name + "/"):
+            problems.append(name + ": " + entry + " is outside plugins/" + name + "/ and a mod manager installs it as " + installed + "; only "
+                            + ", ".join(ROOT_FILES) + " stay at the zip root")
+        elif installed != "plugins/" + package + "/" + (entry if entry in ROOT_FILES else entry[len("plugins/"):]):
+            problems.append(name + ": " + entry + " is installed by a mod manager as " + installed)
+        if installed.lower() in landed:
+            problems.append(name + ": " + entry + " and " + landed[installed.lower()] + " both install as " + installed)
+        landed.setdefault(installed.lower(), entry)
+    return problems
+
+
+def language_problems(name: str, files: dict[str, bytes]) -> list[str]:
+    """Every lang/ folder (ForgeCore UITexts reads lang/ beside the DLL) holds en.forge and zh.forge with the same keys."""
+    problems = []
+    for folder in sorted({path.rsplit("/", 1)[0] for path in files if path.endswith(".forge") and path.rsplit("/", 1)[0].split("/")[-1] == "lang"}):
+        try:
+            keys = {code: set(json.loads(files[folder + "/" + code + ".forge"].decode("utf-8-sig"))) for code in ("en", "zh")}
+        except KeyError as missing:
+            problems.append(name + ": " + folder + " lacks " + str(missing).strip("'").rsplit("/", 1)[-1])
+            continue
+        if keys["en"] != keys["zh"]:
+            problems.append(name + ": " + folder + " en.forge and zh.forge differ in keys: " + ", ".join(sorted(keys["en"] ^ keys["zh"])[:8]))
+    return problems
+
+
+def plugin_files(name: str, entries: dict[str, bytes]) -> dict[str, bytes]:
+    """The zip's files by their path beside the plugin DLL (the inverse of zip_entry); an entry outside the layout keeps its zip name."""
+    prefix = "plugins/" + name + "/"
+    return {entry[len(prefix):] if entry.startswith(prefix) else entry: data for entry, data in entries.items()}
 
 
 def sha256(data: bytes) -> str:
@@ -121,7 +166,10 @@ def verify(packages_dir: Path, artifacts: Path, installed: Path | None) -> list[
     packages = read_packages(packages_dir)
     audience = audiences()
 
-    for name, (path, files, manifest) in packages.items():
+    for name, (path, entries, manifest) in packages.items():
+        problems.extend(install_problems(name, entries))
+        files = plugin_files(name, entries)
+        problems.extend(language_problems(name, files))
         problems.extend(licence_problems(name, files))
         problems.extend(png_metadata_problems(name, files))
         if audience.get(name, "player") == "player":
@@ -183,11 +231,13 @@ def verify(packages_dir: Path, artifacts: Path, installed: Path | None) -> list[
             if not folder.is_dir():
                 problems.append(name + ": " + str(folder) + " is not installed")
                 continue
+            # Where r2modman puts each entry (manager_install, relative to BepInEx/).
+            placed = {entry: manager_install(folder.name, entry) for entry in files}
             for entry, data in files.items():
-                target = folder / entry
+                target = installed.parent / placed[entry]
                 if not target.is_file() or sha256(target.read_bytes()) != sha256(data):
-                    problems.append(name + ": installed " + entry + " is missing or differs from the zip")
-            owned = {entry for entry in files if entry.endswith(".dll")}
+                    problems.append(name + ": installed " + placed[entry] + " is missing or differs from the zip")
+            owned = {placed[entry][len("plugins/" + folder.name + "/"):] for entry in files if entry.endswith(".dll")}
             for stray in folder.rglob("*.dll"):
                 if stray.relative_to(folder).as_posix() not in owned:
                     problems.append(name + ": installed dll " + stray.relative_to(folder).as_posix() + " belongs to no zip")

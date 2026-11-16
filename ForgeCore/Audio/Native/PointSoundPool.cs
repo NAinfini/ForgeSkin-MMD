@@ -47,8 +47,8 @@ internal sealed class PointSoundPool
             {
                 var oldest = _entries[0];
                 foreach (var candidate in _entries) if (candidate.Used < oldest.Used) oldest = candidate;
-                oldest.Player.Recycle();
                 _entries.Remove(oldest);
+                oldest.Player.Recycle();
             }
             entry = new Entry { Player = new CellSoundPlayer(position), Position = position };
             _entries.Add(entry);
@@ -68,19 +68,22 @@ internal sealed class PointSoundPool
         return _entries.Count + (_global != null ? 1 : 0);
     }
 
-    /// <summary>Recycles every emitter (the world ended); every failure is reported together after all were tried.</summary>
+    /// <summary>Recycles every emitter (the world ended); every failure is reported together after all were tried. A failed emitter is
+    /// dropped all the same, so it is not tried (and failed) again at every later clear.</summary>
     internal void Clear()
     {
         List<Exception>? failures = null;
-        foreach (var entry in _entries.ToArray())
+        foreach (var entry in _entries)
         {
-            try { entry.Player.Recycle(); _entries.Remove(entry); }
+            try { entry.Player.Recycle(); }
             catch (Exception error) { (failures ??= new()).Add(error); }
         }
+        _entries.Clear();
         if (_global != null)
         {
-            try { _global.Recycle(); _global = null; }
+            try { _global.Recycle(); }
             catch (Exception error) { (failures ??= new()).Add(error); }
+            _global = null;
         }
         if (failures != null) throw new AggregateException("point-sound-cleanup-failed", failures);
     }

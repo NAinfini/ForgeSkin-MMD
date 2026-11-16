@@ -63,7 +63,7 @@ public static partial class Gear
             return BeginToolSlotWatch(player != null && PlayerBackpackManager.TryGetBackpack(player, out var backpack) ? backpack : null,
                 player?.NickName ?? "(unknown)", "spawn");
         }
-        catch (Exception error) { Plugin.Logger.Error("core-could-not-guard-tool-slot-spawning", "Could not guard the tool slot for a spawning sentry: " + error); return null; }
+        catch (Exception error) { Plugin.Logger.ErrorOnce("core-could-not-guard-tool-slot-spawning", "Could not guard the tool slot for a spawning sentry: " + error); return null; }
     }
 
     private static ToolSlotWatch? StartToolSlotStep(SentryCall call)
@@ -74,7 +74,7 @@ public static partial class Gear
             var backpack = call.Sentry.m_belongsToBackpack;
             return BeginToolSlotWatch(backpack, backpack?.Owner?.NickName ?? "(unknown)", call.Step.ToString());
         }
-        catch (Exception error) { Plugin.Logger.Error("core-could-not-guard-tool-slot-sentry", "Could not guard the tool slot for a sentry: " + error); return null; }
+        catch (Exception error) { Plugin.Logger.ErrorOnce("core-could-not-guard-tool-slot-sentry", "Could not guard the tool slot for a sentry: " + error); return null; }
     }
 
     private static void EndToolSlotStep(SentryCall call, ToolSlotWatch? watch)
@@ -113,7 +113,7 @@ public static partial class Gear
             backpack.SetDeployed(InventorySlot.GearClass, deployed);
             backpack.UpdateItemStatus(InventorySlot.GearClass, (eInventoryItemStatus)status);
         }
-        catch (Exception error) { Plugin.Logger.Error("core-could-not-verify-tool-slot", "Could not verify the tool slot after a sentry " + watch.Step + ": " + error); }
+        catch (Exception error) { Plugin.Logger.ErrorOnce("core-could-not-verify-tool-slot", "Could not verify the tool slot after a sentry " + watch.Step + ": " + error); }
     }
 
     private static void ReadToolSlot(PlayerBackpack backpack, ToolSlotWatch into)

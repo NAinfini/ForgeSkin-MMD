@@ -164,9 +164,10 @@ public sealed class EnemyOutline
 /// </summary>
 internal static class OutlineDraw
 {
-    private const int MaxRenderers = 48, MaxSubmeshes = 8, CameraRecheckFrames = 30, CollectsPerFrame = 4, MaxCuts = 4;
+    // One target's draws (each submesh of each renderer counts): a character model in one mesh has 15 or more parts.
+    private const int MaxDraws = 128, CameraRecheckFrames = 30, CollectsPerFrame = 4, MaxCuts = 4;
     private const int PassFill = 0, PassComposite = 1, PassFillXRay = 2, PassSilhouette = 3;
-    private static readonly OutlineScopes<EnemyOutline> Scopes = new();
+    private static readonly ForgeCore.ScopeSwitches<EnemyOutline> Scopes = new();
     private static readonly EnemyOutlineTracker Tracker = new();
     private static readonly OutlineClaims Claims = new();
     private static Body[] _tracked = new Body[64];
@@ -439,7 +440,7 @@ internal static class OutlineDraw
             for (int i = 0; i < renderers.Length; i++)
             {
                 var renderer = renderers[i];
-                if (!ForgeCore.NativeObjects.Gone(renderer) && renderer.enabled && ForgeCore.EngineCalls.Bounds(renderer, out var center, out _)) return center;
+                if (!ForgeCore.NativeObjects.Gone(renderer) && Models.Drawn(renderer) && ForgeCore.EngineCalls.Bounds(renderer, out var center, out _)) return center;
             }
         return ForgeCore.EngineCalls.Position(body.Transform);
     }
@@ -487,7 +488,7 @@ internal static class OutlineDraw
         return culler != null && !culler.IsShown;
     }
 
-    private static bool Off() => _failed || (Scopes.Current == null && Claims.Count == 0) || !Plugin.Outlines.Value || Away();
+    private static bool Off() => _failed || (Scopes.Current == null && Claims.Count == 0) || !Plugin.Outlines.Value || ForgeUI.HudFocus.Away;
 
     /// <summary>The HUD is about to go onto this frame: the line goes on first.</summary>
     internal static void LayOver(IntPtr hud, RenderTexture frame)
@@ -499,18 +500,11 @@ internal static class OutlineDraw
         RenderTexture.active = active;
     }
 
-    /// <summary>In a level with one of the game's own full screens open (map, terminal, menu, console): nothing is outlined.</summary>
-    private static bool Away()
-    {
-        if (GameStateManager.CurrentStateName != eGameStateName.InLevel) return false;
-        return FocusStateManager.CurrentState is eFocusState.Map or eFocusState.MainMenu or eFocusState.ComputerTerminal or eFocusState.Console
-            or eFocusState.DebugMenu or eFocusState.GlobalPopupMessage;
-    }
-
     private static bool EnsureCamera()
     {
         if (!ForgeCore.NativeObjects.Gone(_camera) && !ForgeCore.NativeObjects.Gone(_cameraTransform)) return true;
-        if (_camera != null) { _camera = null; _cameraTransform = null; Tracker.ClearSelection(); }
+        // "Was set", not Unity's == (false for the destroyed camera this branch is for).
+        if (_camera is not null) { _camera = null; _cameraTransform = null; Tracker.ClearSelection(); }
         if (_cameraWait-- > 0) return false;
         _cameraWait = CameraRecheckFrames;
         var rendering = ClusteredRendering.Current;
@@ -536,9 +530,7 @@ internal static class OutlineDraw
     /// outlines, so the first outline (boarding a suit) does not pay for them: that frame took 189.61 ms on 10-28 13:23 before this.</summary>
     private static void WarmUp()
     {
-        if (_material != null || _failed || _warmTried || !_patched || !Plugin.Outlines.Value) return;
-        var state = GameStateManager.CurrentStateName;
-        if (state != eGameStateName.StopElevatorRide && state != eGameStateName.InLevel) return;
+        if (_material != null || _failed || _warmTried || !_patched || !Plugin.Outlines.Value || !ForgeCore.GameEventSources.Landed) return;
         _warmTried = true;
         // The screen-sized mask too (at 3840 x 2160 a 66 MB texture): made on the first outlined frame it is a stall of its own.
         // Two steps of ForgeCore LandingWork, a frame apart: the material and the mask, then the draw that makes the GPU programs.
@@ -666,8 +658,9 @@ internal static class OutlineDraw
         {
             var renderer = renderers[r];
             // A renderer the game switched off with its object (not with the component) is still in the set: the buffer would keep
-            // drawing the body that is no longer shown, at the place it was left.
-            if (ForgeCore.NativeObjects.Gone(renderer) || !renderer.enabled || !body.Objects![r].activeInHierarchy) continue;
+            // drawing the body that is no longer shown, at the place it was left. One held off (a look hiding the body it is worn on) is not
+            // drawn by the camera either: drawn here it showed the hidden body's shape, and its unskinned vertices as lines to the world's origin.
+            if (ForgeCore.NativeObjects.Gone(renderer) || !Models.Drawn(renderer) || !body.Objects![r].activeInHierarchy) continue;
             int cuts = body.Cut![r] ? body.CutCount : 0;
             if (cuts != count) { count = cuts; buffer.SetGlobalFloat(CutCountId, cuts); }
             for (int sub = 0; sub < body.Submeshes![r]; sub++)
@@ -698,7 +691,8 @@ internal static class OutlineDraw
         return _mask;
     }
 
-    /// <summary>The target's mesh renderers that are still drawn (alive and enabled; particles, lines and sprites are left out) and, for an
+    /// <summary>The target's mesh renderers that are still drawn (alive and <see cref="Models.Drawn"/>: a body a look hides is left out, the
+    /// look's model hung on it is read; particles, lines and sprites are left out) and, for an
     /// enemy, the body cuts the game made: read when it is first outlined (after any model changes made at spawn) and again after a limb
     /// is shot off.</summary>
     private static void Collect(ref Body body)
@@ -706,15 +700,16 @@ internal static class OutlineDraw
         var meshes = new List<Renderer>();
         foreach (var renderer in body.Root.GetComponentsInChildren<Renderer>(false))
             if ((renderer.TryCast<SkinnedMeshRenderer>() != null || renderer.TryCast<MeshRenderer>() != null) && renderer.shadowCastingMode != ShadowCastingMode.ShadowsOnly && Solid(renderer)) meshes.Add(renderer);
-        // The largest first: when a target has more meshes than the limit (a player with every part of its gear), what goes is the small parts, not the body.
+        // The largest first: when a target has more draws than the budget (a player with every part of its gear), what goes is the small parts, not the body.
         meshes.Sort(static (a, b) => b.bounds.size.sqrMagnitude.CompareTo(a.bounds.size.sqrMagnitude));
         var found = new List<Renderer>();
-        OutlineDrawSet.Collect(meshes, r => !ForgeCore.NativeObjects.Gone(r) && r.enabled && r.sharedMaterials.Length > 0, MaxRenderers, found);
+        // Every submesh of a renderer is drawn: a model in one mesh (a character's face, body, clothes and hair) is all of it, not its first parts.
+        OutlineDrawSet.Collect(meshes, r => !ForgeCore.NativeObjects.Gone(r) && Models.Drawn(r) && r.sharedMaterials.Length > 0, r => r.sharedMaterials.Length, MaxDraws, found);
         var subs = new int[found.Count];
         var objects = new GameObject[found.Count];
         for (int i = 0; i < subs.Length; i++)
         {
-            subs[i] = Math.Min(found[i].sharedMaterials.Length, MaxSubmeshes);
+            subs[i] = found[i].sharedMaterials.Length;
             objects[i] = found[i].gameObject;
         }
         body.Renderers = found.ToArray();

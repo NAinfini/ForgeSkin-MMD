@@ -778,16 +778,56 @@ public sealed class MenuScreenWindow
     }
 
     /// <summary>A button under the window, in <paramref name="column"/> (see <see cref="Buttons"/>) below the ones already there: the
-    /// settings section button, or the red one (larger) for the main action. With <paramref name="enabled"/> false it stands in its place dim and takes no
-    /// press: the row that says why is the window's to write.</summary>
-    public void AddButton(UIText text, Action onClick, bool main = false, int column = 0, bool enabled = true)
+    /// settings section button, or the red one (larger) for the main action. With <paramref name="enabled"/> false it stands in its place
+    /// faded, frame and text, and takes no press or hover; <paramref name="why"/> (one sentence: what is missing and what to do) is written
+    /// under it in the warning colour.</summary>
+    public void AddButton(UIText text, Action onClick, bool main = false, int column = 0, bool enabled = true, UIText? why = null)
     {
         var template = main && enabled && _screen.RedTemplate != null ? _screen.RedTemplate : _screen.SectionTemplate;
         var item = _screen.Button(template, enabled ? _screen.Text(text) : MenuText.Tint(_screen.Text(text), MenuTone.Dim), onClick);
-        Place(item, column, main);
-        if (!enabled && item.m_collider != null) item.m_collider.enabled = false;
+        var box = Place(item, column, main);
         MenuScreen.Bright(item, main && enabled);
+        if (enabled) return;
+        if (item.m_collider != null) item.m_collider.enabled = false;
+        foreach (var sprite in item.GetComponentsInChildren<SpriteRenderer>(true))
+        {
+            var colour = sprite.color;
+            sprite.color = new Color(colour.r, colour.g, colour.b, colour.a * DisabledAlpha);
+        }
+        if (why is { } reason) Note(item, box, column, MenuText.Tint(_screen.Text(reason), MenuTone.Warn));
     }
+
+    // How much of a disabled button's frame still shows.
+    private const float DisabledAlpha = 0.3f;
+
+    // A line of text under a button in its column (a copy of the button's own label, so it has the menu's font and size), wrapped to the
+    // column's width; the next button goes under it.
+    private void Note(CM_Item item, Rect box, int column, string text)
+    {
+        var source = item.GetComponentInChildren<TMPro.TextMeshPro>(true);
+        if (source == null) return;
+        var note = _screen.Copy(source.gameObject, "ForgeUI.ButtonNote").GetComponent<TMPro.TextMeshPro>();
+        note.alignment = TMPro.TextAlignmentOptions.TopLeft;
+        note.enableWordWrapping = true;
+        note.overflowMode = TMPro.TextOverflowModes.Overflow;
+        note.fontSize = source.fontSize * 0.8f;
+        // Drawn at the label's size on screen (the button was shrunk to its column), measured in the holder's units.
+        var scale = Math.Max(1e-4f, source.transform.lossyScale.x / Math.Max(1e-4f, _screen.Holder.lossyScale.x));
+        note.transform.localScale = Vector3.one * scale;
+        note.transform.localRotation = Quaternion.identity;
+        note.rectTransform.pivot = new Vector2(0f, 1f);
+        note.rectTransform.sizeDelta = new Vector2(box.width / scale, 0f);
+        note.text = text;
+        note.ForceMeshUpdate(true);
+        var height = note.preferredHeight * scale;
+        note.rectTransform.sizeDelta = new Vector2(box.width / scale, height / scale);
+        note.transform.localPosition = new Vector3(box.xMin, box.yMin - NoteGap, 0f);
+        _buttons.Add(note.transform);
+        column = Math.Clamp(column, 0, _weights.Length - 1);
+        _cursor[column] -= height + NoteGap;
+    }
+
+    private const float NoteGap = 6f;
 
     /// <summary>A button under the window that asks before it acts, in place and without a pop-up: the first press turns it into the red
     /// <paramref name="confirm"/> button with a <paramref name="cancel"/> button under it in the same column; <paramref name="onConfirm"/>
@@ -979,7 +1019,7 @@ internal static class MenuScreens
         }
         if (_asking != null && ForgeCore.Frame.UnscaledTime >= _askUntil) { _asking = null; Rebuild(); }
         if (_open == null) return;
-        Yield(FocusStateManager.CurrentState == eFocusState.GlobalPopupMessage);
+        Yield(ForgeCore.Frame.Focus == eFocusState.GlobalPopupMessage);
         Hide();
         _open.Hold();
         Cover(_open);
@@ -991,10 +1031,20 @@ internal static class MenuScreens
     private static MenuScreen? _coveredFor;
     private static int _coveredPopups;
     private static readonly CM_ScrollWindow?[] Popups = new CM_ScrollWindow?[3];
+    // The page's menu bar, looked up once per screen (again only after it was destroyed, or a second after it was not found).
+    private static MenuScreen? _barFor;
+    private static CM_MenuBar? _bar;
+    private static float _barRetryAt;
 
     private static void Cover(MenuScreen screen)
     {
-        var bar = screen.Page.GetComponentInChildren<CM_MenuBar>();
+        if (!ReferenceEquals(_barFor, screen) || (_bar is null ? ForgeCore.Frame.UnscaledTime >= _barRetryAt : ForgeCore.NativeObjects.Gone(_bar)))
+        {
+            _barFor = screen;
+            _bar = screen.Page.GetComponentInChildren<CM_MenuBar>();
+            if (_bar == null) { _bar = null; _barRetryAt = ForgeCore.Frame.UnscaledTime + 1f; }
+        }
+        var bar = _bar;
         if (bar == null) return;
         Popups[0] = bar.m_popupQuit;
         Popups[1] = bar.m_popupExitLobby;

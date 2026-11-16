@@ -4,14 +4,10 @@ using System.Reflection.Emit;
 namespace ForgeCore.Tests;
 
 /// <summary>One game method, one package: a second owner is refused and the startup check finds a method two Forge packages patch
-/// (detection); a hook subscription never outlives its world or reaches a subscriber after it failed.</summary>
+/// (detection).</summary>
 internal static class HookChecks
 {
-    internal static void Run(Action<bool, string> check)
-    {
-        Owners(check);
-        Leases(check);
-    }
+    internal static void Run(Action<bool, string> check) => Owners(check);
 
     private static void Target() { }
     private static void Other() { }
@@ -40,7 +36,7 @@ internal static class HookChecks
         MethodInfo map = Callback("ForgeMap.Native"), enemy = Callback("ForgeEnemy.Native"), foreign = Callback("SomeoneElse");
         var records = new Dictionary<MethodBase, (string, MethodInfo)[]>
         {
-            [target] = new[] { (HookOwners.OwnPrefix + "forge.module.gtfo.map", map), ("NAinfini.ForgeEnemy", enemy) },
+            [target] = new[] { (HookOwners.OwnPrefix + "forge.module.gtfo.map", map), ("NAinfini.ForgeEngine.Enemy", enemy) },
             [other] = new[] { (HookOwners.OwnPrefix + "forge.module.gtfo.map", map), (HookOwners.ObservePrefix + "ForgeEnemy", enemy), ("someone", foreign) },
         };
         var shared = HookOwners.Shared(method => records[method]);
@@ -49,31 +45,4 @@ internal static class HookChecks
         HookOwners.Release("ForgeMap", target); HookOwners.Release("ForgeMap", other);
     }
 
-    private static void Leases(Action<bool, string> check)
-    {
-        long world = 1;
-        var failures = new List<string>();
-        var fanout = new HookFanout<int>(() => world, (consumer, _) => failures.Add(consumer), budget: 2);
-        var received = new List<string>();
-        var old = fanout.Subscribe("old", 1, value => received.Add("old" + value));
-        Refused(() => fanout.Subscribe("old", 1, _ => { }), "native-hook-consumer-duplicate", check);
-        var bad = fanout.Subscribe("bad", 1, _ => throw new InvalidOperationException());
-        Refused(() => fanout.Subscribe("third", 1, _ => { }), "native-hook-subscriber-budget", check);
-        check(fanout.Publish(1, 1) == HookDispatch.Delivered && bad.Status == "observer-failed" && failures.SequenceEqual(new[] { "bad" })
-            && received.SequenceEqual(new[] { "old1" }), "a failing subscriber is ended and reported once; the others still run");
-        world = 2;
-        check(fanout.Publish(1, 1) == HookDispatch.WorldEpochStale && !old.IsActive && old.Status == "world-epoch-ended",
-            "a lease of an old world ends by itself and its world's calls are not delivered");
-        Refused(() => fanout.Subscribe("late", 1, _ => { }), "native-hook-world-epoch-stale", check);
-        var next = fanout.Subscribe("old", 2, value => received.Add("new" + value));
-        check(fanout.Publish(2, 2) == HookDispatch.Delivered && received.Last() == "new2" && next.IsActive, "the new world's subscriber receives only new calls");
-        next.Dispose();
-        check(next.Status == "released" && fanout.Publish(3, 2) == HookDispatch.NoSubscribers, "a released lease receives nothing");
-    }
-
-    private static void Refused(Action action, string reason, Action<bool, string> check)
-    {
-        try { action(); check(false, "expected " + reason); }
-        catch (InvalidOperationException error) { check(error.Message == reason, "refuses " + reason); }
-    }
 }

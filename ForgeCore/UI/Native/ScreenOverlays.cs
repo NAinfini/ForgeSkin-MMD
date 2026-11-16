@@ -85,7 +85,7 @@ internal static class ScreenOverlays
 {
     /// <summary>A white texture whose alpha is <paramref name="alpha"/>.</summary>
     internal static Texture2D Texture(string name, int width, int height, Func<int, int, float> alpha)
-        => NativeUi.Build(name, Math.Max(2, width), Math.Max(2, height), 100f, alpha).texture;
+        => NativeUi.BuildTexture(name, Math.Max(2, width), Math.Max(2, height), alpha);
 
     /// <summary>A delivered picture decoded once (possibly shrunk), kept as plain pixels so several masked textures can be cut from it.</summary>
     internal sealed class Picture
@@ -203,11 +203,12 @@ internal static class ScreenOverlays
 public sealed class HitEdge
 {
     private readonly EdgeFlashes _flashes = new();
+    // Null: the player's setting, read at each flash so a change to it applies at once.
+    private float? _seconds;
 
     internal HitEdge(string id)
     {
         Id = id;
-        _flashes.Seconds = Plugin.HitFlashSeconds;
     }
 
     public string Id { get; }
@@ -218,15 +219,19 @@ public sealed class HitEdge
     /// <c>Screen / HitFlashSeconds</c> (0.3 s). Its brightness never passes the player's <c>Screen / HitFlashPeak</c> (35 %).</summary>
     public float Seconds
     {
-        get => _flashes.Seconds;
-        set => _flashes.Seconds = Math.Max(0.1f, value);
+        get => _seconds ?? Plugin.HitFlashSeconds;
+        set => _seconds = Math.Max(0.1f, value);
     }
 
     /// <summary>Builds the screen effect stack's pass and draws it once off screen. Call it ahead.</summary>
     public bool Warm() => ScreenStack.Warm();
 
     /// <summary>Lights the edge toward <paramref name="azimuth"/> (degrees from where the player looks) at <paramref name="strength"/> 0..1.</summary>
-    public void Flash(float azimuth, float strength) => _flashes.Hit(azimuth, strength, ForgeCore.Frame.GameTime);
+    public void Flash(float azimuth, float strength)
+    {
+        _flashes.Seconds = Seconds;
+        _flashes.Hit(azimuth, strength, ForgeCore.Frame.GameTime);
+    }
 
     /// <summary>Everything off at once.</summary>
     public void Clear() => _flashes.Clear();
@@ -422,7 +427,7 @@ public sealed class Visor
                 _crackPieces[i]!.SetActive(false);
             }
             _cornerShown = (ScreenCorner)255;
-            var white = Keep(NativeUi.Build(Id + ".White", 4, 4, 4f, (_, _) => 1f).texture);
+            var white = Keep(NativeUi.BuildTexture(Id + ".White", 4, 4, (_, _) => 1f));
             _frame = new GameObject(Id + ".Frame") { layer = _group.layer };
             _frame.transform.SetParent(_group.transform, false);
             var px = Math.Max(1f, MathF.Round(1.4f * ScreenLayer.Height / 1080f));

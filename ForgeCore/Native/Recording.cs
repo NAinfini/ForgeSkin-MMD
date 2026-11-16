@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Enemies;
 using Player;
 using UnityEngine;
@@ -144,6 +145,23 @@ public interface IShownObserver
     void SoundEnded(long loop);
     void Model(in ShownModel model);
     void Pose(in ShownPose pose);
+    /// <summary>A world object was declared under the key whose <see cref="RecordingNames"/> number is <paramref name="name"/> (<see cref="Recording.Track"/>);
+    /// <paramref name="body"/> null: the declaration ended. An observer added later is told every declaration standing at that moment.</summary>
+    void Tracked(int name, GameObject? body);
+    /// <summary>The owner of the object named <paramref name="name"/> says its own state is now <paramref name="value"/> (<see cref="Recording.State"/>; null: back to the object's own).</summary>
+    void StateChanged(int name, string? value);
+}
+
+/// <summary>The owner of some recorded world objects, in a level a replay built (<see cref="Recording.Provide"/>): finds the object a key names and puts a
+/// recorded state of its own on it, drawn its own way. Called on the main thread; one that throws is logged once.</summary>
+public interface IRecordingProvider
+{
+    /// <summary>The object <paramref name="key"/> names in this level, or null when there is none.</summary>
+    GameObject? Find(string key);
+    /// <summary>Puts the recorded <paramref name="value"/> on the object <paramref name="key"/> names (null: back to the object's own state). False when it cannot.</summary>
+    bool Apply(string key, string? value);
+    /// <summary>The replay has just set the place, size or shown flag of the object <paramref name="key"/> names: keep what goes with it (a label standing apart from it) with it.</summary>
+    void Placed(string key);
 }
 
 /// <summary>What a transform hangs on: a player (<see cref="Player"/>), an enemy (<see cref="Enemy"/>) or nothing either (<see cref="AnchorKind.World"/>).</summary>
@@ -178,8 +196,116 @@ public static class Recording
     /// <summary>True while anyone observes: a library builds a report only then.</summary>
     internal static bool Watched => All.Any;
 
-    /// <summary>Adds <paramref name="observer"/>; disposing the result removes it. Several observers hear every report, in the order they were added.</summary>
-    public static IDisposable Observe(IShownObserver observer) => All.Add(observer);
+    /// <summary>Adds <paramref name="observer"/>; disposing the result removes it. Several observers hear every report, in the order they were added. It is
+    /// told every world object declared at this moment (<see cref="IShownObserver.Tracked"/>) before it returns.</summary>
+    public static IDisposable Observe(IShownObserver observer)
+    {
+        var subscription = All.Add(observer);
+        foreach (var (name, body) in TrackedBodies)
+        {
+            try { observer.Tracked(name, body); }
+            catch (Exception error) { Failed(error); }
+        }
+        return subscription;
+    }
+
+    // ---- world objects that change ------------------------------------------------------------------------------------------------
+
+    private static readonly Dictionary<int, GameObject> TrackedBodies = new();
+    private static readonly List<(string Prefix, IRecordingProvider Provider)> Providers = new();
+
+    /// <summary>Declares <paramref name="body"/> a world object a recording follows: where it is, how it is turned, its size and whether it is shown, whoever
+    /// changes them (a behaviour, an animation, another mod). <paramref name="key"/> names the same object in every run of the same level ("<c>MyMod/sign/12</c>"),
+    /// so a replay finds it again in the level it built (through this registry when the owner builds it there too, else through the owner's
+    /// <see cref="Provide"/>). Declaring a key again replaces its object (a part made again); disposing the result ends the declaration of this object.
+    /// Declare when the object is made, or when something first changes it. A dictionary write: nothing of the game is read.</summary>
+    public static IDisposable Track(string key, GameObject body)
+    {
+        if (string.IsNullOrEmpty(key) || body == null) throw new ArgumentException("A tracked object has a key and a body.");
+        var name = RecordingNames.Of(key);
+        TrackedBodies[name] = body;
+        TellTracked(name, body);
+        return new Subscription(() =>
+        {
+            if (!TrackedBodies.TryGetValue(name, out var now) || now.Pointer != body.Pointer) return;
+            TrackedBodies.Remove(name);
+            TellTracked(name, null);
+        });
+    }
+
+    /// <summary>The owner of the object <paramref name="key"/> says its own state is now <paramref name="value"/>: text it worked out, a colour, anything it
+    /// draws itself, as one string only the owner reads (null: back to the object's own). A replay hands it back to the owner's
+    /// <see cref="IRecordingProvider.Apply"/>, so the owner draws it the way it drew it here. While nobody records this is one field read.</summary>
+    public static void State(string key, string? value)
+    {
+        if (!All.Any || string.IsNullOrEmpty(key)) return;
+        var name = RecordingNames.Of(key);
+        var all = All.Items;
+        for (var i = 0; i < all.Length; i++)
+        {
+            try { all[i].StateChanged(name, value); }
+            catch (Exception error) { Failed(error); }
+        }
+    }
+
+    /// <summary>Owns the keys that start with <paramref name="prefix"/> in a level a replay built: finds their objects and draws their recorded states.
+    /// Registered the same way in every level (it is asked only by a replay). Disposing the result removes it.</summary>
+    public static IDisposable Provide(string prefix, IRecordingProvider provider)
+    {
+        if (string.IsNullOrEmpty(prefix) || provider == null) throw new ArgumentException("A recording provider has a prefix and a provider.");
+        var entry = (prefix, provider);
+        Providers.Add(entry);
+        return new Subscription(() => Providers.Remove(entry));
+    }
+
+    /// <summary>The object <paramref name="key"/> names in this level: the one declared under it (<see cref="Track"/>), else the one its owner finds (<see cref="Provide"/>); null when neither has it.</summary>
+    public static GameObject? Find(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return null;
+        if (TrackedBodies.TryGetValue(RecordingNames.Of(key), out var body) && body != null && !body.WasCollected) return body;
+        foreach (var (prefix, provider) in Providers)
+        {
+            if (!key.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            try { if (provider.Find(key) is { } found && !found.WasCollected) return found; }
+            catch (Exception error) { Failed(error); }
+        }
+        return null;
+    }
+
+    /// <summary>Hands the recorded <paramref name="value"/> of <paramref name="key"/> to the owner that provides it; false when no owner took it.</summary>
+    public static bool Apply(string key, string? value)
+    {
+        if (string.IsNullOrEmpty(key)) return false;
+        foreach (var (prefix, provider) in Providers)
+        {
+            if (!key.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            try { if (provider.Apply(key, value)) return true; }
+            catch (Exception error) { Failed(error); }
+        }
+        return false;
+    }
+
+    /// <summary>Tells the owner that provides <paramref name="key"/> that a replay has just set its object's place, size or shown flag.</summary>
+    public static void Placed(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return;
+        foreach (var (prefix, provider) in Providers)
+        {
+            if (!key.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            try { provider.Placed(key); }
+            catch (Exception error) { Failed(error); }
+        }
+    }
+
+    private static void TellTracked(int name, GameObject? body)
+    {
+        var all = All.Items;
+        for (var i = 0; i < all.Length; i++)
+        {
+            try { all[i].Tracked(name, body); }
+            catch (Exception error) { Failed(error); }
+        }
+    }
 
     /// <summary>Writes a note into the recording any recorder is making (ForgeReplay's, on host and client alike, since each machine records what its own mods note); nothing happens while no recorder listens. <paramref name="mark"/> asks the replay to show the note as a point on its timeline. A mod needs no reference to the recorder.</summary>
     public static void Note(string modId, string kind, string payload = "", bool mark = false)

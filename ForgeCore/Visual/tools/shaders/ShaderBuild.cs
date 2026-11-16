@@ -6,15 +6,17 @@ using System.Text;
 using UnityEditor;
 using UnityEngine;
 
-/// <summary>Builds ForgeVisual's four shaders (particle, marker, outline, procedural) into one small bundle with Unity 2019.4.21f1, writes it to ForgeCore's Assets/Shaders
+/// <summary>Builds ForgeVisual's shaders (particle, marker, outline, procedural, the toon shader's three entries and the lit cut-out) into one small bundle with Unity 2019.4.21f1, writes it to ForgeCore's Assets/Shaders
 /// (embedded in ForgeCore.dll) and its reader (Native/ShaderBundle.Generated.cs). Run by build_shaders.ps1 with FORGE_TOOLS (this folder) and FORGE_NATIVE (the Native folder).
 /// The procedural shader includes the drawing programs (ForgeFxPrograms.hlsl) and a dispatch made here from the program catalogue (Data/fx-programs.json):
-/// program i is the catalogue's i-th entry, its function fx_&lt;name&gt;. The source hash covers the shaders, the programs and the catalogue.</summary>
+/// program i is the catalogue's i-th entry, its function fx_&lt;name&gt;. The toon entries include ForgeToon.hlsl. The source hash covers the shaders, the toon include,
+/// the programs and the catalogue.</summary>
 public static class ForgeVisualShaderBuild
 {
     const string BundleName = "forgevisual-shaders";
-    static readonly string[] Sources = { "ForgeVisualParticle.shader", "ForgeVisualMarker.shader", "ForgeVisualOutline.shader", "ForgeVisualProcedural.shader" };
-    const string Programs = "ForgeFxPrograms.hlsl", Dispatch = "ForgeFxDispatch.hlsl", Catalogue = "../../Data/fx-programs.json";
+    static readonly string[] Sources = { "ForgeVisualParticle.shader", "ForgeVisualMarker.shader", "ForgeVisualOutline.shader", "ForgeVisualProcedural.shader",
+        "ForgeVisualToonForward.shader", "ForgeVisualToonDeferred.shader", "ForgeVisualToonOverlay.shader", "ForgeVisualLitCutout.shader" };
+    const string Programs = "ForgeFxPrograms.hlsl", Dispatch = "ForgeFxDispatch.hlsl", Catalogue = "../../Data/fx-programs.json", Toon = "ForgeToon.hlsl";
 
     [Serializable] class CatalogueFile { public CatalogueProgram[] programs = Array.Empty<CatalogueProgram>(); }
     [Serializable] class CatalogueProgram { public string name = ""; }
@@ -54,9 +56,11 @@ public static class ForgeVisualShaderBuild
             File.Copy(source, Path.Combine(project, assets[i]), true);
             all.Append(File.ReadAllText(source).Replace("\r\n", "\n"));
         }
+        var toon = File.ReadAllText(Path.Combine(tools, Toon)).Replace("\r\n", "\n");
         var programs = File.ReadAllText(Path.Combine(tools, Programs)).Replace("\r\n", "\n");
         var catalogue = File.ReadAllText(Path.Combine(tools, Catalogue)).Replace("\r\n", "\n");
-        all.Append(programs).Append(catalogue);
+        all.Append(toon).Append(programs).Append(catalogue);
+        File.WriteAllText(Path.Combine(project, "Assets", Toon), toon);
         File.WriteAllText(Path.Combine(project, "Assets", Programs), programs);
         File.WriteAllText(Path.Combine(project, "Assets", Dispatch), DispatchSource(catalogue));
         AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
@@ -64,7 +68,8 @@ public static class ForgeVisualShaderBuild
         {
             AssetDatabase.ImportAsset(asset, ImportAssetOptions.ForceSynchronousImport);
             var shader = AssetDatabase.LoadAssetAtPath<Shader>(asset) ?? throw new InvalidOperationException("Unity did not import " + asset + ".");
-            if (!shader.isSupported) throw new InvalidOperationException(asset + " is not supported on this device.");
+            // Not isSupported: the batch-mode editor has no graphics device, and on it a shader with only a deferred pass counts as unsupported.
+            if (ShaderUtil.ShaderHasError(shader)) throw new InvalidOperationException(asset + " has compile errors.");
         }
         var output = Path.Combine(project, "shader-out");
         Directory.CreateDirectory(output);
@@ -80,6 +85,8 @@ public static class ForgeVisualShaderBuild
             + "internal static class ShaderBundle\n{\n    internal const string SourceSha256 = \"" + sha + "\";\n"
             + "    internal const string ParticleAsset = \"" + assets[0] + "\";\n    internal const string MarkerAsset = \"" + assets[1] + "\";\n"
             + "    internal const string OutlineAsset = \"" + assets[2] + "\";\n    internal const string ProceduralAsset = \"" + assets[3] + "\";\n"
+            + "    internal const string ToonForwardAsset = \"" + assets[4] + "\";\n    internal const string ToonDeferredAsset = \"" + assets[5] + "\";\n"
+            + "    internal const string ToonOverlayAsset = \"" + assets[6] + "\";\n    internal const string LitCutoutAsset = \"" + assets[7] + "\";\n"
             + "    internal static byte[] Read() => ForgeCore.Assets.Embedded(\"ForgeCore.Shaders." + BundleName + ".shaderbundle\");\n}\n");
         Debug.Log("SHADER_BUILT " + bytes.Length + " bytes " + sha);
     }

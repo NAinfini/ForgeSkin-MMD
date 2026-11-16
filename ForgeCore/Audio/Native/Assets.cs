@@ -186,7 +186,7 @@ internal static class Assets
                 // A file wanted both mixed and played directly stays resident twice (its PCM and its clip, unless the clip is cached already).
                 var copies = (needPcm ? 1 : 0) + (needClip && !Cache.ContainsKey(r.Ready.Hash) ? 1 : 0);
                 if (DecodedBytes + copies * info.DecodedBytes > AssetValidation.MaxDecodedBytes || CompressedBytes + r.Ready.Data.Length > AssetValidation.MaxCompressedCache)
-                { Fail(r, new AudioFailure(AudioError.AssetLimit, "the audio cache is full (512 MiB decoded / 256 MiB compressed in total).")); return; }
+                { Fail(r, new AudioFailure(AudioError.AssetLimit, "the audio cache is full (" + (AssetValidation.MaxDecodedBytes >> 20) + " MiB decoded / " + (AssetValidation.MaxCompressedCache >> 20) + " MiB compressed in total).")); return; }
             }
             if (r.Decoding == null)
             {
@@ -270,7 +270,7 @@ internal static class Assets
             var mixed = done.GetAwaiter().GetResult()!;
             if (!CueMix.Fits(DecodedBytes, mixed, AssetValidation.MaxDecodedBytes))
             {
-                Report(library, cue, new AudioFailure(AudioError.AssetLimit, "the mix would exceed the audio cache (512 MiB decoded in total)."));
+                Report(library, cue, new AudioFailure(AudioError.AssetLimit, "the mix would exceed the audio cache (" + (AssetValidation.MaxDecodedBytes >> 20) + " MiB decoded in total)."));
                 DropMixed(r);
                 EndMix(r);
                 return false;

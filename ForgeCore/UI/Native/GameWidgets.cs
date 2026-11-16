@@ -98,22 +98,36 @@ public static partial class UIKit
     {
         if (string.IsNullOrEmpty(path)) throw new ArgumentException("An icon needs a file path.", nameof(path));
         if (Icons.TryGetValue(path, out var known)) return known;
+        return Icons[path] = IconSprite(() => File.ReadAllBytes(path), Path.GetFileName(path), path);
+    }
+
+    /// <summary><see cref="LoadIcon(string)"/> for a picture a mod carries inside its assembly (PNG bytes), kept for the session by
+    /// <paramref name="name"/>.</summary>
+    public static Sprite? LoadIcon(byte[] png, string name)
+    {
+        if (png == null) throw new ArgumentNullException(nameof(png));
+        if (string.IsNullOrEmpty(name)) throw new ArgumentException("An icon needs a name.", nameof(name));
+        var key = "bytes:" + name;
+        if (Icons.TryGetValue(key, out var known)) return known;
+        return Icons[key] = IconSprite(() => png, name, name);
+    }
+
+    private static Sprite? IconSprite(Func<byte[]> read, string name, string what)
+    {
         try
         {
-            var texture = ForgeCore.Images.Decode(File.ReadAllBytes(path), out var failure) ?? throw new InvalidDataException(failure);
-            texture.name = "ForgeUI.Icon." + Path.GetFileName(path);
+            var texture = ForgeCore.Images.Decode(read(), out var failure) ?? throw new InvalidDataException(failure);
+            texture.name = "ForgeUI.Icon." + name;
             texture.hideFlags = HideFlags.HideAndDontSave;
             texture.filterMode = FilterMode.Bilinear;
             texture.wrapMode = TextureWrapMode.Clamp;
             var sprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f), Math.Max(texture.width, texture.height) / IconUnits);
             sprite.hideFlags = HideFlags.HideAndDontSave;
-            Icons[path] = sprite;
             return sprite;
         }
         catch (Exception error)
         {
-            Icons[path] = null;
-            Plugin.Error("ui-icon-could-not-be-loaded", "Icon " + path + " could not be loaded; no picture is shown: " + error);
+            Plugin.Error("ui-icon-could-not-be-loaded", "Icon " + what + " could not be loaded; no picture is shown: " + error);
             return null;
         }
     }
@@ -255,7 +269,7 @@ public sealed class WeaponListLine
     private static readonly List<WeaponListLine> Claims = new();
     private readonly string _name;
     private readonly UITexts? _texts;
-    private readonly List<TMPro.TextMeshPro> _hidden = new(), _renamed = new();
+    private readonly HashSet<TMPro.TextMeshPro> _hidden = new(ForgeCore.NativeObjects.Identity), _renamed = new(ForgeCore.NativeObjects.Identity);
     private float _next;
     private bool _hide;
     private UIText? _text;
@@ -328,7 +342,7 @@ public sealed class WeaponListLine
                 if (match && text.gameObject.activeSelf)
                 {
                     text.gameObject.SetActive(false);
-                    if (!_hidden.Contains(text)) _hidden.Add(text);
+                    _hidden.Add(text);
                 }
                 else if (!match && _hidden.Remove(text) && !text.gameObject.activeSelf) text.gameObject.SetActive(true);
             }
@@ -336,7 +350,7 @@ public sealed class WeaponListLine
             if (match)
             {
                 if (current != shown) { text.SetText(shown); UIKit.Inventory.MarkNamesDirty(); }
-                if (!ours) _renamed.Add(text);
+                _renamed.Add(text);
             }
             else if (ours) _renamed.Remove(text);
         }

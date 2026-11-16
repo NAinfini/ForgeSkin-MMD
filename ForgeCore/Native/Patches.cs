@@ -14,7 +14,7 @@ public static class Patches
 {
     private static readonly Harmony Harmony = new(Plugin.Id);
     private static readonly Dictionary<string, string> Missing = new(StringComparer.Ordinal);
-    private static readonly HashSet<string> Applied = new(StringComparer.Ordinal);
+    private static readonly HashSet<Type> Applied = new();
 
     /// <summary>Patches that go on the first time <see cref="LazyPatches.Ensure"/> is called (the first use of the feature they serve),
     /// so a session that never uses it never pays for them. Once on they stay: the game keeps a detour for a patched method after an
@@ -70,14 +70,15 @@ public static class Patches
             }
     }
 
-    /// <summary>The module's patches are on (first call puts them on); throws when the module is unavailable.</summary>
+    /// <summary>The patch class <paramref name="patches"/> of the module is on (its first call puts it on); throws when the module is
+    /// unavailable. A module with several classes puts each on with its own first use.</summary>
     internal static void Ensure(string module, Type patches)
     {
-        if (Applied.Contains(module)) return;
+        if (Applied.Contains(patches)) return;
         if (Missing.TryGetValue(module, out var method))
             throw new InvalidOperationException("ForgeCore module " + module + " is unavailable: " + method + " cannot be patched.");
         Harmony.PatchAll(patches);
-        Applied.Add(module);
+        Applied.Add(patches);
     }
 
     internal sealed record Fix(PatchKinds Kind, MethodInfo Method, MethodBase[] Targets);
@@ -89,7 +90,8 @@ public static class Patches
     /// of is not put on; a class whose postfix or finalizer reads the prefix's <c>__state</c> gets its prefix with either. Each change
     /// rebuilds the method's patched body (under Il2CppInterop also its trampoline, one generated method each time), so a bracket
     /// calls this only when its subscriptions change what it needs. Every patch passes the same prologue check as any other
-    /// (<see cref="Hooks.Resolve"/>); a patch that fails takes this call's additions off again and throws.</summary>
+    /// (<see cref="Hooks.Resolve"/>) and a target with a reviewed by-reference shape gets the same bridge repair as an owned hook
+    /// (<see cref="HookBridge.Prepare"/>); a patch that fails takes this call's additions off again and throws.</summary>
     internal static PatchKinds Set(string module, Type patches, PatchKinds wanted)
     {
         var (fixes, kinds, carried) = Class(patches);
@@ -104,11 +106,13 @@ public static class Patches
         {
             foreach (var target in fixes.SelectMany(fix => fix.Targets).Distinct())
             {
+                bool Adds(Fix fix) => (wanted & ~on & fix.Kind) != 0 && Array.IndexOf(fix.Targets, target) >= 0;
+                if (!Array.Exists(fixes, Adds)) continue;
+                HookBridge.Prepare(target);
                 var processor = Harmony.CreateProcessor(target);
-                var adds = 0;
                 foreach (var fix in fixes)
                 {
-                    if ((wanted & ~on & fix.Kind) == 0 || Array.IndexOf(fix.Targets, target) < 0) continue;
+                    if (!Adds(fix)) continue;
                     var harmonyMethod = new HarmonyMethod(fix.Method);
                     _ = fix.Kind switch
                     {
@@ -117,9 +121,8 @@ public static class Patches
                         _ => processor.AddFinalizer(harmonyMethod),
                     };
                     added.Add((target, fix.Method));
-                    adds++;
                 }
-                if (adds != 0) processor.Patch();
+                processor.Patch();
             }
         }
         catch

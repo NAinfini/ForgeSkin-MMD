@@ -1,7 +1,8 @@
 namespace ForgeCore;
 
 /// <summary>The one reading of a <c>Pack:item</c> name, the way mods call a model, an effect or an icon by name: exactly one pack and one item,
-/// both non-empty, joined by one colon. Which characters a pack or item may hold is the checking library's own rule (ForgeVisual, ForgeUI).</summary>
+/// both non-empty, joined by one colon. Which characters a pack or item may hold is ForgeCore's internal <c>PackNames</c> rule, which the
+/// icon and visual name tables check.</summary>
 public static class PackItem
 {
     /// <summary>False unless <paramref name="name"/> is exactly <c>pack:item</c>.</summary>

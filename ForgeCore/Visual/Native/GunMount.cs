@@ -822,7 +822,7 @@ public sealed class GunMount
         // The wrist target stays attached to the gun; the game's wrist rotation must not orbit its offset.
         ApplyFrame(holder, _leftProxy, GunPose.FollowHand(_gripRest, grip, _leftRest, left, _leftTargetRest));
         // With no game magazine node the magazine is part of the gun: it moves with the hand like the model.
-        if (_magazineObject is not null) ApplyFrame(holder, _magazine!, Carried(grip, _donorMagazine, _magazineNodeRest, _magazineRest));
+        if (_magazineObject != null && !_magazineObject.WasCollected) ApplyFrame(holder, _magazine!, Carried(grip, _donorMagazine, _magazineNodeRest, _magazineRest));
         foreach (var (part, node, nodeRest, partRest) in _followers)
             if (part != null) ApplyFrame(holder, part, Carried(grip, node, nodeRest, partRest));
     }

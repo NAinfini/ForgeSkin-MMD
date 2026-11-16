@@ -24,6 +24,32 @@ TEAM = "NAinfini"
 NAME = r"[A-Za-z0-9_]{1,128}"
 VERSION = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 LIBRARY_METADATA = ("manifest.json", "icon.png", "README.md", "DEVELOPERS.md", "CHANGELOG.md", "LICENSE", "NOTICE", "web-manifest.forge")
+# Thunderstore's own files stay at the zip root; every other file of package <Name> is the zip entry plugins/<Name>/<path>.
+ROOT_FILES = ("manifest.json", "icon.png", "README.md", "CHANGELOG.md")
+# The GTFO install routes of r2modman and the Thunderstore Mod Manager (the game's installRules). A zip folder named like a route is copied
+# with its sub-folders into BepInEx/<route>/ (plugins, core, patchers and GameData under a <Team>-<Name> folder); a folder named like none is
+# walked and its files flattened into BepInEx/plugins/<Team>-<Name>/, so plugins/<Name>/lang/en.forge keeps its place and lang/en.forge
+# does not. Config and Assets are shared folders without a per-package level.
+MANAGER_ROUTES = ("plugins", "core", "patchers", "monomod", "config", "GameData", "Assets")
+SHARED_ROUTES = ("config", "Assets")
+
+
+def zip_entry(name: str, path: str) -> str:
+    """The zip entry of package <name>'s file <path> (relative to its DLL folder): the root files stay, the rest go under plugins/<name>/,
+    so a mod manager installs them in BepInEx/plugins/<Team>-<name>/<name>/ and a manual unzip into BepInEx in plugins/<name>/."""
+    return path if path in ROOT_FILES else "plugins/" + name + "/" + path
+
+
+def manager_install(package: str, entry: str) -> str:
+    """The BepInEx-relative path r2modman installs zip entry <entry> of package <package> (<Team>-<Name>) to."""
+    parts = entry.split("/")
+    for index, part in enumerate(parts[:-1]):
+        route = next((route for route in MANAGER_ROUTES if route.lower() == part.lower()), None)
+        if route is not None:
+            rest = "/".join(parts[index + 1:])
+            return route + "/" + rest if route in SHARED_ROUTES else route + "/" + package + "/" + rest
+    route = "monomod" if parts[-1].lower().endswith(".mm.dll") else "plugins"
+    return route + "/" + package + "/" + parts[-1]
 
 
 def check_manifest(folder: Path, name: str) -> dict[str, object]:
@@ -130,6 +156,33 @@ def sha256_file(path: Path | str) -> str:
     return digest.hexdigest()
 
 
+def json_projection(value: object, fields: tuple[str, ...]) -> object:
+    """The parts of a JSON value at the dotted paths in fields, in the value's own shape: a list is walked item by item and an
+    absent key stays absent, so only a change to one of those fields changes the result."""
+    tree: dict = {}
+    for field in fields:
+        node = tree
+        for key in field.split("."):
+            node = node.setdefault(key, {})
+
+    def project(value: object, node: dict) -> object:
+        if node and isinstance(value, list):
+            return [project(item, node) for item in value]
+        if node and isinstance(value, dict):
+            return {key: project(value[key], child) for key, child in node.items() if key in value}
+        return value
+
+    return project(value, tree)
+
+
+def json_projection_sha256(path: Path | str, fields: tuple[str, ...]) -> str:
+    """sha256 of the canonical JSON (sorted keys, no spaces) of json_projection of a JSON file: a build input's digest that a
+    change to anything outside those fields (words, numbers the build never reads, formatting) leaves as it was."""
+    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    text = json.dumps(json_projection(value, fields), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def audio_files(folder: Path) -> dict[str, Path]:
     """The ForgeAudio cue file and exactly the Ogg clips it names, from a Release build's audio folder."""
     settings = folder / "cues.forge"
@@ -230,18 +283,32 @@ def vfx_files(package: str, short: str, repo: Path = REPO, folder: str = "Assets
     return {name: path for name, path in files.items() if path.is_file()}
 
 
+def heavy_blast_files(package: str, folder: str, repo: Path = REPO) -> dict[str, Path]:
+    """The package's own copy of the heavy blast (ForgeCore's HeavyBlast plays it): forge-visual-fx.bundle, its slot table and licence note
+    from Mods/<package>/<folder>, as entries under HeavyBlast/. Required, and the bundle must be the file its build receipt
+    (forge-visual-fx.manifest.json beside it) names: every package that fires the blast ships the same bytes, none relies on another."""
+    files = vfx_files(package, "visual", repo, folder)
+    receipt = json.loads((Path(repo) / "Mods" / package / folder / "forge-visual-fx.manifest.json").read_text(encoding="utf-8"))
+    bundle = files.get("forge-visual-fx.bundle")
+    if bundle is None or len(files) != 3:
+        raise ValueError(package + "/" + folder + ": the heavy blast's bundle, fx-slots.forge and fx-licences.forge must all be there before packaging")
+    if receipt.get("bytes") != bundle.stat().st_size or receipt.get("sha256") != sha256_file(bundle):
+        raise ValueError(str(bundle) + " does not match its build receipt forge-visual-fx.manifest.json")
+    return {"HeavyBlast/" + name: path for name, path in files.items()}
+
+
 def release_version(mods: Path, name: str) -> str | None:
     """The version Release/release.json (the one table, beside the package folders in `mods`) gives package <name>; None where there is no table (a test fixture)."""
     table = mods / "Release" / "release.json"
     if not table.is_file():
         return None
     release = json.loads(table.read_text(encoding="utf-8"))
-    return next((row["version"] for key in ("packages", "libraries", "standalone", "payloads") for row in release.get(key, []) if row["packageName"] == TEAM + "-" + name), None)
+    return next((row["version"] for key in ("packages", "libraries", "standalone") for row in release.get(key, []) if row["packageName"] == TEAM + "-" + name), None)
 
 
 def package_files(folder: Path, name: str, files: dict[str, Path | str], output: Path) -> Path:
-    """Zip an entry -> file table as package <name>: the manifest and the release.json version are checked, every file must exist, the zip is
-    deterministic (write_zip) and replaces an earlier one only once it is whole. Never publishes."""
+    """Zip a path -> file table (paths relative to the DLL folder) as package <name>, each file at zip_entry: the manifest and the release.json
+    version are checked, every file must exist, the zip is deterministic (write_zip) and replaces an earlier one only once it is whole. Never publishes."""
     manifest = check_manifest(folder, name)
     table = release_version(folder.parent, name)
     if table is not None and table != manifest["version_number"]:
@@ -250,7 +317,7 @@ def package_files(folder: Path, name: str, files: dict[str, Path | str], output:
     for entry, source in files.items():
         if not Path(source).is_file():
             raise ValueError("missing " + str(source) + " for " + entry)
-        data[entry] = Path(source).read_bytes()
+        data[zip_entry(name, entry)] = Path(source).read_bytes()
     path = output / (TEAM + "-" + name + "-" + str(manifest["version_number"]) + ".zip")
     write_zip(path, data)
     print(path.name + ": " + str(path.stat().st_size) + " bytes, sha256 " + hashlib.sha256(path.read_bytes()).hexdigest() + ", " + str(len(data)) + " files")

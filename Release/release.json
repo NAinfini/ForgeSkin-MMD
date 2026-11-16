@@ -40,13 +40,6 @@
         "https://thunderstore.io/c/gtfo/p/dakkhuza/MTFO/v/4.6.3/（包页面与版本 4.6.3；清单 dependencies=BepInEx-BepInExPack_GTFO-1.5.0）",
         "MTFO.dll（程序集版本 4.6.3.0，插件 com.dak.MTFO，插件版本串 4.6.3+git169eb91-main，sha256 cd671f3baca0ad275fa11223bdfe76b060e569ced9741b08b3ff4089da77d3bc；插件版本串带 +git 后缀，不符合 assemblies 钉的三段版本格式，所以只记在这里）"
       ]
-    },
-    {
-      "dependency": "Inas07-LocalProgression-1.4.1",
-      "sources": [
-        "https://thunderstore.io/c/gtfo/p/Inas07/LocalProgression/v/1.4.1/（包页面与版本 1.4.1；清单 dependencies=BepInExPack_GTFO-3.2.4、GTFO_API-0.6.1、MTFO-4.6.3；站点写包依赖的常量见 Web/src/forge/forge-release.ts 的 forgeBaseDependency）",
-        "Inas07.LocalProgression.dll（程序集版本 1.0.0.0，插件 Inas.LocalProgression，插件版本 1.4.0，sha256 1dafc9c6e32ea73d6163bfddd303223f30453b2e7a2ff245219ceab8a235ee33）"
-      ]
     }
   ],
   "packages": [
@@ -83,7 +76,7 @@
         "BepInEx-BepInExPack_GTFO-3.2.4",
         "GTFOModding-GTFO_API-0.6.1",
         "dakkhuza-MTFO-4.6.3",
-        "NAinfini-ForgeCore-1.0.1"
+        "NAinfini-ForgeCore-1.0.2"
       ],
       "identity": {
         "csprojs": [
@@ -183,21 +176,18 @@
       "pluginGuid": "NAinfini.ForgeCore",
       "providerId": null,
       "providerIds": [],
-      "version": "1.0.1",
+      "version": "1.0.2",
       "audience": "player",
       "dependencies": [
         "BepInEx-BepInExPack_GTFO-3.2.4",
         "GTFOModding-GTFO_API-0.6.1"
       ],
       "identity": { "csprojs": ["ForgeCore/ForgeCore.csproj"], "plugin": "ForgeCore/Native/Plugin.cs", "module": null },
-      "files": ["ForgeCore.dll", "NVorbis.dll", "NVorbis.LICENSE.forge", "manifest.json", "icon.png", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "web-manifest.forge", "lang/en.forge", "lang/zh.forge", "fonts/ForgeUI-fonts.bundle", "fonts/OFL-GlowSans.forge", "fonts/OFL-Rajdhani.forge", "forge-visual-fx.bundle", "fx-slots.forge", "fx-licences.forge"],
+      "files": ["ForgeCore.dll", "NVorbis.dll", "NVorbis.LICENSE.forge", "manifest.json", "icon.png", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "web-manifest.forge", "lang/en.forge", "lang/zh.forge", "fonts/ForgeUI-fonts.bundle", "fonts/OFL-GlowSans.forge", "fonts/OFL-Rajdhani.forge"],
       "media": [
         { "file": "fonts/ForgeUI-fonts.bundle", "source": "Assets/fonts/forgeui-fonts.bundle", "sha256": "4f3d97e2141ff2ce16eeef5237a1f6ff905e6fbbb76df184ca97d3890170fb20" },
         { "file": "fonts/OFL-GlowSans.forge", "source": "Assets/fonts/OFL-GlowSans.forge", "sha256": "fbacabbdc0b859a77b0fd3f266400a959baf00f428fc64aac33a7f77e1838e40" },
-        { "file": "fonts/OFL-Rajdhani.forge", "source": "Assets/fonts/OFL-Rajdhani.forge", "sha256": "bb36ea0b5e02431f0372edde87b029ceb071806f5296c4ffb38756850a54e2ed" },
-        { "file": "forge-visual-fx.bundle", "source": "Assets/Vfx/forge-visual-fx.bundle", "sha256": "b6d1b7b5afb9b0c6781d0038e34e83e510d1790e3d9903adcbec9bba9d232bc3" },
-        { "file": "fx-slots.forge", "source": "Assets/Vfx/fx-slots.forge", "sha256": "2fe7b25c59b721f01403305c7e1add6d72931d2468e5baa50300645fa1649f22" },
-        { "file": "fx-licences.forge", "source": "Assets/Vfx/fx-licences.forge", "sha256": "60e878738144e7c04bbb58900830f702e06ca8acab200254b7a6e860a5cb097c" }
+        { "file": "fonts/OFL-Rajdhani.forge", "source": "Assets/fonts/OFL-Rajdhani.forge", "sha256": "bb36ea0b5e02431f0372edde87b029ceb071806f5296c4ffb38756850a54e2ed" }
       ],
       "embeddedMedia": [
         { "assembly": "ForgeCore.dll", "resource": "ForgeVisual.Vfx.forge-vfx.bundle", "source": "Assets/Vfx/forge-vfx.bundle", "sha256": "373f87cbfae94ef4dc473b75c956bf0c2394c1e498095f4319261732de0bef52" }
@@ -211,12 +201,12 @@
       "pluginGuid": "NAinfini.ForgeEmote",
       "providerId": null,
       "providerIds": [],
-      "version": "1.0.0",
+      "version": "1.0.1",
       "audience": "player",
         "packager": "tools/package_release.py",
       "dependencies": [
         "BepInEx-BepInExPack_GTFO-3.2.4",
-        "NAinfini-ForgeCore-1.0.1"
+        "NAinfini-ForgeCore-1.0.2"
       ],
       "identity": {
         "csprojs": [
@@ -231,12 +221,12 @@
       "pluginGuid": "ForgeSkin",
       "providerId": null,
       "providerIds": [],
-      "version": "1.1.0",
+      "version": "1.1.1",
       "audience": "player",
       "packager": "tools/package_release.py",
       "dependencies": [
         "BepInEx-BepInExPack_GTFO-3.2.4",
-        "NAinfini-ForgeCore-1.0.1"
+        "NAinfini-ForgeCore-1.0.2"
       ],
       "identity": {
         "csprojs": [
@@ -251,14 +241,14 @@
       "pluginGuid": "NAinfini.ForgeOrdnance",
       "providerId": null,
       "providerIds": [],
-      "version": "1.0.1",
+      "version": "1.0.2",
       "audience": "player",
       "packager": "tools/package_release.py",
       "dependencies": [
         "BepInEx-BepInExPack_GTFO-3.2.4",
         "GTFOModding-GTFO_API-0.6.1",
         "dakkhuza-MTFO-4.6.3",
-        "NAinfini-ForgeCore-1.0.1"
+        "NAinfini-ForgeCore-1.0.2"
       ],
       "identity": {
         "csprojs": [
@@ -273,7 +263,7 @@
       "pluginGuid": "NAinfini.ForgePerformance",
       "providerId": null,
       "providerIds": [],
-      "version": "1.0.0",
+      "version": "1.0.1",
       "audience": "player",
       "packager": "tools/package_release.py",
       "dependencies": [
@@ -293,13 +283,13 @@
       "pluginGuid": "NAinfini.ForgeReplay",
       "providerId": null,
       "providerIds": [],
-      "version": "1.0.0",
+      "version": "1.0.1",
       "audience": "player",
         "packager": "tools/package_release.py",
       "dependencies": [
         "BepInEx-BepInExPack_GTFO-3.2.4",
         "GTFOModding-GTFO_API-0.6.1",
-        "NAinfini-ForgeCore-1.0.1"
+        "NAinfini-ForgeCore-1.0.2"
       ],
       "identity": {
         "csprojs": [
@@ -314,14 +304,14 @@
       "pluginGuid": "NAinfini.ForgeWeaponEnergyLab",
       "providerId": null,
       "providerIds": [],
-      "version": "1.0.1",
+      "version": "1.0.2",
       "audience": "player",
       "packager": "tools/package_release.py",
       "dependencies": [
         "BepInEx-BepInExPack_GTFO-3.2.4",
         "GTFOModding-GTFO_API-0.6.1",
         "dakkhuza-MTFO-4.6.3",
-        "NAinfini-ForgeCore-1.0.1"
+        "NAinfini-ForgeCore-1.0.2"
       ],
       "identity": {
         "csprojs": [
@@ -330,32 +320,6 @@
         "plugin": "ForgeWeapon_EnergyLab/Core/EnergyApi.cs",
         "module": null
       }
-    }
-  ],
-  "payloads": [
-    {
-      "packageName": "NAinfini-ForgeTestLevel",
-      "pluginGuid": null,
-      "providerId": null,
-      "providerIds": [],
-      "version": "1.0.0",
-      "audience": "author",
-      "dependencies": [
-        "NAinfini-ForgeEngine-1.0.0",
-        "NAinfini-ForgeDevelopment-1.0.0"
-      ],
-      "identity": { "csprojs": [], "plugin": null, "module": null },
-      "files": [
-        "manifest.json",
-        "icon.png",
-        "README.md",
-        "CHANGELOG.md",
-        "LICENSE",
-        "NOTICE",
-        "forge/rundown.forge",
-        "forge/map-generation.forge",
-        "forge/generation-inputs/830fb982216ece8e828ff78540a0edb4e5409654bea65a65b3b517f7f0825acb.forge"
-      ]
     }
   ]
 }

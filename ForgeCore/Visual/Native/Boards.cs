@@ -7,6 +7,12 @@ namespace ForgeVisual;
 /// and scale carry it; <see cref="Place"/> sizes and moves it inside the parent.</summary>
 public sealed class WorldBackdrop
 {
+    /// <summary>Render queues of a board's layers. Unity sorts transparent renderers of one queue by their distance to the
+    /// camera, each renderer on its own (a text's fallback-font sub-meshes included), so a layer standing a few centimetres
+    /// in front of the backdrop would come and go with the viewing angle. Each layer has its own queue instead: the backdrop
+    /// first, then a picture or icon on it, then scene-depth text (<see cref="WorldTextStyle.SceneDepth"/>) on top.</summary>
+    public const int Queue = 3000, PictureQueue = Queue + 1, TextQueue = Queue + 2;
+
     private readonly GameObject _object;
     private readonly Material _material;
 
@@ -14,13 +20,22 @@ public sealed class WorldBackdrop
 
     /// <summary>Builds the backdrop under <paramref name="parent"/>; null when the sprite shader is not in the game.</summary>
     public static WorldBackdrop? TryCreate(Transform parent, string name, Color color)
+        => SpriteQuad(parent, name, color, Queue) is { } quad ? new WorldBackdrop(quad.Target, quad.Material) : null;
+
+    /// <summary>The unit quad every flat board is drawn as: a child of <paramref name="parent"/> drawn with the built-in
+    /// unlit transparent sprite shader in <paramref name="queue"/>, casting no shadow. Null when that shader is not in the
+    /// game; a failure on the way leaves neither object behind.</summary>
+    internal static (GameObject Target, Material Material)? SpriteQuad(Transform parent, string name, Color color, int queue,
+        Texture? texture = null, int? layer = null)
     {
         var shader = Shader.Find("Sprites/Default");
         if (shader == null) return null;
-        var material = new Material(shader) { color = color };
+        var material = new Material(shader) { color = color, renderQueue = queue };
         var target = new GameObject(name);
         try
         {
+            if (texture != null) material.mainTexture = texture;
+            if (layer is { } value) target.layer = value;
             target.transform.SetParent(parent, false);
             target.AddComponent<MeshFilter>().sharedMesh = Shaders.Quad();
             var renderer = target.AddComponent<MeshRenderer>();
@@ -28,7 +43,7 @@ public sealed class WorldBackdrop
             renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         }
         catch { UnityEngine.Object.Destroy(target); UnityEngine.Object.Destroy(material); throw; }
-        return new WorldBackdrop(target, material);
+        return (target, material);
     }
 
     public GameObject Root => _object;
@@ -54,7 +69,8 @@ public sealed class WorldBackdrop
 }
 
 /// <summary>A flat image board: a texture on a quad of the given size, drawn with the built-in unlit transparent sprite shader.
-/// It is a child of its parent on the parent's layer, so the parent's collider is the board's hit box.</summary>
+/// It is a child of its parent on the parent's layer, so the parent's collider is the board's hit box. It draws in
+/// <see cref="WorldBackdrop.PictureQueue"/>: over a backdrop behind it and under text on it, from every angle.</summary>
 public sealed class ImageBoard
 {
     private readonly GameObject _object;
@@ -65,22 +81,9 @@ public sealed class ImageBoard
     /// <summary>Builds the board under <paramref name="parent"/> on <paramref name="layer"/>; null when the sprite shader is not in the game.</summary>
     public static ImageBoard? TryCreate(Transform parent, string name, int layer, Texture2D texture, float width, float height)
     {
-        var shader = Shader.Find("Sprites/Default");
-        if (shader == null) return null;
-        var material = new Material(shader) { color = Color.white, mainTexture = texture };
-        var target = new GameObject(name) { layer = layer };
-        try
-        {
-            target.transform.SetParent(parent, false);
-            target.transform.localPosition = Vector3.zero; target.transform.localRotation = Quaternion.identity;
-            target.transform.localScale = new Vector3(width, height, 1);
-            target.AddComponent<MeshFilter>().sharedMesh = Shaders.Quad();
-            var renderer = target.AddComponent<MeshRenderer>();
-            renderer.sharedMaterial = material;
-            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        }
-        catch { UnityEngine.Object.Destroy(target); UnityEngine.Object.Destroy(material); throw; }
-        return new ImageBoard(target, material);
+        if (WorldBackdrop.SpriteQuad(parent, name, Color.white, WorldBackdrop.PictureQueue, texture, layer) is not { } quad) return null;
+        quad.Target.transform.localScale = new Vector3(width, height, 1);
+        return new ImageBoard(quad.Target, quad.Material);
     }
 
     public GameObject Root => _object;

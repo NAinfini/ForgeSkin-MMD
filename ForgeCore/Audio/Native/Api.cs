@@ -149,14 +149,6 @@ public sealed partial class AudioLibrary : IDisposable
     }
 }
 
-/// <summary>Hears a claimed weapon's actions. Called on the main thread from inside the game's own event, once per action.</summary>
-public interface IWeaponActionHandler
-{
-    /// <summary>The claimed weapon did <paramref name="action"/>. The game's own sounds of the weapon are not touched; play the
-    /// mod's cue here. Only the highest-priority claim covering the action is asked.</summary>
-    void Play(WeaponAction action);
-}
-
 /// <summary>One mod's claim on a weapon's actions (<see cref="AudioKit.ClaimWeaponActions"/>). Dispose it to let go; the kit also
 /// ends every claim when the level ends.</summary>
 public sealed class WeaponActionClaim : IDisposable
@@ -167,11 +159,11 @@ public sealed class WeaponActionClaim : IDisposable
     public int Priority { get; }
     /// <summary>False once disposed, ended by the level ending, or the kit shut down.</summary>
     public bool Active => Entry is { Live: true };
-    internal readonly IWeaponActionHandler Handler;
+    internal readonly Action<WeaponAction> Handler;
     internal ClaimBook<WeaponActionClaim>.Entry? Entry;
     internal bool HandlerFailed;
 
-    internal WeaponActionClaim(string modId, Item weapon, WeaponAction kinds, int priority, IWeaponActionHandler handler)
+    internal WeaponActionClaim(string modId, Item weapon, WeaponAction kinds, int priority, Action<WeaponAction> handler)
     {
         ModId = modId; Weapon = weapon; Kinds = kinds; Priority = priority; Handler = handler;
     }
@@ -236,15 +228,6 @@ public static partial class AudioKit
     internal static bool ValidIdentity(string? identity) => identity != null && identity.Length <= 100 && Regex.IsMatch(identity, "^[A-Za-z0-9][A-Za-z0-9_.-]*$");
 }
 
-/// <summary>Takes over a claimed body sound. Called on the main thread from inside the game's play, once per sound.</summary>
-public interface IBodySoundHandler
-{
-    /// <summary>The game is about to play a <paramref name="kind"/> sound of the claimed body at <paramref name="position"/> (a
-    /// footstep's own position; for <see cref="BodySound.Movement"/> the claimed root's position). Return true to drop the game's
-    /// sound, false to let it play. Only the highest-priority claim covering the sound is asked.</summary>
-    bool Play(BodySound kind, Vector3 position);
-}
-
 /// <summary>One mod's claim on a body's sounds (<see cref="AudioKit.ClaimBodySounds"/>). Dispose it to give the sounds back; the
 /// kit also ends every claim when the level ends.</summary>
 public sealed class BodySoundClaim : IDisposable
@@ -255,12 +238,12 @@ public sealed class BodySoundClaim : IDisposable
     public int Priority { get; }
     /// <summary>False once disposed, ended by the level ending, or the kit shut down.</summary>
     public bool Active => Entry is { Live: true };
-    internal readonly IBodySoundHandler Handler;
+    internal readonly Func<BodySound, Vector3, bool> Handler;
     internal readonly Transform RootTransform;
     internal ClaimBook<BodySoundClaim>.Entry? Entry;
     internal bool HandlerFailed;
 
-    internal BodySoundClaim(string modId, GameObject root, BodySound kinds, int priority, IBodySoundHandler handler)
+    internal BodySoundClaim(string modId, GameObject root, BodySound kinds, int priority, Func<BodySound, Vector3, bool> handler)
     {
         ModId = modId; Root = root; Kinds = kinds; Priority = priority; Handler = handler; RootTransform = root.transform;
     }
@@ -283,18 +266,21 @@ public sealed class BodySoundClaim : IDisposable
 public static partial class AudioKit
 {
     /// <summary>Takes over the game's own <paramref name="kinds"/> sounds of the player body under <paramref name="root"/> (usually a
-    /// <c>PlayerAgent</c>'s GameObject) on this peer: each one asks <paramref name="handler"/> instead of playing. Every transform
+    /// <c>PlayerAgent</c>'s GameObject) on this peer: each one asks <paramref name="handler"/> instead of playing. The handler is called
+    /// on the main thread from inside the game's play, once per sound, with the kind and the position (a footstep's own; for
+    /// <see cref="BodySound.Movement"/> the root's), and answers true to drop the game's sound, false to let it play. Every transform
     /// under the root is collected once now; call <see cref="BodySoundClaim.Refresh"/> if the hierarchy changes. Of several claims on
-    /// one body the highest <paramref name="priority"/> answers (the newer at equal priority). Main thread only. Returns null (and
+    /// one body only the highest <paramref name="priority"/> is asked (the newer at equal priority). Main thread only. Returns null (and
     /// logs) on an invalid argument or when the game's body sounds cannot be told apart by body.</summary>
-    public static BodySoundClaim? ClaimBodySounds(string modId, GameObject root, BodySound kinds, IBodySoundHandler handler, int priority = 0)
+    public static BodySoundClaim? ClaimBodySounds(string modId, GameObject root, BodySound kinds, Func<BodySound, Vector3, bool> handler, int priority = 0)
         => BodySounds.Claim(modId, root, kinds, handler, priority);
 
     /// <summary>Hears the <paramref name="kinds"/> actions (reload start, reload end, a trigger pull on an empty magazine) of
-    /// <paramref name="weapon"/> on this peer: each one asks <paramref name="handler"/> once, so the mod plays its own cue for it. The
-    /// game's own weapon sounds come from the weapon's animation and stay. The claim is by the weapon instance, so claim again when
-    /// the game builds a new one. Of several claims on one weapon the highest <paramref name="priority"/> answers (the newer at
-    /// equal priority). Main thread only. Returns null (and logs) on an invalid argument.</summary>
-    public static WeaponActionClaim? ClaimWeaponActions(string modId, Item weapon, WeaponAction kinds, IWeaponActionHandler handler, int priority = 0)
+    /// <paramref name="weapon"/> on this peer: each one calls <paramref name="handler"/> once with the action, on the main thread from
+    /// inside the game's event, so the mod plays its own cue for it. The game's own weapon sounds come from the weapon's animation and
+    /// stay. The claim is by the weapon instance, so claim again when the game builds a new one. Of several claims on one weapon only
+    /// the highest <paramref name="priority"/> is called (the newer at equal priority). Main thread only. Returns null (and logs) on an
+    /// invalid argument.</summary>
+    public static WeaponActionClaim? ClaimWeaponActions(string modId, Item weapon, WeaponAction kinds, Action<WeaponAction> handler, int priority = 0)
         => WeaponActions.Claim(modId, weapon, kinds, handler, priority);
 }

@@ -30,7 +30,7 @@ public static partial class Combat
         if (struck != null && struck.Alive) HurtByBlast(struck, damage, centre, force);
         foreach (var enemy in Enemies.Near(centre, radius))
         {
-            if (enemy == null || !enemy.Alive || enemy == struck || (room != null && enemy.CourseNode != room)) continue;
+            if (enemy == null || !enemy.Alive || enemy == struck || (room != null && !NativeObjects.Same(enemy.CourseNode, room))) continue;
             var point = Enemies.AimPoint(enemy);
             if (line == BlastLine.FromFloor ? !Level.HasSight(centre, point)
                 : Physics.Linecast(centre, point, LayerManager.MASK_WORLD, QueryTriggerInteraction.Ignore)) continue;

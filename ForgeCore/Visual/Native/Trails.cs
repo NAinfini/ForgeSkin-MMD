@@ -262,7 +262,7 @@ public static class Trails
     private static readonly List<Trail> Free = new();
 
     /// <summary>A trail of <paramref name="style"/> starting at <paramref name="start"/>; null (logged once) when the library's shaders
-    /// are not available.</summary>
+    /// are not available, and null (not logged) while <see cref="Max"/> trails are running or fading.</summary>
     public static Trail? Rent(Vector3 start, TrailStyle style)
     {
         if (style == null) throw new ArgumentNullException(nameof(style));

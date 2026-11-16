@@ -167,7 +167,14 @@ public sealed class NetRequest : NetChannel.IPart
             return;
         }
         window.Seen[id] = false;
-        _serve(new NetAsk(this, sender, id, data.AsSpan(at + 8).ToArray()));
+        // A handler that throws may have done part of the work, so the number counts as run: asked again, it answers AlreadyRan
+        // instead of being dropped as a duplicate forever. The asker ends with TimedOut; the channel logs the failure.
+        try { _serve(new NetAsk(this, sender, id, data.AsSpan(at + 8).ToArray())); }
+        catch
+        {
+            window.Seen[id] = true;
+            throw;
+        }
     }
 
     internal void Reply(ulong to, uint id, byte[] body)
@@ -235,20 +242,22 @@ public sealed class NetRequest : NetChannel.IPart
     }
 
     /// <summary>Replaces the ledger with one captured on the host that left. What was still running there counts as run: this player
-    /// cannot finish it, and must not start it again.</summary>
+    /// cannot finish it, and must not start it again. Data that does not read whole throws and leaves the ledger as it was.</summary>
     public void RestoreLedger(byte[] data)
     {
         using var reader = new BinaryReader(new MemoryStream(data));
-        _ledger.Clear();
+        var restored = new Dictionary<ulong, Window>();
         var senders = reader.ReadInt32();
         for (var i = 0; i < senders; i++)
         {
             var window = new Window();
-            _ledger[reader.ReadUInt64()] = window;
+            restored[reader.ReadUInt64()] = window;
             window.Floor = reader.ReadUInt32();
             var count = reader.ReadInt32();
             for (var j = 0; j < count; j++) { window.Seen[reader.ReadUInt32()] = true; reader.ReadBoolean(); }
         }
+        _ledger.Clear();
+        foreach (var pair in restored) _ledger[pair.Key] = pair.Value;
     }
 
     void NetChannel.IPart.EndSession()

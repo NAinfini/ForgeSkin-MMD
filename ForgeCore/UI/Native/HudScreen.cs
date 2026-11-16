@@ -139,7 +139,7 @@ internal static class HudScreen
     /// <summary>The camera the player looks through: the game's current one, else the local player's first-person camera.</summary>
     internal static Camera? WorldCamera()
     {
-        var frame = Time.frameCount;
+        var frame = ForgeCore.Frame.Count;
         if (_worldCameraFrame == frame && (_worldCamera == null || !_worldCamera.WasCollected)) return _worldCamera;
         _worldCameraFrame = frame;
         return _worldCamera = ForgeCore.Players.WorldCamera();

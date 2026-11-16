@@ -48,12 +48,21 @@ public sealed class StartupTiming : IDisposable
 
 /// <summary>Cumulative completed hook work, not another scheduler or log. Patch time includes wrapper generation; snapshots describe
 /// operations completed during the enclosing startup scope and must not be added together. PatchInstallation and MethodResolution
-/// nest inside Declaration, so they attribute the declaration time rather than extend it.</summary>
+/// nest inside Declaration, so they attribute the declaration time rather than extend it. Beside them, the Harmony patch calls
+/// ForgeCore's <c>Hooks</c> actually made (<see cref="CountPatch"/>): every call rebuilds its target's whole replacement, so
+/// patchCalls against patchTargets shows how often a target was rebuilt, where patchInstallationCalls counts declarations.</summary>
 public static class StartupOperationTiming
 {
     public enum Operation { MethodResolution, PatchInstallation, Declaration }
     private static readonly string[] Names = { "methodResolution", "patchInstallation", "declaration" };
     private static readonly long[] Ticks = new long[Names.Length], Calls = new long[Names.Length];
+    private static readonly Dictionary<System.Reflection.MethodBase, int> Patched = new();
+
+    /// <summary>One Harmony patch call on <paramref name="target"/>, counted before it runs (a failed call has rebuilt too).</summary>
+    internal static void CountPatch(System.Reflection.MethodBase target)
+    {
+        lock (Patched) Patched[target] = Patched.TryGetValue(target, out var calls) ? calls + 1 : 1;
+    }
     public readonly struct Measurement : IDisposable
     {
         private readonly Operation _operation;
@@ -70,7 +79,10 @@ public static class StartupOperationTiming
     internal readonly struct Snapshot
     {
         private readonly long[] _ticks, _calls;
-        internal Snapshot(long[] ticks, long[] calls) { _ticks = ticks; _calls = calls; }
+        private readonly Dictionary<System.Reflection.MethodBase, int> _patched;
+        internal Snapshot(long[] ticks, long[] calls, Dictionary<System.Reflection.MethodBase, int> patched) { _ticks = ticks; _calls = calls; _patched = patched; }
+        /// <summary>The phases, then the patch calls of this scope: patchCalls, the targets they went to (patchTargets), how many of
+        /// those have been patched more than once so far (patchTargetsRepeated) and the most calls one of them has had (patchTargetMostCalls).</summary>
         internal string Since(Snapshot before)
         {
             var text = new System.Text.StringBuilder();
@@ -78,6 +90,17 @@ public static class StartupOperationTiming
                 text.Append(' ').Append(Names[i]).Append("Ms=")
                     .Append(((_ticks[i] - before._ticks[i]) * 1000d / Stopwatch.Frequency).ToString("F3", CultureInfo.InvariantCulture))
                     .Append(' ').Append(Names[i]).Append("Calls=").Append((_calls[i] - before._calls[i]).ToString(CultureInfo.InvariantCulture));
+            int patchCalls = 0, targets = 0, repeated = 0, most = 0;
+            foreach (var (target, calls) in _patched)
+            {
+                var added = calls - (before._patched.TryGetValue(target, out var earlier) ? earlier : 0);
+                if (added == 0) continue;
+                patchCalls += added; targets++;
+                if (calls > 1) repeated++;
+                if (calls > most) most = calls;
+            }
+            text.Append(" patchCalls=").Append(patchCalls).Append(" patchTargets=").Append(targets)
+                .Append(" patchTargetsRepeated=").Append(repeated).Append(" patchTargetMostCalls=").Append(most);
             return text.ToString();
         }
     }
@@ -85,6 +108,6 @@ public static class StartupOperationTiming
     {
         var ticks = new long[Names.Length]; var calls = new long[Names.Length];
         for (var i = 0; i < Names.Length; i++) { ticks[i] = Interlocked.Read(ref Ticks[i]); calls[i] = Interlocked.Read(ref Calls[i]); }
-        return new Snapshot(ticks, calls);
+        lock (Patched) return new Snapshot(ticks, calls, new Dictionary<System.Reflection.MethodBase, int>(Patched));
     }
 }

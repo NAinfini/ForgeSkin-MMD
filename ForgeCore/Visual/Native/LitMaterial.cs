@@ -17,23 +17,24 @@ public static class LitMaterial
 
     private static readonly int MainTex = Shader.PropertyToID("_MainTex"), MetallicMap = Shader.PropertyToID("_MetallicGlossMap"),
         ShadingType = Shader.PropertyToID("_ShadingType"), IsGear = Shader.PropertyToID("_IsCustomGearMaterial"),
-        Cutoff = Shader.PropertyToID("_Cutoff"), BumpMap = Shader.PropertyToID("_BumpMap"), SupportsFps = Shader.PropertyToID("_SupportsFPSRendering");
+        Cutoff = Shader.PropertyToID("_Cutoff"), BumpMap = Shader.PropertyToID("_BumpMap"), UseNormalMap = Shader.PropertyToID("_UseNormalMap"), SupportsFps = Shader.PropertyToID("_SupportsFPSRendering");
 
     /// <summary>A material of the gear shader showing <paramref name="albedo"/> (sRGB) with <paramref name="metallicSmooth"/> (linear: metal in red,
     /// smoothness in green), or null while the game has not loaded the shader (it appears once a level has been built).
-    /// <paramref name="cutout"/> alpha-tests the albedo's alpha at <paramref name="cutoff"/>; a shader without that returns null and sets
-    /// <paramref name="why"/>.</summary>
+    /// <paramref name="cutout"/> alpha-tests the albedo's alpha at <paramref name="cutoff"/>: the game's gear shader has no alpha test, so a
+    /// cut-out surface is drawn with this library's <c>ForgeVisual/LitCutout</c>, the gear shader's G-buffer write with the test (same property
+    /// names, so everything below and <c>Glow</c> fill it the same way). Null with <paramref name="why"/> when the shader is not there.</summary>
     public static Material? Create(string name, Texture albedo, Texture metallicSmooth, bool cutout, float cutoff, out string? why)
     {
         why = null;
         var shader = Shader.Find(ShaderName);
         if (shader == null) { why = "the game's gear shader is not loaded yet"; return null; }
+        if (cutout && (shader = Shaders.LitCutout) == null) { why = "ForgeVisual's cut-out shader could not be loaded (logged)"; return null; }
         var material = new Material(shader) { name = name };
         if (cutout)
         {
-            if (!material.HasProperty(Cutoff)) { UnityEngine.Object.Destroy(material); why = "the gear shader has no cut-out"; return null; }
             material.SetFloat(Cutoff, cutoff);
-            material.EnableKeyword("_ALPHATEST_ON");
+            material.renderQueue = 2450;
         }
         material.SetTexture(MainTex, albedo);
         material.SetTexture(MetallicMap, metallicSmooth);
@@ -126,7 +127,12 @@ public static class LitMaterial
     /// DXT5nm (x in alpha, y in green, red 1): decode it with <c>ImageTextures</c>' normal-map mode. That layout is read right by both of
     /// Unity's normal unpackings (the DXT5nm one reads alpha and green, the RG-or-AG one red times alpha and green), a plain RGB map only by the
     /// second. The shader has no strength setting and no keyword for it, so the map is always read; the mesh needs tangents.</summary>
-    public static void SetRelief(Material material, Texture normal) => material.SetTexture(BumpMap, normal);
+    public static void SetRelief(Material material, Texture normal)
+    {
+        material.SetTexture(BumpMap, normal);
+        // This library's own surfaces (the cut-out, the toon shader) read the map only when told to.
+        if (material.HasProperty(UseNormalMap)) material.SetFloat(UseNormalMap, 1f);
+    }
 
     /// <summary>The `_EmissiveColor` multiple that shows a linear emission of 1 (glTF's full-brightness emission) as its own colour. The gear
     /// shader's self-illumination gain is very large: in game (S8-MESH, orange 1 / 0.35 / 0 in an unlit room) a multiple of 0.01 keeps the colour,

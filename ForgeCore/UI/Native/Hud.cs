@@ -313,9 +313,13 @@ internal static class Hud
         _sortingLayer = textRenderer != null ? textRenderer.sortingLayerID : sprite.sortingLayerID;
         _order = textRenderer != null ? textRenderer.sortingOrder : sprite.sortingOrder;
         _material = sprite.sharedMaterial;
-        var parentScale = list.transform.lossyScale;
-        var textScale = text.transform.lossyScale;
-        _textScale = new Vector3(textScale.x / parentScale.x, textScale.y / parentScale.y, textScale.z / parentScale.z);
+        // The text's scale under the list (its slot is the list's child), from the scales the objects have when shown: a hidden weapon list
+        // (the game's HUD hidden by a mod) is collapsed to zero, which would make the ratio of the drawn scales NaN or infinite.
+        var listPointer = list.transform.Pointer;
+        var textScale = new Vector3(1f, 1f, 1f);
+        for (var under = text.transform; under != null && under.Pointer != listPointer; under = under.parent)
+            textScale = Vector3.Scale(textScale, GameHud.HomeScale(under));
+        _textScale = textScale;
         Anchors.Clear();
         _nextScan = 0f;
         _weaponList = _vitals = null;

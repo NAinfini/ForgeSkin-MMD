@@ -5,7 +5,8 @@ namespace ForgeVisual;
 
 /// <summary>How a <see cref="WorldText"/> looks: size, colour, alignment inside its box and the box's pivot. The default is the
 /// zone-label look (size 3, white, bottom-aligned, growing upward from its lower edge). <see cref="SceneDepth"/> makes the
-/// glyphs hide behind scene geometry (the game's font material otherwise draws over it).</summary>
+/// glyphs hide behind scene geometry (the game's font material otherwise draws over it) and draws them in
+/// <see cref="WorldBackdrop.TextQueue"/>, so they stay on a backdrop or picture behind them from every angle.</summary>
 public sealed record WorldTextStyle
 {
     public static readonly WorldTextStyle Default = new();
@@ -62,8 +63,7 @@ public sealed class WorldText
             if (style.SceneDepth)
             {
                 result._material = text.fontMaterial;
-                result._material.SetFloat(ZTestMode, 4); // LEqual: keep the game's font, use scene depth.
-                result._material.SetFloat(GuiZTestMode, 4);
+                OverBackdrop(result._material);
             }
         }
         catch { result.Destroy(); throw; }
@@ -91,7 +91,34 @@ public sealed class WorldText
         _text.SetText(content);
         var preferred = _text.GetPreferredValues(content, lineWidth, float.PositiveInfinity);
         _text.rectTransform.sizeDelta = new Vector2(lineWidth, height ?? preferred.y);
+        if (_material != null) SubMeshesOverBackdrop();
         return preferred;
+    }
+
+    /// <summary>Scene depth (LEqual: keep the game's font, test against the scene) in the queue over a backdrop.</summary>
+    private static void OverBackdrop(Material material)
+    {
+        material.SetFloat(ZTestMode, 4); material.SetFloat(GuiZTestMode, 4);
+        material.renderQueue = WorldBackdrop.TextQueue;
+    }
+
+    /// <summary>TextMeshPro draws the glyphs only a fallback font holds (CJK the main font lacks; Japanese and Simplified
+    /// Chinese glyphs come from two different fonts) through child sub-meshes, each a renderer with its own material,
+    /// made or swapped while the mesh is built. The mesh is built here, at the content change, and every sub-mesh
+    /// material that is not yet over the backdrop gets the main material's look; an unchanged one is left alone.</summary>
+    private void SubMeshesOverBackdrop()
+    {
+        _text.ForceMeshUpdate(true, false);
+        var subMeshes = _text.m_subTextObjects;
+        if (subMeshes == null) return;
+        // TextMeshPro keeps slot 0 free and fills the slots in order.
+        for (var i = 1; i < subMeshes.Length; i++)
+        {
+            var subMesh = subMeshes[i];
+            if (subMesh == null) break;
+            var material = subMesh.sharedMaterial;
+            if (material != null && material.renderQueue != WorldBackdrop.TextQueue) OverBackdrop(material);
+        }
     }
 
     public void SetLocalPosition(Vector3 position)

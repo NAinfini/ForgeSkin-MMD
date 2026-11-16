@@ -67,6 +67,19 @@ public sealed class NetByteTable<TKey> : NetChannel.IPart where TKey : unmanaged
         Raise(key, copy);
     }
 
+    /// <summary>The host rewrites a row it holds as a player owed the whole table now (one that just matched: <see cref="NetChannel.PeerSynced"/>)
+    /// should get it, without sending it to the players that already hold the table or raising <see cref="Changed"/>: a row that
+    /// counts time from when it was written (seconds left), so the newcomer's clock starts from now. False when there is no such row.</summary>
+    public bool Refresh(TKey key, ReadOnlySpan<byte> row)
+    {
+        RequireHost();
+        if (_rowBytes >= 0 && row.Length != _rowBytes) throw new ArgumentException("A row of " + _channel.ModId + "'s table " + _route.Name + " is " + _rowBytes + " bytes, not " + row.Length + ".", nameof(row));
+        if (!_rows.TryGetValue(key, out var old)) return false;
+        if (old.Length == row.Length) row.CopyTo(old);
+        else _rows[key] = row.ToArray();
+        return true;
+    }
+
     /// <summary>The host removes a row.</summary>
     public bool Remove(TKey key)
     {
@@ -96,8 +109,8 @@ public sealed class NetByteTable<TKey> : NetChannel.IPart where TKey : unmanaged
     }
 
     /// <summary>The kind, the revision, the row count, then per row: (changes only: 1 set / 0 removed), the key and, unless removed,
-    /// the row (behind its length when rows have no one size).</summary>
-    /// <summary>The keys are copied into a list first (a collection's own copy, no boxed enumerator) and the list is emptied after.</summary>
+    /// the row (behind its length when rows have no one size). The keys are copied into a list first (a collection's own copy, no boxed
+    /// enumerator) and the list is emptied after.</summary>
     private byte[] Encode(byte kind, ICollection<TKey> source)
     {
         var keys = _sending;
@@ -303,6 +316,14 @@ public sealed class NetTable<TKey, TRow> where TKey : unmanaged, IEquatable<TKey
 
     /// <summary>The host sets a row; the same value again changes nothing.</summary>
     public void Set(TKey key, TRow row) => _table.Set(key, MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref row, 1)));
+
+    /// <summary>See <see cref="NetByteTable{TKey}.Refresh"/>.</summary>
+    public bool Refresh(TKey key, TRow row)
+    {
+        if (!_table.Refresh(key, MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref row, 1)))) return false;
+        _rows[key] = row;
+        return true;
+    }
 
     /// <summary>The host removes a row.</summary>
     public bool Remove(TKey key) => _table.Remove(key);

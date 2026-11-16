@@ -55,6 +55,22 @@ internal static class NetChecks
         check(!hub.Wire.Exists(p => p.Name == "beta/x"), "handshake: nothing of a refused mod leaves");
         hub.Flush();
         check(got == 1, "handshake: the other mods keep talking");
+
+        // The host passes a player's message on to the others, never back to the player it came from.
+        var relay = new Hub();
+        var relayHost = relay.Join(1);
+        var shooter = relay.Join(2);
+        var watcher = relay.Join(3);
+        NetEvent<Ping>? passOn = null;
+        var echoed = 0;
+        var seen = 0;
+        passOn = relayHost.Node.Open("relay").Event<Ping>("shot", (from, m) => passOn!.BroadcastExcept(m, from));
+        var shoot = shooter.Node.Open("relay").Event<Ping>("shot", (_, _) => echoed++);
+        watcher.Node.Open("relay").Event<Ping>("shot", (_, m) => { if (m.Sequence == 9) seen++; });
+        relay.Settle();
+        shoot.ToHost(new Ping { Sequence = 9 });
+        relay.Flush();
+        check(seen == 1 && echoed == 0 && relay.Count("relay/shot", 2) == 0, "relay: a message passed on reaches every other player and not its sender");
     }
 
     private static void Epoch(Action<bool, string> check, List<string> notices)
@@ -164,6 +180,14 @@ internal static class NetChecks
         hostState.Publish(new Ping { Sequence = 4 }, 97f);
         hub.Flush();
         check(clientState.TryGet(1, out var state, out var start) && state.Sequence == 4 && Math.Abs(start - 497f) < 0.01f, "rows: a player state arrives with its start on the receiver's clock");
+        var states = hub.Count("rows/state/act", 2);
+        hostState.Publish(new Ping { Sequence = 4 }, 97f);
+        hub.Flush();
+        check(hub.Count("rows/state/act", 2) == states, "rows: the same player state begun at the same moment is not sent again");
+        var invalid = Net.Dropped(Net.DropStateInvalid);
+        hostState.Publish(new Ping { Sequence = 6, Value = float.NaN }, 97f);
+        hub.Flush();
+        check(Net.Dropped(Net.DropStateInvalid) == invalid + 1 && clientState.TryGet(1, out state, out _) && state.Sequence == 4, "rows: a player state with a number that is not finite is dropped and the earlier one stays");
         // The state of the next world arrives before the world does.
         host.Node.NoteWorld(NetWorldReason.Build);
         hostState.Publish(new Ping { Sequence = 5 }, 100f);
@@ -347,6 +371,8 @@ internal static class NetChecks
         check(hub.Count("table/parts", 2) == parts + 1 && last.Data.Length < 40 && clientParts.TryGet(2, out var part) && part.Length == 3 && part[2] == 9 && clientParts.Rows[1].Length == 300,
             "table: rows of bytes change length, and a part whose bytes did not change is not sent again");
 
+        // A row counting time from its write is written again for the player who joins, and for nobody else.
+        hostMod.PeerSynced += player => { if (player == 3) hostTable.Refresh(1, new Ping { Sequence = 11 }); };
         var joiner = hub.Join(3);
         var joinerMod = joiner.Node.Open("table");
         var joinerTable = joinerMod.Table<int, Ping>("rows");
@@ -354,6 +380,7 @@ internal static class NetChecks
         sent = hub.Count("table/rows", 2);
         hub.Settle();
         check(joinerTable.Rows.Count == 3 && hub.Count("table/rows", 2) == sent && hub.Count("table/rows", 3) == 1, "table: a player who joins gets the whole table, and only that player");
+        check(joinerTable.TryGet(1, out row) && row.Sequence == 11 && clientTable.TryGet(1, out row) && row.Sequence == 1, "table: a row refreshed for a player who joins reaches only that player");
 
         host.Node.NoteWorld(NetWorldReason.Checkpoint);
         hostTable.Remove(1);

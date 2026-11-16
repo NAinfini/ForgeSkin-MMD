@@ -578,10 +578,10 @@ public sealed class HudCanvas
         var index = pool.Used++;
         var revived = Revive(piece, pool, index);
         var last = pool.Last[index];
-        if (!revived && last.Text != null && ReferenceEquals(last.Sprite, sprite) && last.A == x && last.B == y && last.C == w && last.D == h &&
+        if (!revived && last.Text != null && ForgeCore.NativeObjects.Same(last.Sprite, sprite) && last.A == x && last.B == y && last.C == w && last.D == h &&
             last.E == degrees && last.F == cut && last.R == colour.r && last.G == colour.g && last.Bl == colour.b && last.Al == colour.a) return;
         pool.Last[index] = new Last { A = x, B = y, C = w, D = h, E = degrees, F = cut, R = colour.r, G = colour.g, Bl = colour.b, Al = colour.a, Text = "", Sprite = sprite };
-        if (!ReferenceEquals(last.Sprite, sprite) || revived) piece.sprite = sprite;
+        if (!ForgeCore.NativeObjects.Same(last.Sprite, sprite) || revived) piece.sprite = sprite;
         var t = piece.transform;
         t.localPosition = new Vector3(x, y, 0f);
         t.localRotation = degrees == 0f ? Quaternion.identity : Quaternion.Euler(0f, 0f, degrees);
@@ -647,15 +647,17 @@ public sealed class HudCanvas
 
     // TextMeshPro centres a line on the middle of its ascent and descent lines, which is not the middle of the capitals: a font with a deep descent line draws its text above the
     // centre of a block it was put on. The offset, in ems, from the line's middle to the capitals' middle (positive: the text sits high), read from the face's own metrics once per face.
-    private static readonly Dictionary<TMP_FontAsset, float> Lifts = new();
+    // Keyed by the font's native pointer: `label.font` hands back a new wrapper on every read (NativeObjects.Same).
+    private static readonly Dictionary<IntPtr, float> Lifts = new();
 
     private static float Lift(TMP_FontAsset? font)
     {
         if (font == null) return 0f;
-        if (Lifts.TryGetValue(font, out var lift)) return lift;
+        var key = font.Pointer;
+        if (Lifts.TryGetValue(key, out var lift)) return lift;
         var face = font.faceInfo;
         lift = face.pointSize > 0f ? (face.capLine * 0.5f - (face.ascentLine + face.descentLine) * 0.5f) / face.pointSize : 0f;
-        Lifts[font] = lift;
+        Lifts[key] = lift;
         return lift;
     }
 

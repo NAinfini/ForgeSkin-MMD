@@ -240,7 +240,7 @@ public sealed class HudLoadout : HudWidget
         else if (r.Clip >= 0)
         {
             var rw = _reserveText[i].Length > 0 ? _canvas.Text(_reserveText[i], fx, mid - 10f * u, 20f, UIKitColors.Faded(UIKitColors.Cockpit, 0.72f * alpha), HudAlign.Right) : 0f;
-            if (rw > 0f) _canvas.Text("RSV", fx, mid + 12f * u, CompactRow.SmallPx, UIKitColors.Faded(UIKitColors.Cockpit, 0.6f * alpha), HudAlign.Right);
+            if (rw > 0f) _canvas.Text(UIKit.Kit.Text("loadout.reserve"), fx, mid + 12f * u, CompactRow.SmallPx, UIKitColors.Faded(UIKitColors.Cockpit, 0.6f * alpha), HudAlign.Right);
             _canvas.Text(_clipText[i], fx - rw - 6f * u, mid, 54f, figure, HudAlign.Right, true);
         }
         else if (_pairText[i].Length > 0 || _percentText[i].Length > 0)

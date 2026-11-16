@@ -1,9 +1,9 @@
 using System.Collections.Generic;
 
-namespace ForgeUI;
+namespace ForgeCore;
 
 /// <summary>
-/// The switches every mod made for one shared feature (enemy health bars, hit feedback). The feature is drawn while any switch is on; the
+/// The switches every mod made for one shared feature (enemy health bars, hit feedback, automatic enemy outlines). The feature is drawn while any switch is on; the
 /// style is that of the switch turned on most recently.
 /// </summary>
 internal sealed class ScopeSwitches<T> where T : class

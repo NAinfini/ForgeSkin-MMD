@@ -13,42 +13,18 @@ internal static class VisualNames
     /// register under <c>Forge:</c>.</summary>
     internal static string? CheckPack(string? pack, bool builtIn = false)
     {
-        if (string.IsNullOrEmpty(pack)) return "the pack name is empty";
-        foreach (var c in pack)
-            if (!IsNameChar(c) || c == '.') return "the pack name '" + pack + "' may only hold letters, digits, '_' and '-'";
+        if (ForgeCore.PackNames.CheckPack(pack) is { } bad) return bad;
         if (string.Equals(pack, Game, StringComparison.OrdinalIgnoreCase)) return "'Game' is the game's own catalog";
         if (!builtIn && string.Equals(pack, Forge, StringComparison.OrdinalIgnoreCase)) return "'Forge' is this library's own namespace";
         return null;
     }
 
-    /// <summary>Null when <paramref name="item"/> is a usable item name, else why not.</summary>
-    internal static string? CheckItem(string? item)
-    {
-        if (string.IsNullOrEmpty(item)) return "the item name is empty";
-        foreach (var c in item)
-            if (!IsNameChar(c)) return "the item name '" + item + "' may only hold letters, digits, '_', '-' and '.'";
-        return null;
-    }
+    internal static string? CheckItem(string? item) => ForgeCore.PackNames.CheckItem(item, "item");
 
     internal static string Join(string pack, string item) => pack + ":" + item;
 
-    /// <summary>Splits <c>Pack:item</c>; false (with the reason) when it is not one.</summary>
     internal static bool TrySplit(string? name, out string pack, out string item, out string? why)
-    {
-        pack = item = "";
-        why = null;
-        if (string.IsNullOrEmpty(name)) { why = "the name is empty"; return false; }
-        var colon = name.IndexOf(':');
-        if (colon <= 0 || colon == name.Length - 1 || name.IndexOf(':', colon + 1) >= 0) { why = "'" + name + "' is not Pack:item"; return false; }
-        pack = name.Substring(0, colon);
-        item = name.Substring(colon + 1);
-        why = CheckItem(item);
-        foreach (var c in pack)
-            if (!IsNameChar(c) || c == '.') why ??= "the pack name '" + pack + "' may only hold letters, digits, '_' and '-'";
-        return why == null;
-    }
-
-    private static bool IsNameChar(char c) => c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_' or '-' or '.';
+        => ForgeCore.PackNames.TrySplit(name, "item", out pack, out item, out why);
 }
 
 /// <summary>One kind of named visual (models, sprite sheets, effects, particle pools). A name is resolved once into its handle;

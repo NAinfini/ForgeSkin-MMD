@@ -55,7 +55,7 @@ internal static class AssetValidation
                 samples = granule;
                 if (samples > rate * Math.Min(maxSeconds, 3600) || samples > (ulong)MaxDecodedBytes / channels / 4)
                     return Result<OggInfo>.Fail(AudioError.AssetLimit, "longer than " + Math.Min(maxSeconds, 3600).ToString(System.Globalization.CultureInfo.InvariantCulture)
-                        + " s or over 512 MiB of decoded audio.");
+                        + " s or over " + (MaxDecodedBytes >> 20) + " MiB of decoded audio.");
             }
             ended = (flags & 4) != 0;
             offset = body + length;

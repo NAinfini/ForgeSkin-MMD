@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.0.2
+
+This version stays at 1.0.x although it removes and changes public interfaces; each one is listed below under "Breaking" and "Interface", and mods that use them need to be recompiled. From this version on, 1.x only adds to the interface and removes nothing.
+
+- Breaking: `HookFanout<T>`, `HookLease` and `HookDispatch` are removed; there is no replacement.
+- Breaking: `ItemModelIcons.Photograph` and `ModelPictureView` are removed; there is no replacement (ForgeSkin's picker shows the picture each pack carries).
+- Fixed: `GearIcons.Redraw` no longer fails while the game's icon renderer has removed itself between jobs.
+- Added: `GearIcons.Unframed`, which leaves a mod's additions on a gear out of the framing of its game icons.
+- Added: `Store.Flush()` writes out the values still waiting for the background writer; ForgeCore calls it when the game closes, so a setting changed just before quitting is kept.
+- Added: `GameHooks.HibernatingNoiseHeard`, `HibernateWakeupStarted`, `HibernateDetectionStarted`, `HibernateDetectionEnded` and `EnemyTargetInjected`, for sleeping enemies hearing a noise, waking and being handed a target, shared by every package that reads them.
+- Added: `Players.SimulatedHere(player)` (whether this machine moves that player: the local player, and on the host its bots), `LimbReach.Bend` (a two-bone reach to a target point), `NativeObjects.FieldOffset<T>(name)` (a game field's offset, resolved once) and `FileHashes.Sha256Hex(path)`.
+- Fixed: a claimed weapon-list line (`WeaponListLine`) recognises the line it renamed or hid on later passes, so a renamed line keeps its claim, a hidden line that stops matching shows again at once, and the inventory reads the renamed text.
+- Logs: by default only errors are written. `[Logging] DeveloperLogs` in `NAinfini.ForgeCore.cfg` (off by default, always on with ForgeDevelopment installed) brings back the warnings and information lines; `Log.Developer` and `Log.DevelopmentInstalled` tell a mod which applies.
+- Settings: the interface, sound and visual settings moved from `NAinfini.ForgeUI.cfg`, `NAinfini.ForgeAudio.cfg` and `NAinfini.ForgeVisual.cfg` into `NAinfini.ForgeCore.cfg`, and changed keys from `NAinfini.ForgeUI.keys.cfg` into `NAinfini.ForgeCore.keys.cfg`; the old files are no longer read, so set them again once.
+- The hash of the game's `GameAssembly.dll` is kept between starts in `BepInEx/cache/ForgeCore/file-sha256.txt` and computed again only when the file changes.
+- Fixed: the lobby buttons no longer all hide when the lobby opens (the space was measured while the player bar was still sliding in).
+- Fixed: a `Net` request whose handler throws is answered as already run when it is asked again, instead of staying stuck.
+- Fixed: the grid check behind `Borken cell` no longer throws.
+- Added: `NetEvent.BroadcastExcept(message, player)` (to every other player but one: a host passing a player's message on without sending it back) and `NetTable.Refresh` / `NetByteTable.Refresh` (rewrite a row for the player who just joined only, without sending it to the others).
+- `PlayerState.Publish` of the value already held with the same start sends nothing, and a player state is checked for impossible numbers without reflection on each arrival.
+- Added: `Store.WriteBytes` (the atomic write of `Store.WriteText` for bytes). `Store.Write<T>` now writes on a background thread (the newest value of a path wins; `Store.Read<T>` sees it at once) and checks an existing file only the first time a path is read or written, so a save no longer stalls the game; temporary files are named `.<name>.<random>.tmp`, those a crashed game left are removed, and a replace held by a reader or virus scanner is retried briefly.
+- The heavy blast no longer ships with this library (`forge-visual-fx.bundle`, `fx-slots.forge` and `fx-licences.forge` are gone from the package): each package that fires it ships its own copy and registers it with the new `HeavyBlast.Register`; `HeavyBlast.Load` is public and is called by those packages where they load their own effects, no longer at every landing for every player. Its effect name is unchanged, so recordings still play it; without such a package installed the name is reported missing once and nothing is drawn.
+- Breaking: the one-method handler interfaces are gone; pass a delegate instead. `AudioKit.ClaimWeaponActions` takes an `Action<WeaponAction>` (was `IWeaponActionHandler`), `AudioKit.ClaimBodySounds` a `Func<BodySound, Vector3, bool>` (was `IBodySoundHandler`), `AudioKit.ReserveGameEvent` an `Action<uint, IntPtr, Vector3, bool>` (was `IReservedEventHandler`). `PlayerHits.Observe(owner, before, after, faulted)` takes the three steps of the hit reader (`PlayerHits.HitBefore`, then `after` or `faulted` with the `HitState` it answered) instead of an `IPlayerHitObserver`, and `PlayerHits.ObserveInfection(owner, before, after)` two delegates instead of an `IInfectionObserver`; a null `before` removes the registration. Recompile mods that used them.
+- `UIToggle` without its own words shows the library's "on" and "off" in the player's language (was "ON"/"OFF" in English), and the loadout's reserve label is translated too. `HitEdge.Seconds`, unless a mod set it, follows the player's `Screen / HitFlashSeconds` as it changes. A sprite whose `FlipPhase` is negative no longer stops every mod's sprites.
+- `PlayerHits` puts on only the patches a registration needs: a redirect alone no longer puts the reading prefix, postfix and finalizer on `OnIncomingDamage`. Priorities and the order of the callbacks are unchanged.
+- Interface: `GameHooks.WieldedSlotBlocked.Release`, `GameHooks.LocalItemHeld.Hide` and the five `PlayerStats` subscriptions (`Walk`, `CarryUnslowed`, `Jump`, `NoStamina`, `NoFlinch`) return an `IDisposable` that ends the subscription (they returned nothing); the hook stays on. Recompile mods that call them.
+- Added: the full `Combat.Noise` overload takes an optional `maker` (a `PlayerAgent`), handed to the game as the noise's maker. Recompile mods that call that overload.
+
 ## 1.0.1
 
 - Interface: `UIKit.AddLobbyButton` takes the button's area (`LobbyArea`: below, right, above) and width (`LobbyWidth`: full, half, third); buttons of one area fill rows in order and move to the next area only when they do not fit. Under APPAREL the buttons' rows and the lobby strips' rows close up and then get lower (not below 0.6 of their height, always as wide as APPAREL) to stay above the screen's bottom before a button moves elsewhere.

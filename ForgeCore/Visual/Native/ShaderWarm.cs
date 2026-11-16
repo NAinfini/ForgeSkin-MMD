@@ -6,7 +6,7 @@ namespace ForgeVisual;
 
 /// <summary>
 /// What the visual part makes ready once the elevator has stopped, so no first use pays for it in a fight: the shared surface marks, the
-/// two effect bundles, and one off-screen draw of each of the library's shaders. Loading a shader does not create its GPU programs; only a
+/// Forge effect bundle, and one off-screen draw of each of the library's shaders (the shared heavy blast is loaded by the packages that fire it, <see cref="HeavyBlast.Load"/>). Loading a shader does not create its GPU programs; only a
 /// draw does, on the render thread, and the main thread then waits for it at the next present: on 10-28 the frame right after the first
 /// beacon marker was drawn waited 119 ms there. A temporary camera renders the library's unit quad with every material into a 16 x 16
 /// texture and is destroyed; nothing is shown. Each is a step of ForgeCore <c>LandingWork</c>, one per frame, so none shares a frame with
@@ -20,7 +20,6 @@ internal static class ShaderWarm
     {
         ForgeCore.LandingWork.Add(Plugin.Id, "decal-marks", Decals.Prepare);
         ForgeCore.LandingWork.Add(Plugin.Id, "forge-effects", EffectBundle.Load);
-        ForgeCore.LandingWork.Add(Plugin.Id, "shared-blast", HeavyBlast.Load);
         ForgeCore.LandingWork.Add(Plugin.Id, "shaders", Draw);
     }
 

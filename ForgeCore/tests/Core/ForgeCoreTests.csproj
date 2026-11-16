@@ -23,7 +23,7 @@
     <!-- Core references no game or Unity assembly; -->
     <Compile Include="../../Core/*.cs" Exclude="../../Core/CameraLeaseBook.cs;../../Core/Observers.cs" Link="Core/%(Filename)%(Extension)" />
     <Compile Include="../../Net/*.cs" Link="Net/%(Filename)%(Extension)" />
-    <Compile Include="../../Visual/Core/JointClip*.cs;../../Visual/Core/ProceduralCatalog.cs" Link="Visual/%(Filename)%(Extension)" />
+    <Compile Include="../../Visual/Core/JointClip*.cs;../../Visual/Core/ProceduralCatalog.cs;../../Visual/Core/ChainPhysics.cs;../../Visual/Core/LookRouter.cs" Link="Visual/%(Filename)%(Extension)" />
     <Compile Include="../../UI/Core/Registry.cs;../../UI/Core/HudLayout.cs" Link="UI/%(Filename)%(Extension)" />
     <Compile Include="*.cs" />
     <None Include="../fixtures/*.glb" Link="fixtures/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

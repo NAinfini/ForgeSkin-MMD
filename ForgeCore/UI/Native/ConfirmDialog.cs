@@ -101,7 +101,7 @@ internal static class ConfirmDialogs
         _view ??= Hud.Add(ModIds.Join(Plugin.Id, "Confirm"), new ConfirmView(), new HudSlot(HudRegion.World));
     }
 
-    internal static bool InLevel => GameStateManager.CurrentStateName == eGameStateName.InLevel;
+    internal static bool InLevel => ForgeCore.GameEventSources.InLevel;
 
     internal static string YesKey => _yes?.Name ?? "";
     internal static string NoKey => _no?.Name ?? "";

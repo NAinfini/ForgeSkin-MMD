@@ -182,11 +182,13 @@ public static partial class AudioKit
     /// <summary>Gives back every point emitter now (the level ended); the library does it itself on the game's level and checkpoint events. Never throws.</summary>
     public static void ClearGameSoundPoints()
     {
-        try
-        {
-            _points?.Clear();
-            while (Switched.Count > 0) Switched.Dequeue().Recycle();
-        }
+        // Each part on its own: a failed point clear must not keep the switched emitters, and one failed switched emitter is already out of the queue.
+        try { _points?.Clear(); }
         catch (Exception error) { AudioLog.Report(AudioError.VoiceFailed, "The game sound point emitters could not be given back: " + error); }
+        while (Switched.Count > 0)
+        {
+            try { Switched.Dequeue().Recycle(); }
+            catch (Exception error) { AudioLog.Report(AudioError.VoiceFailed, "A switched game sound emitter could not be given back: " + error); }
+        }
     }
 }

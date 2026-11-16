@@ -26,11 +26,14 @@ public sealed class WieldedSlotGate
         _patches = patches;
     }
 
-    /// <summary>Asked while the game reports the block: true lifts it for that inventory. The first subscription puts the patch on.</summary>
-    public void Release(Func<PlayerInventoryBase, bool> release)
+    /// <summary>Asked while the game reports the block: true lifts it for that inventory. The first subscription puts the patch on
+    /// (it stays on). Disposing the result ends the subscription.</summary>
+    public IDisposable Release(Func<PlayerInventoryBase, bool> release)
     {
+        if (release == null) throw new ArgumentNullException(nameof(release));
         Patches.Ensure(_module, _patches);
         _releases = [.. _releases, release];
+        return new Subscription(() => _releases = Array.FindAll(_releases, other => !ReferenceEquals(other, release)));
     }
 
     internal bool Released(PlayerInventoryBase inventory)

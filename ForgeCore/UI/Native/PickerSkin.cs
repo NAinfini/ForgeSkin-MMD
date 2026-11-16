@@ -67,39 +67,26 @@ internal sealed class PickerRowSkin
 
     /// <summary>Keeps the row inside the list's visible band (<paramref name="bottom"/> to <paramref name="top"/>, world y): wholly inside it
     /// shows everything; partly past an edge it shows only its plates (the list's clipping cuts them; texts would show their glyphs past the
-    /// edge); wholly past it shows nothing (<see cref="MenuCanvas.Show"/>).</summary>
-    internal void Cull(float bottom, float top)
+    /// edge); wholly past it shows nothing (<see cref="MenuCanvas.Show"/>). True when the row reaches below the band.</summary>
+    internal bool Cull(float bottom, float top)
     {
         if (_box == null || _box.WasCollected) _box = _card.GetComponent<BoxCollider2D>() ?? _card.GetComponentInChildren<BoxCollider2D>(true);
-        if (_box == null) return;
+        if (_box == null) return false;
         var t = _box.transform;
         float a = t.TransformPoint(new Vector3(0f, _box.offset.y - _box.size.y / 2f, 0f)).y, b = t.TransformPoint(new Vector3(0f, _box.offset.y + _box.size.y / 2f, 0f)).y;
         float low = Math.Min(a, b), high = Math.Max(a, b), slack = (high - low) * 0.02f;
         var past = high <= bottom || low >= top;
         _canvas.Show(!past, !past && low >= bottom - slack && high <= top + slack);
+        return low < bottom - slack;
     }
 
     /// <summary>Draws the row as a control (an adjust page, <see cref="PickerSource.Controls"/>), with the same plate, frame and edge bar as a
     /// card row and the right edge held at <paramref name="listRight"/>.</summary>
     internal void DrawControl(UIControl control, bool focus, bool held, float listRight)
     {
-        var r = RowBox(listRight);
-        float left = r.XMin(), right = r.XMax(), bottom = r.YMin(), top = r.YMax(), h = top - bottom;
-        var lit = focus || held;
-        var c = _canvas;
-        c.Begin();
-        c.Plate(r, h * 0.12f, lit ? MenuLook.Raised : MenuLook.Panel);
-        c.Frame(r, h * 0.12f, lit ? MenuLook.Line : MenuLook.LineDim);
-        c.Rect(Rect.MinMaxRect(left + 2f, bottom + h * 0.16f, left + (focus ? 6f : 4f), top - h * 0.16f), lit ? MenuLook.Amber : MenuLook.LineDim);
-        var inner = Rect.MinMaxRect(left + 10f, bottom, right - 4f, top);
-        Active = control switch
-        {
-            UISlider slider => MenuControlLook.Slider(c, inner, slider, focus, held),
-            UIToggle toggle => MenuControlLook.Toggle(c, inner, toggle, focus),
-            UIPick pick => MenuControlLook.Pick(c, inner, pick, focus),
-            _ => default,
-        };
-        c.End();
+        _canvas.Begin();
+        Active = MenuControlLook.Row(_canvas, RowBox(listRight), control, focus, held);
+        _canvas.End();
     }
 
     /// <summary>The card's box as it is now, its right edge held at <paramref name="listRight"/> (a world x), inset by 2.</summary>
@@ -126,6 +113,45 @@ internal sealed class PickerRowSkin
         var canvas = new MenuCanvas(card.transform, "ForgeUI.Row", like, text, MenuCanvas.TopOrder(card) + 1);
         canvas.VeilOriginals();
         return new PickerRowSkin(canvas, card);
+    }
+
+    /// <summary>Draws a grid card (<see cref="PickerLayout.Grid"/>) over the card's box, which the picker made the card's cell: the picture
+    /// large in a bay on top, the title and the category under it, each one line cut with an ellipsis (never drawn smaller); a card in use has
+    /// an amber bar down its left edge and a tick in its top right corner.</summary>
+    internal void DrawCard(PickerCard data, bool focus)
+    {
+        Active = default;
+        var r = MenuCanvas.Inset(PickerSkin.Box(_card, new Rect(-170f, -115f, 340f, 230f)), 2f);
+        float w = r.width, h = r.height, cut = Math.Min(14f, h * 0.06f), m = Math.Max(8f, h * 0.045f);
+        var held = data.Equipped > 0;
+        var c = _canvas;
+        c.Begin();
+        c.Plate(r, cut, focus ? MenuLook.Raised : MenuLook.Panel);
+        c.Frame(r, cut, focus ? MenuLook.Line : held ? MenuLook.Faded(MenuLook.Amber, 0.8f) : MenuLook.LineDim);
+        if (held) c.Rect(Rect.MinMaxRect(r.xMin + 2f, r.yMin + cut, r.xMin + 6f, r.yMax - cut), MenuLook.Amber);
+        var titleSize = Math.Min(24f, h * 0.1f);
+        var lineSize = titleSize * 0.72f;
+        var hasLine = data.Subtitle.Length > 0;
+        var textTop = r.yMin + m + (hasLine ? lineSize * 1.5f : 0f) + titleSize * 1.4f;
+        var bay = Rect.MinMaxRect(r.xMin + m + 4f, textTop, r.xMax - m, r.yMax - m);
+        c.Plate(bay, cut * 0.7f, MenuLook.Bay);
+        var picture = PickerSkin.Picture(data.Icon);
+        if (picture != null) c.Icon(picture, MenuCanvas.Inset(bay, m * 0.6f), Color.white);
+        else if (data.Swatch is { } swatch) c.Plate(MenuCanvas.Inset(bay, m), cut * 0.6f, new Color(swatch.r, swatch.g, swatch.b, 1f));
+        else c.Rect(new Rect(bay.center.x - bay.width * 0.1f, bay.center.y - 1f, bay.width * 0.2f, 2f), MenuLook.LineDim);
+        if (held)
+        {
+            var side = Math.Min(30f, h * 0.13f);
+            var tag = new Rect(bay.xMax - side - 6f, bay.yMax - side - 6f, side, side);
+            c.Plate(tag, side * 0.25f, MenuLook.Amber);
+            c.Picture(UIKitSprites.Tick, MenuCanvas.Inset(tag, side * 0.15f), MenuLook.Ink);
+        }
+        var x = r.xMin + m + 6f;
+        var fit = r.xMax - m - x;
+        var titleY = textTop - titleSize * 0.8f;
+        c.Text(data.Title, x, titleY, titleSize, focus || held ? MenuLook.Line : MenuLook.Text, HudAlign.Left, fit, false, false);
+        if (hasLine) c.Text(data.Subtitle, x, titleY - titleSize * 0.6f - lineSize * 0.75f, lineSize, data.Accent ?? MenuLook.Dim, HudAlign.Left, fit, false, false);
+        c.End();
     }
 
     /// <summary>Draws the row over the card's box as it is now (the game sizes and places cards when it lays the list out, after
@@ -203,7 +229,8 @@ internal sealed class PickerSlotSkin
         return new PickerSlotSkin(canvas);
     }
 
-    /// <summary>Draws the tile over <paramref name="box"/> (the slot's clickable box in its own units).</summary>
+    /// <summary>Draws the tile over <paramref name="box"/> (the slot's clickable box in its own units); <paramref name="number"/> 0 shows no
+    /// number but a tick when the slot's card is in use.</summary>
     internal void Draw(Rect box, PickerCard data, int number, bool chosen)
     {
         var c = _canvas;
@@ -217,7 +244,13 @@ internal sealed class PickerSlotSkin
         c.Plate(r, cut, chosen ? MenuLook.Raised : MenuLook.Panel);
         c.Frame(r, cut, chosen ? MenuLook.Line : MenuLook.LineDim);
         c.Rect(Rect.MinMaxRect(r.xMin + 3f, r.yMin + 3f, r.xMin + (chosen ? 9f : 7f), r.yMax - cut - 2f), data.Accent ?? (chosen ? MenuLook.Amber : MenuLook.LineDim));
-        c.Text(MenuLook.Number(number), r.xMax - 12f, r.yMax - 15f, 16f, chosen ? MenuLook.Line : MenuLook.Dim, HudAlign.Right);
+        if (number > 0) c.Text(MenuLook.Number(number), r.xMax - 12f, r.yMax - 15f, 16f, chosen ? MenuLook.Line : MenuLook.Dim, HudAlign.Right);
+        else if (data.Equipped > 0)
+        {
+            var tag = new Rect(r.xMax - 34f, r.yMax - 32f, 24f, 24f);
+            c.Plate(tag, 6f, MenuLook.Amber);
+            c.Picture(UIKitSprites.Tick, MenuCanvas.Inset(tag, 4f), MenuLook.Ink);
+        }
         var nameColour = empty ? MenuLook.Dim : chosen ? MenuLook.Line : MenuLook.Text;
         Rect art;
         if (h >= 100f)
@@ -259,6 +292,66 @@ internal sealed class PickerColumnSkin
         c.Text(heading, box.xMin + 18f, box.yMax - 22f, 16f, MenuLook.Dim, HudAlign.Left, box.width - 36f);
         c.Rect(Rect.MinMaxRect(box.xMin + 18f, box.yMax - 41f, box.xMax - 18f, box.yMax - 39.5f), MenuLook.LineDim);
         c.End();
+    }
+}
+
+/// <summary>What the picker draws on the window itself, in window units: the title bar of a picker with one tab (a chamfered plate joined
+/// to the frame like a current tab, the heading, and the gear button at its right end when the source has settings, amber while they are
+/// open), and a downward arrow on the list's bottom edge while more cards lie below it.</summary>
+internal sealed class PickerFrameSkin
+{
+    private readonly MenuCanvas _canvas, _more;
+
+    internal PickerFrameSkin(Transform parent, SpriteRenderer like, TextMeshPro? text)
+    {
+        _canvas = new MenuCanvas(parent, "ForgeUI.Frame", like, text, like.sortingOrder + 2);
+        _more = new MenuCanvas(parent, "ForgeUI.MoreBelow", like, null, like.sortingOrder + 40);
+        _more.Show(false, false);
+    }
+
+    /// <summary>Whether the more-below arrow shows (it is drawn by <see cref="Draw"/>); touches nothing when unchanged.</summary>
+    internal void ShowMore(bool shown) => _more.Show(shown, shown);
+
+    /// <summary>Draws the title bar over <paramref name="bar"/> (an empty heading draws none) and the more-below arrow centred on
+    /// <paramref name="edge"/> (shown by <see cref="ShowMore"/>). Returns the gear button's box, empty without one.</summary>
+    internal Rect Draw(Rect bar, string heading, bool gear, bool gearOn, Rect edge)
+    {
+        var side = Math.Min(28f, edge.height);
+        _more.Begin();
+        _more.Plate(new Rect(edge.center.x - side * 1.4f, edge.center.y - side / 2f, side * 2.8f, side), side * 0.3f, MenuLook.Raised);
+        _more.Frame(new Rect(edge.center.x - side * 1.4f, edge.center.y - side / 2f, side * 2.8f, side), side * 0.3f, MenuLook.LineMid);
+        _more.Picture(UIKitSprites.Arrow(ArrowDirection.Down), new Rect(edge.center.x - side * 0.35f, edge.center.y - side * 0.35f, side * 0.7f, side * 0.7f), MenuLook.Amber);
+        _more.End();
+        var c = _canvas;
+        var button = default(Rect);
+        c.Begin();
+        if (heading.Length > 0)
+        {
+            var h = bar.height;
+            var cut = Math.Min(12f, h * 0.3f);
+            c.Plate(bar, cut, MenuLook.Raised);
+            c.Frame(bar, cut, MenuLook.Line);
+            c.Rect(Rect.MinMaxRect(bar.xMin + cut, bar.yMax - 4f, bar.xMin + Math.Min(bar.width, 260f), bar.yMax - 1f), MenuLook.Amber);
+            var right = bar.xMax - 16f;
+            if (gear)
+            {
+                button = new Rect(bar.xMax - h - 6f, bar.yMin + 4f, h, h - 8f);
+                c.Plate(button, cut * 0.6f, gearOn ? MenuLook.Faded(MenuLook.Amber, 0.25f) : MenuLook.Bay);
+                c.Frame(button, cut * 0.6f, gearOn ? MenuLook.Amber : MenuLook.LineDim);
+                var glyph = button.height * 0.62f;
+                c.Picture(UIKitSprites.Gear, new Rect(button.center.x - glyph / 2f, button.center.y - glyph / 2f, glyph, glyph), gearOn ? MenuLook.Amber : MenuLook.Line);
+                right = button.xMin - 16f;
+            }
+            c.Text(heading, bar.xMin + 18f, bar.center.y, h * 0.42f, MenuLook.Line, HudAlign.Left, right - bar.xMin - 18f, false, false);
+        }
+        c.End();
+        return button;
+    }
+
+    internal void Destroy()
+    {
+        _canvas.Destroy();
+        _more.Destroy();
     }
 }
 
@@ -331,17 +424,44 @@ internal sealed class PickerTabsSkin
     }
 }
 
+internal enum PickerHitKind { Scheme, SchemePage, Control, ControlPage }
+
+/// <summary>A press target the side panel drew, in the details box's units: <see cref="Box"/> takes the press, <see cref="Active"/> is the
+/// span a control maps it to; <see cref="Index"/> is the scheme or control, or the page step (−1 or +1).</summary>
+internal readonly struct PickerHit
+{
+    internal PickerHit(Rect box, Rect active, PickerHitKind kind, int index)
+    {
+        Box = box;
+        Active = active;
+        Kind = kind;
+        Index = index;
+    }
+
+    internal Rect Box { get; }
+    internal Rect Active { get; }
+    internal PickerHitKind Kind { get; }
+    internal int Index { get; }
+}
+
+/// <summary>The side panel's state the picker keeps: the shown pages and the control the cursor pressed or drags (−1 for none).</summary>
+internal struct PickerPanelView
+{
+    internal int SchemePage, ControlPage, Focus, Drag;
+}
+
 /// <summary>The details box (see <see cref="PickerSkin"/>), drawn on the game's weapon info box.</summary>
 internal sealed class PickerDetailSkin
 {
     private const int MaxBadges = 12, MaxReadouts = 4;
-    private readonly MenuCanvas _canvas;
+    private readonly MenuCanvas _canvas, _rows;
     private readonly Rect _box;
     private readonly StringBuilder _body = new();
 
-    private PickerDetailSkin(MenuCanvas canvas, Rect box)
+    private PickerDetailSkin(MenuCanvas canvas, MenuCanvas rows, Rect box)
     {
         _canvas = canvas;
+        _rows = rows;
         _box = box;
     }
 
@@ -355,13 +475,26 @@ internal sealed class PickerDetailSkin
             return null;
         }
         var area = MenuCanvas.BoxIn(box.transform, box.m_collider, new Rect(-300f, -350f, 600f, 700f));
-        return new PickerDetailSkin(new MenuCanvas(box.transform, "ForgeUI.Details", like, text, MenuCanvas.TopOrder(box) + 1), area);
+        var order = MenuCanvas.TopOrder(box) + 1;
+        // The control rows on a canvas of their own, ordered above everything the details draw (each piece takes the next order).
+        return new PickerDetailSkin(new MenuCanvas(box.transform, "ForgeUI.Details", like, text, order),
+            new MenuCanvas(box.transform, "ForgeUI.DetailRows", like, text, order + 1000), area);
     }
 
-    internal void Destroy() => _canvas.Destroy();
-
-    internal void Draw(PickerInfo info, string? warning)
+    internal void Destroy()
     {
+        _canvas.Destroy();
+        _rows.Destroy();
+    }
+
+    internal void Draw(PickerInfo info, string? warning) => Draw(info, warning, null, default, null);
+
+    /// <summary>The details with <paramref name="panel"/> under them (null: the details alone): the picture, the category and the title, then
+    /// each section of the panel with its heading, then the description in what room is left. Every press target drawn is added to
+    /// <paramref name="hits"/> (cleared first), in the box's own units.</summary>
+    internal void Draw(PickerInfo info, string? warning, PickerPanel? panel, PickerPanelView view, List<PickerHit>? hits)
+    {
+        hits?.Clear();
         var c = _canvas;
         var b = _box;
         var W = b.width;
@@ -371,26 +504,15 @@ internal sealed class PickerDetailSkin
         var inner = W - 2f * p;
         c.Begin();
         c.Plate(b, 0f, MenuLook.Ink);
+        if (panel != null && hits != null)
+        {
+            DrawPanel(info, warning, panel, view, hits, x, inner, p);
+            c.End();
+            return;
+        }
+        _rows.Clear();
         var hero = new Rect(x, b.yMax - p - H * 0.4f, inner, H * 0.4f);
-        c.Plate(hero, 14f, MenuLook.Bay);
-        if (info.Accent is { } glow && info.Swatch == null)
-        {
-            var side = Math.Min(hero.width, hero.height) * 1.05f;
-            c.Picture(UIKitSprites.GlowBlob, new Rect(hero.center.x - side / 2f, hero.center.y - side / 2f, side, side), MenuLook.Faded(glow, 0.3f));
-        }
-        var picture = PickerSkin.Picture(info.Icon);
-        var art = MenuCanvas.Inset(hero, H * 0.035f);
-        if (info.Swatch is { } swatch)
-        {
-            // Alone it fills the box; under a picture it is a band along the box's bottom, the picture above it.
-            var colour = new Color(swatch.r, swatch.g, swatch.b, 1f);
-            var band = picture == null ? art : Rect.MinMaxRect(art.xMin, art.yMin, art.xMax, art.yMin + art.height * 0.22f);
-            c.Plate(band, 12f, colour);
-            c.Frame(band, 12f, MenuLook.LineMid);
-            if (picture != null) art = Rect.MinMaxRect(art.xMin, band.yMax + H * 0.01f, art.xMax, art.yMax);
-        }
-        if (picture != null) c.Icon(picture, art, Color.white);
-        Brackets(c, MenuCanvas.Inset(hero, 8f));
+        Hero(info, hero, H);
         var y = hero.yMin - H * 0.045f;
         if (info.Subtitle.Length > 0)
         {
@@ -436,6 +558,198 @@ internal sealed class PickerDetailSkin
             for (var i = 0; i < readouts; i++) Readout(c, info.Readouts[i], new Rect(x + i * (width + gap), b.yMin + p, width, blockHeight));
         }
         c.End();
+    }
+
+    /// <summary>The picture large in <paramref name="hero"/>: its glow, the colour it stands for, the picture and the corner brackets.</summary>
+    private void Hero(PickerInfo info, Rect hero, float H)
+    {
+        var c = _canvas;
+        c.Plate(hero, 14f, MenuLook.Bay);
+        if (info.Accent is { } glow && info.Swatch == null)
+        {
+            var side = Math.Min(hero.width, hero.height) * 1.05f;
+            c.Picture(UIKitSprites.GlowBlob, new Rect(hero.center.x - side / 2f, hero.center.y - side / 2f, side, side), MenuLook.Faded(glow, 0.3f));
+        }
+        var picture = PickerSkin.Picture(info.Icon);
+        var art = MenuCanvas.Inset(hero, H * 0.035f);
+        if (info.Swatch is { } swatch)
+        {
+            // Alone it fills the box; under a picture it is a band along the box's bottom, the picture above it.
+            var colour = new Color(swatch.r, swatch.g, swatch.b, 1f);
+            var band = picture == null ? art : Rect.MinMaxRect(art.xMin, art.yMin, art.xMax, art.yMin + art.height * 0.22f);
+            c.Plate(band, 12f, colour);
+            c.Frame(band, 12f, MenuLook.LineMid);
+            if (picture != null) art = Rect.MinMaxRect(art.xMin, band.yMax + H * 0.01f, art.xMax, art.yMax);
+        }
+        if (picture != null) c.Icon(picture, art, Color.white);
+        Brackets(c, MenuCanvas.Inset(hero, 8f));
+    }
+
+    /// <summary>The narrowest a scheme card is drawn, as a share of the box's height: as many cards share a row as fit at this width, the
+    /// rest are paged.</summary>
+    private const float SchemeWidth = 0.22f;
+
+    /// <summary>The details over the panel (see <see cref="Draw(PickerInfo, string?, PickerPanel?, PickerPanelView, List{PickerHit}?)"/>).
+    /// Details with no picture (settings) have no picture bay, so their text has the room.</summary>
+    private void DrawPanel(PickerInfo info, string? warning, PickerPanel panel, PickerPanelView view, List<PickerHit> hits, float x, float inner, float p)
+    {
+        var c = _canvas;
+        var b = _box;
+        var H = b.height;
+        var y = b.yMax - p;
+        if (info.Icon != null || info.Swatch != null)
+        {
+            var hero = new Rect(x, y - H * 0.34f, inner, H * 0.34f);
+            Hero(info, hero, H);
+            y = hero.yMin;
+        }
+        y -= H * 0.04f;
+        var titleSize = H * 0.048f;
+        c.Text(info.Title, x, y - titleSize * 0.2f, titleSize, MenuLook.Line, HudAlign.Left, inner, false, false);
+        y -= titleSize * 1.05f;
+        if (info.Subtitle.Length > 0)
+        {
+            var s = H * 0.026f;
+            c.Text(info.Subtitle, x, y, s, info.Accent ?? MenuLook.Dim, HudAlign.Left, inner, false, false);
+            y -= s * 1.6f;
+        }
+        y -= H * 0.012f;
+        var head = H * 0.024f;
+        var row = H * 0.075f;
+        var schemes = panel.Schemes.Count;
+        var bottom = b.yMin + p;
+        (_rowsX, _rowsWidth, _rowHeight, _rowsRoom) = (x, inner, row, 0);
+        if (schemes > 0)
+        {
+            var gap = inner * 0.025f;
+            var perPage = Math.Max(1, (int)((inner + gap) / (H * SchemeWidth + gap)));
+            var pages = (schemes + perPage - 1) / perPage;
+            var page = Math.Clamp(view.SchemePage, 0, pages - 1);
+            Heading(panel.SchemesTitle, x, inner, y, head, page, pages, PickerHitKind.SchemePage, hits);
+            y -= head * 1.6f;
+            var cardHeight = H * 0.13f;
+            var width = (inner - gap * (perPage - 1)) / perPage;
+            for (var k = 0; k < perPage; k++)
+            {
+                var i = page * perPage + k;
+                if (i >= schemes) break;
+                var card = new Rect(x + k * (width + gap), y - cardHeight, width, cardHeight);
+                Scheme(panel.Schemes[i], card);
+                hits.Add(new PickerHit(card, card, PickerHitKind.Scheme, i));
+            }
+            y -= cardHeight + H * 0.015f;
+            // The section's own rows (a scheme the player makes) right under the cards.
+            _schemeRowsTop = y;
+            y -= row * panel.SchemeControlCount;
+            y -= H * 0.025f;
+        }
+        var controls = panel.Controls.Count;
+        if (controls > 0)
+        {
+            var room = Math.Max(1, (int)((y - head * 1.6f - bottom) / row));
+            var pages = (controls + room - 1) / room;
+            var page = Math.Clamp(view.ControlPage, 0, pages - 1);
+            Heading(panel.ControlsTitle, x, inner, y, head, page, pages, PickerHitKind.ControlPage, hits);
+            y -= head * 1.6f;
+            _rowsTop = y;
+            _rowsFirst = page * room;
+            _rowsRoom = room;
+            y -= row * Math.Min(room, controls - _rowsFirst) + H * 0.02f;
+        }
+        if (panel.ControlCount > 0) DrawControls(panel, view, hits);
+        else _rows.Clear();
+        _body.Clear();
+        if (!string.IsNullOrEmpty(warning)) _body.Append("<color=#FF6B6B>").Append(RichText.Plain(warning)).Append("</color>\n\n");
+        _body.Append(info.Body);
+        if (_body.Length > 0 && y - bottom > H * 0.04f) c.Paragraph(_body.ToString(), Rect.MinMaxRect(x, bottom, x + inner, y), H * 0.027f, MenuLook.Body, true);
+    }
+
+    /// <summary>Where the last full draw put the control rows: x, the width and one row's height; the top of the scheme section's rows; the
+    /// top of the controls section's rows, the first of its controls shown and how many of its rows fit.</summary>
+    private float _rowsX, _rowsWidth, _rowHeight, _schemeRowsTop, _rowsTop;
+    private int _rowsFirst, _rowsRoom;
+
+    /// <summary>The side panel's control rows alone, on their own canvas where the last full draw laid them out (each frame of a drag, so it
+    /// touches nothing else): the scheme section's rows, then the controls section's page; with <paramref name="hits"/>, each row's press
+    /// target is added to it, numbered as <see cref="PickerPanel.Control"/>.</summary>
+    internal void DrawControls(PickerPanel panel, PickerPanelView view, List<PickerHit>? hits = null)
+    {
+        var c = _rows;
+        var row = _rowHeight;
+        var own = panel.SchemeControlCount;
+        var shown = own + Math.Max(0, Math.Min(_rowsRoom, panel.Controls.Count - _rowsFirst));
+        c.Begin();
+        for (var k = 0; k < shown; k++)
+        {
+            var i = k < own ? k : own + _rowsFirst + (k - own);
+            var top = k < own ? _schemeRowsTop - k * row : _rowsTop - (k - own) * row;
+            var box = new Rect(_rowsX, top - row, _rowsWidth, row - 4f);
+            var active = MenuControlLook.Row(c, box, panel.Control(i), i == view.Focus, i == view.Drag);
+            hits?.Add(new PickerHit(box, active, PickerHitKind.Control, i));
+        }
+        c.End();
+    }
+
+    /// <summary>A section heading at <paramref name="y"/> with a rule under it and, over several pages, the page and its arrows at the right.</summary>
+    private void Heading(string title, float x, float inner, float y, float size, int page, int pages, PickerHitKind arrows, List<PickerHit> hits)
+    {
+        var c = _canvas;
+        var right = x + inner;
+        if (pages > 1)
+        {
+            var side = size * 1.5f;
+            var next = new Rect(right - side, y - side / 2f, side, side);
+            // Room between the arrows for the page counter ("01/02") with a margin either side.
+            var back = new Rect(next.xMin - side * 4f, next.yMin, side, side);
+            Arrow(back, ArrowDirection.Left, page > 0);
+            Arrow(next, ArrowDirection.Right, page < pages - 1);
+            c.Text(MenuLook.Number(page + 1) + "/" + MenuLook.Number(pages), (back.xMax + next.xMin) / 2f, y, size * 0.85f, MenuLook.Dim, HudAlign.Centre);
+            if (page > 0) hits.Add(new PickerHit(back, back, arrows, -1));
+            if (page < pages - 1) hits.Add(new PickerHit(next, next, arrows, 1));
+            right = back.xMin - size;
+        }
+        c.Text(title, x, y, size, MenuLook.Dim, HudAlign.Left, right - x, false, false);
+        c.Rect(new Rect(x, y - size * 0.85f, inner, 1.5f), MenuLook.LineDim);
+    }
+
+    private void Arrow(Rect box, ArrowDirection direction, bool on)
+    {
+        _canvas.Plate(box, box.height * 0.2f, on ? MenuLook.Raised : MenuLook.Ink);
+        _canvas.Frame(box, box.height * 0.2f, on ? MenuLook.LineMid : MenuLook.LineFaint);
+        _canvas.Picture(UIKitSprites.Arrow(direction), MenuCanvas.Inset(box, box.height * 0.28f), on ? MenuLook.Line : MenuLook.LineDim);
+    }
+
+    /// <summary>A scheme card: its colours side by side across the top, its name under them in up to two lines; the scheme in use framed in
+    /// amber with a tick.</summary>
+    private void Scheme(PickerScheme scheme, Rect r)
+    {
+        var c = _canvas;
+        var h = r.height;
+        var cut = h * 0.1f;
+        c.Plate(r, cut, scheme.Chosen ? MenuLook.Raised : MenuLook.Panel);
+        c.Frame(r, cut, scheme.Chosen ? MenuLook.Amber : MenuLook.LineDim);
+        var strip = Rect.MinMaxRect(r.xMin + h * 0.08f, r.yMin + h * 0.5f, r.xMax - h * 0.08f, r.yMax - h * 0.09f);
+        var count = Math.Min(scheme.Colours.Count, 8);
+        if (count > 0)
+        {
+            var each = strip.width / count;
+            for (var i = 0; i < count; i++)
+            {
+                var colour = scheme.Colours[i];
+                c.Rect(new Rect(strip.xMin + i * each, strip.yMin, each, strip.height), new Color(colour.r, colour.g, colour.b, 1f));
+            }
+        }
+        else c.Rect(new Rect(strip.center.x - strip.width * 0.15f, strip.center.y - 1f, strip.width * 0.3f, 2f), MenuLook.LineDim);
+        c.Frame(strip, 2f, MenuLook.LineFaint);
+        if (scheme.Chosen)
+        {
+            var side = strip.height * 0.7f;
+            var tag = new Rect(strip.xMax - side - 3f, strip.yMax - side - 3f, side, side);
+            c.Plate(tag, side * 0.25f, MenuLook.Amber);
+            c.Picture(UIKitSprites.Tick, MenuCanvas.Inset(tag, side * 0.15f), MenuLook.Ink);
+        }
+        c.Paragraph(scheme.Name, Rect.MinMaxRect(r.xMin + h * 0.08f, r.yMin + h * 0.05f, r.xMax - h * 0.08f, strip.yMin - h * 0.04f), h * 0.16f,
+            scheme.Chosen ? MenuLook.Line : MenuLook.Text);
     }
 
     private static void Brackets(MenuCanvas c, Rect r)

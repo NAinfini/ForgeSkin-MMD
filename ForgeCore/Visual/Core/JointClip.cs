@@ -26,6 +26,12 @@ public static class ClipRig
         "rightThumb1", "rightThumb2", "rightThumb3", "rightIndex1", "rightIndex2", "rightIndex3", "rightMiddle1", "rightMiddle2", "rightMiddle3", "rightRing1", "rightRing2", "rightRing3", "rightPinky1", "rightPinky2", "rightPinky3",
     };
 
+    // Indices into Names of the joints code refers to by name.
+    internal const int Hip = 0, Spine0 = 7, Spine1 = 8, Spine2 = 9;
+    internal const int LeftShoulder = 10, LeftUpperArm = 11, LeftLowerArm = 12, LeftHand = 13;
+    internal const int RightShoulder = 14, RightUpperArm = 15, RightLowerArm = 16, RightHand = 17;
+    internal const int Neck = 18, Head = 19;
+
     /// <summary>Each joint's parent index (always lower than its own), -1 for the hip.</summary>
     public static readonly int[] Parent =
     {

@@ -26,7 +26,7 @@ public static class ImportedModelCodes
     public const string OverBudget = "imported-model-over-budget";
     /// <summary>The game's gear shader is not loaded yet (a level has not been built): try again after one is.</summary>
     public const string ShaderUnavailable = "imported-model-shader-unavailable";
-    /// <summary>A material asks for a cut-out the game's shader cannot do.</summary>
+    /// <summary>A material is a cut-out and ForgeVisual's cut-out shader (the gear shader with an alpha test) could not be loaded on this machine.</summary>
     public const string CutoutUnsupported = "imported-model-cutout-unsupported";
     /// <summary>Unity refused to build the mesh, a texture or a material.</summary>
     public const string Build = "imported-model-build-failed";
@@ -247,6 +247,33 @@ public sealed class ImportedModelDescriptor
         return new ImportedModelDescriptor(JsonSerializer.Serialize(d), d.mesh.sha256!, d.mesh.vertices, d.mesh.indices, submeshes, materials, textures, bones);
     }
 
+    /// <summary>Whether the files beside the descriptor are what building the model reads them as, short of the GPU: as many textures as it
+    /// lists, each a PNG of its declared size, and a mesh that <see cref="ImportedMesh.Read"/> accepts (its size, header, finite values, normals,
+    /// indices and bone weights). The one check of the files: the game runs it when it builds the model (<c>ImportedModels.Create</c>) and an
+    /// exporter runs it before it writes a package, so what one accepts the other does too. Content hashes are the caller's.</summary>
+    public bool CheckFiles(byte[] mesh, IReadOnlyList<byte[]> textures, out ImportedModelFailure failure) => ReadFiles(mesh, textures, out failure) != null;
+
+    /// <summary><see cref="CheckFiles"/>, keeping the mesh it read (the build).</summary>
+    internal ImportedMesh? ReadFiles(byte[] mesh, IReadOnlyList<byte[]> textures, out ImportedModelFailure failure)
+    {
+        failure = default;
+        if (textures.Count != Textures.Count)
+        {
+            failure = new ImportedModelFailure(ImportedModelCodes.TextureCount, "the descriptor lists " + Textures.Count + " textures, " + textures.Count + " came");
+            return null;
+        }
+        for (var i = 0; i < textures.Count; i++)
+            if (!ForgeCore.Png.TrySize(textures[i], out var width, out var height) || width != Textures[i].Width || height != Textures[i].Height)
+            {
+                failure = new ImportedModelFailure(ImportedModelCodes.TextureDecode, "texture " + i + " is not a " + Textures[i].Width + "x" + Textures[i].Height + " PNG");
+                return null;
+            }
+        return ImportedMesh.Read(mesh, this, out failure);
+    }
+
+    /// <summary>Whether <paramref name="head"/> (a file's first bytes, at least four) starts as a Forge model mesh does (<c>FMSH</c>).</summary>
+    public static bool IsMeshFile(byte[] head) => head.Length >= 4 && BitConverter.ToUInt32(head, 0) == ImportedMesh.Magic;
+
     private static ImportedModelFailure Refuse(string detail) => new(ImportedModelCodes.Descriptor, detail);
 
     private static bool Unit(float value) => value >= 0f && value <= 1f;
@@ -270,7 +297,7 @@ public sealed class ImportedModelDescriptor
 /// four bone indices (16-bit) and four weights (summing to 1) per vertex.</summary>
 internal sealed class ImportedMesh
 {
-    /// <summary>Bytes of the sidecar header: the magic <c>FMSH</c>, the format (1), the vertex count and the index count, each a little-endian 32-bit number.</summary>
+    /// <summary>Bytes of the sidecar header: the magic <c>FMSH</c>, the format (1, or 2 for a skinned mesh), the vertex count and the index count, each a little-endian 32-bit number.</summary>
     public const int HeaderBytes = 16;
     public const uint Magic = 0x48534D46;
     private const float MinNormalSquared = 0.25f;
@@ -365,11 +392,7 @@ internal static class ImportedColour
 {
     /// <summary>The 8-bit sRGB value of a linear component from 0 to 1 (glTF base colours are linear; a texture holds sRGB).</summary>
     internal static byte LinearToSrgbByte(float linear)
-    {
-        var c = Math.Clamp(linear, 0f, 1f);
-        var s = c <= 0.0031308f ? c * 12.92f : 1.055f * MathF.Pow(c, 1f / 2.4f) - 0.055f;
-        return (byte)MathF.Round(s * 255f, MidpointRounding.AwayFromZero);
-    }
+        => UnitToByte(ColourSpace.ToSrgb(Math.Clamp(linear, 0f, 1f)));
 
     /// <summary>The 8-bit value of a number from 0 to 1 stored as it is (the metal and smoothness channels are not colours).</summary>
     internal static byte UnitToByte(float value) => (byte)MathF.Round(Math.Clamp(value, 0f, 1f) * 255f, MidpointRounding.AwayFromZero);

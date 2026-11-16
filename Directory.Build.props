@@ -26,6 +26,14 @@
     <ForgeNativeSchemaSource Condition="'$(ForgeNativeSchemaSource)' == '' And !Exists('$(MSBuildThisFileDirectory)../catalog/native/native-schema.json') And '$(ForgeMainCheckout)' != ''">$(ForgeMainCheckout)/catalog/native/native-schema.json</ForgeNativeSchemaSource>
     <ForgeNativeSchemaSource Condition="'$(ForgeNativeSchemaSource)' == ''">$(MSBuildThisFileDirectory)../catalog/native/native-schema.json</ForgeNativeSchemaSource>
   </PropertyGroup>
+  <!-- Reproducible assemblies (Mods/Release/README.md, content pins): the commit stays out of the assembly. By default the
+       SDK appends the commit hash to the informational version and writes it into the Source Link record of the PDB, whose
+       checksum the assembly carries, so every commit changed every assembly. The build locations are mapped in
+       Directory.Build.targets. -->
+  <PropertyGroup>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <EnableSourceLink>false</EnableSourceLink>
+  </PropertyGroup>
   <!-- Package version: Release/release.json is the only table. A project listed in a row's identity.csprojs builds with that
        row's version, so csproj files write no <Version>; projects outside the table (tests, tools) keep the SDK default. Source
        constants that repeat a package version are tagged "// package-version: <package>" and written by

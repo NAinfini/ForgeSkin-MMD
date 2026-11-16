@@ -6,10 +6,10 @@ using UnityEngine;
 namespace ForgeVisual;
 
 /// <summary>The visual part of ForgeCore: started by ForgeCore's plugin (<see cref="Load"/>), stepped by its driver (<see cref="VisualFrame"/>).
-/// <see cref="Id"/> names its configuration file, log source and Harmony patches. Its effect bundles, shared marks and shaders are made ready at landing (<see cref="ShaderWarm"/>).</summary>
+/// <see cref="Id"/> (ForgeCore's own) names its settings, log source and Harmony patches. Its effect bundles, shared marks and shaders are made ready at landing (<see cref="ShaderWarm"/>).</summary>
 internal static class Plugin
 {
-    internal const string Id = "NAinfini.ForgeVisual";
+    internal const string Id = ForgeCore.Plugin.Id;
 
     internal static ModLog Logger { get; private set; } = null!;
     internal static ConfigEntry<bool> FlashLights { get; private set; } = null!;
@@ -55,7 +55,9 @@ internal static class VisualFrame
     {
         try { JointPlayer.TickAll(); } catch (Exception error) { Scene.StepFailed("joint clips", error); }
         try { PoseCopy.TickAll(); } catch (Exception error) { Scene.StepFailed("pose copies", error); }
+        try { Chains.TickAll(); } catch (Exception error) { Scene.StepFailed("chain physics", error); }
         try { FirstPersonArms.TickAll(); } catch (Exception error) { Scene.StepFailed("first-person arms", error); }
+        try { FirstPersonWear.TickAll(); } catch (Exception error) { Scene.StepFailed("first-person wear", error); }
         try { OutlineDraw.Tick(); }
         catch (Exception error) { Plugin.Logger.ErrorOnce("visual-outline-update-failed", "ForgeVisual outline update failed: " + error); }
     }
@@ -71,6 +73,7 @@ internal static class Scene
     private static float _tanHalfFov = 0.7f;
     private static Vector3 _forward = Vector3.forward;
     private static float _tanCone = 2f;
+    private static Camera? _camera;
 
     internal static float Now { get; private set; }
     internal static float Delta { get; private set; }
@@ -78,6 +81,9 @@ internal static class Scene
     /// <summary>The local eye: read from the game once a frame (by <see cref="Tick"/>, or by the first caller before it), never more.</summary>
     internal static Vector3 Eye { get { ReadEye(); return _eye; } }
     internal static bool HasEye { get { ReadEye(); return _hasEye; } }
+
+    /// <summary>The camera the eye is read from (<see cref="ForgeCore.Players.WorldCamera"/>), read with the eye; null when there is none.</summary>
+    internal static Camera? EyeCamera { get { ReadEye(); return _camera; } }
 
     /// <summary>The direction the eye looks in (a unit vector) and the tangent of the half angle of a cone holding the whole view (<see cref="CullMath.TanCone"/>), read with the eye.</summary>
     internal static Vector3 EyeForward { get { ReadEye(); return _forward; } }
@@ -111,6 +117,7 @@ internal static class Scene
         try { Beams.TickAll(Now); } catch (Exception error) { StepFailed("beams", error); }
         try { Trails.Tick(Now); } catch (Exception error) { StepFailed("trails", error); }
         try { GlowSpot.TickAll(Now); } catch (Exception error) { StepFailed("glow spots", error); }
+        try { Persons.Tick(Now); } catch (Exception error) { StepFailed("hidden persons", error); }
     }
 
     internal static void StepFailed(string step, Exception error)
@@ -120,10 +127,10 @@ internal static class Scene
 
     private static void ReadEye()
     {
-        var frame = Time.frameCount;
+        var frame = ForgeCore.Frame.Count;
         if (_eyeFrame == frame) return;
         _eyeFrame = frame;
-        var camera = ForgeCore.Players.WorldCamera();
+        var camera = _camera = ForgeCore.Players.WorldCamera();
         var eye = camera == null ? null : camera.transform;
         _hasEye = eye != null;
         if (eye != null) { _eye = eye.position; _forward = eye.forward; }
@@ -156,6 +163,7 @@ internal static class Scene
         JointPlayer.StopAll();
         PoseCopy.StopAll();
         HeldOff.Forget();
+        Persons.Clear();
         SpritePool.Clear();
         PointLights.Clear();
         CameraShake.Clear();

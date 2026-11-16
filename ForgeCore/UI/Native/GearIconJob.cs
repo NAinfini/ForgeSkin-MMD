@@ -18,3 +18,16 @@ internal static class GearIconJob
         }
     }
 }
+
+// The renderer frames a job's gear by the bounds of every renderer under it; additions a mod left out of framing are taken out again.
+[PatchGroup(PatchGroup.GearIcons)]
+[HarmonyPatch(typeof(GearIconRendering), nameof(GearIconRendering.RenderIconPrep))]
+internal static class GearIconFraming
+{
+    [HarmonyPostfix]
+    private static void Postfix(GearIconRendering.IconRenderJob __0, ref UnityEngine.Bounds __result)
+    {
+        try { GearIcons.Frame(__0, ref __result); }
+        catch (System.Exception error) { Plugin.Error("ui-gear-icon-framing", "Gear icon framing could not leave additions out; the game's framing stays: " + error); }
+    }
+}

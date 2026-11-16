@@ -4,7 +4,8 @@ namespace ForgeAudio.Tests;
 
 internal static class DecodeChecks
 {
-    private static readonly string[] InstalledMods = { "NAinfini-ForgeOrdnance/Carrier", "NAinfini-ForgeOrdnance/Arsenal", "NAinfini-ForgeOrdnance/Frames" };
+    // Where a mod manager installs ForgeOrdnance's parts (the package zip keeps the plugin folder as plugins/ForgeOrdnance/).
+    private static readonly string[] InstalledMods = { "NAinfini-ForgeOrdnance/ForgeOrdnance/Carrier", "NAinfini-ForgeOrdnance/ForgeOrdnance/Arsenal", "NAinfini-ForgeOrdnance/ForgeOrdnance/Frames" };
 
     internal static void Run(Action<bool, string> check)
     {

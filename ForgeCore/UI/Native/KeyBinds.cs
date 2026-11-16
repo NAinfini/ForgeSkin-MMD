@@ -81,7 +81,7 @@ public sealed class KeyAction
 }
 
 /// <summary>Every key action of every mod: the book (defaults and the player's keys, saved in
-/// <c>BepInEx/config/NAinfini.ForgeUI.keys.cfg</c>), the once-per-frame key read and the key capture the settings use.</summary>
+/// <c>BepInEx/config/NAinfini.ForgeCore.keys.cfg</c>), the once-per-frame key read and the key capture the settings use.</summary>
 internal static class KeyBinds
 {
     internal static readonly KeyBindBook Book = new(Known);

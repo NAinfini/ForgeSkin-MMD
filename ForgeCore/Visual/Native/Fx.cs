@@ -161,8 +161,10 @@ internal static class FxCulling
 /// </summary>
 internal static class FxLights
 {
+    /// <summary>Bits of a token that hold the place's index; <see cref="Max"/> follows from it, so the token's encoding cannot drift from the budget.</summary>
+    private const int IndexBits = 3;
     /// <summary>Effect lights lit at once, every pack together.</summary>
-    public const int Max = 8;
+    public const int Max = 1 << IndexBits;
     private const float HoldGrace = 0.25f;
     private static readonly float[] Until = new float[Max];
     private static readonly int[] Generation = new int[Max];
@@ -176,7 +178,7 @@ internal static class FxLights
         return -1;
     }
 
-    private static int Token(int index, int generation) => ((generation & 0x7ffffff) << 3) | index;
+    private static int Token(int index, int generation) => ((generation & (int.MaxValue >> IndexBits)) << IndexBits) | index;
 
     /// <summary>The spec in the caller's hue, as the particle shader takes it: colour over its luma (at least 0.05), so a dark or HDR colour changes the
     /// light's hue, not its brightness; its range grows with the size the effect plays at.</summary>

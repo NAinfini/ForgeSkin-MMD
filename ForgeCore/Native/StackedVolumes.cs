@@ -106,16 +106,25 @@ internal static class BorkenCells
 
     /// <summary>The game has written this position's cell already and the cell still holds no room.</summary>
     internal static bool AlreadyWritten(eDimensionIndex dimension, Vector3 pos)
-        => Written.Count != 0 && Grids.TryGetValue(dimension, out var grid) && grid.GetCell(pos, out var cell) && cell != null
+        => Written.Count != 0 && Grids.TryGetValue(dimension, out var grid) && CellAt(grid, pos) is { } cell
            && Written.Contains(cell.Pointer) && Roomless(cell);
 
     /// <summary>The game's body answered false: when that was a cell with no room (its line was just written), remember the cell.</summary>
     internal static void Refused(eDimensionIndex dimension, Vector3 pos)
     {
         if (!_live || Builder.CurrentFloor is not { } floor || !floor.GetDimension(dimension, out var native) || native?.Grid is not { } grid) return;
-        if (!grid.GetCell(pos, out var cell) || cell == null || !Roomless(cell)) return;
+        if (CellAt(grid, pos) is not { } cell || !Roomless(cell)) return;
         Written.Add(cell.Pointer);
         Grids[dimension] = grid;
+    }
+
+    // The game's CellGridBase.GetCell(Vector3, out C) worked out by hand: its interop wrapper builds the out cell as `new C(pointer)` on the type
+    // parameter, which throws MissingMethodException. GetCell(int, int) returns through the generic pointer conversion and answers null off the grid.
+    private static LG_Cell? CellAt(LG_Grid grid, Vector3 pos)
+    {
+        var local = pos - grid.m_gridPosition;
+        float dim = grid.m_cellDim, half = grid.m_cellDimHalf;
+        return grid.GetCell(Mathf.RoundToInt((local.x - half) / dim), Mathf.RoundToInt((local.z - half) / dim));
     }
 
     // The body's own test: no grouping, or a grouping without a live root geomorph.

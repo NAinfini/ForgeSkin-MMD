@@ -75,6 +75,17 @@ public static class Models
         return FirstPersonWear.Build(agent, look, options);
     }
 
+    /// <summary>As <see cref="WearFirstPerson(PlayerAgent, ModelHandle, FirstPersonWearOptions)"/> with a model instance the caller
+    /// spawned at the origin with no parent (for example <see cref="ImportedModel.Spawn"/>); the instance becomes the wear's, destroyed when building fails or by
+    /// <see cref="FirstPersonWear.Destroy"/>.</summary>
+    public static FirstPersonWear? WearFirstPerson(PlayerAgent agent, GameObject model, FirstPersonWearOptions options)
+    {
+        if (agent == null || agent.WasCollected) throw new ArgumentNullException(nameof(agent));
+        if (model == null || model.WasCollected) throw new ArgumentNullException(nameof(model));
+        if (options == null) throw new ArgumentNullException(nameof(options));
+        return FirstPersonWear.Build(agent, model, options, options.Label ?? model.name);
+    }
+
     /// <summary>The model side of a pose copy: the bones of the model under <paramref name="root"/> skinned by <paramref name="skin"/>,
     /// in <paramref name="links"/> order (<see cref="PoseLink"/>), read from its bind poses. Read once per model instance. Null (logged
     /// once, with <paramref name="label"/>) when the links are wrong or a bone or its bind pose is missing.</summary>
@@ -187,6 +198,15 @@ public static class Models
         return new OwnBodyView(agent, options ?? new OwnBodyOptions());
     }
 
+    /// <summary>The local player's look <paramref name="renderer"/> drawn in first person as the game draws that body: without the triangles
+    /// skinned to <paramref name="leftOut"/> and the bones below them (the head, the upper arms), whole while <see cref="ShowOwnBody"/> shows the
+    /// body from outside: see <see cref="OwnBodyCut"/>. Null when the renderer has no mesh.</summary>
+    public static OwnBodyCut? LeaveOutInFirstPerson(SkinnedMeshRenderer renderer, IReadOnlyList<Transform> leftOut)
+    {
+        if (renderer == null || renderer.WasCollected) throw new ArgumentNullException(nameof(renderer));
+        return OwnBodyCut.Make(renderer, leftOut);
+    }
+
     /// <summary>Takes the item in <paramref name="agent"/>'s third-person hands out of the picture until <see cref="HeldHiding.Dispose"/>; bind
     /// again after a weapon change. The first-person item is <see cref="FirstPersonArms.Play"/>'s.</summary>
     public static HeldHiding HideHeld(PlayerAgent agent)
@@ -291,6 +311,12 @@ public static class Models
 
     /// <summary>True for a mesh or skinned mesh renderer (not a particle, trail or line renderer).</summary>
     public static bool IsMesh(Renderer renderer) => renderer.TryCast<MeshRenderer>() != null || renderer.TryCast<SkinnedMeshRenderer>() != null;
+
+    /// <summary>Whether the renderer is switched on to be drawn: enabled and not held off by <c>forceRenderingOff</c>, the one way this
+    /// library hides something (<see cref="HideRenderers"/>, <see cref="Persons.Hide(Player.PlayerAgent, string, PersonHideOptions?)"/>, a look hiding the body it is worn on). Whatever
+    /// reads what is shown of an object (an outline round a person wearing a look) asks this, so it reads the model hung on the body and not
+    /// the body the model hides. Whether its object is active is the caller's to check (often it walked only active objects).</summary>
+    public static bool Drawn(Renderer renderer) => renderer.enabled && !renderer.forceRenderingOff;
 
     /// <summary>Stops drawing every renderer under <paramref name="root"/> (inactive ones too) except those <paramref name="keep"/>
     /// names, and adds each one it turned off to <paramref name="hidden"/>; returns how many that was. Only <c>forceRenderingOff</c> is

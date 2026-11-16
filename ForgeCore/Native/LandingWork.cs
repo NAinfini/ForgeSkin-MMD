@@ -17,9 +17,7 @@ internal static class LandingWork
 
     internal static void Tick()
     {
-        if (Steps.Count == 0) return;
-        var state = GameStateManager.CurrentStateName;
-        if (state != eGameStateName.StopElevatorRide && state != eGameStateName.InLevel) return;
+        if (Steps.Count == 0 || !GameEventSources.Landed) return;
         var (owner, name, run) = Steps.Dequeue();
         try { run(); }
         catch (Exception error) { Plugin.Logger.ErrorOnce("core-landing-step-failed", "The landing step " + owner + "/" + name + " failed: " + error); }

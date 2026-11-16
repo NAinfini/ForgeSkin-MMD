@@ -48,9 +48,16 @@ public sealed class NetLobbyValue : NetChannel.IPart
     public void Set(byte[]? value)
     {
         if (value == null ? Local == null : Local != null && value.AsSpan().SequenceEqual(Local)) return;
-        Local = value == null ? null : (byte[])value.Clone();
+        Keep(value == null ? null : (byte[])value.Clone());
+    }
+
+    /// <summary>Sets this player's value to an array its owner has just written and never changes, and sends it as it is (not
+    /// written again by <see cref="Fresh"/>); the owner has already decided that it changed.</summary>
+    internal void Keep(byte[]? owned)
+    {
+        Local = owned;
         LocalVersion = Local == null ? 0 : ++_nextVersion;
-        Send(0);
+        Send(0, Local);
     }
 
     /// <summary>Another player's value as last received.</summary>
@@ -68,9 +75,10 @@ public sealed class NetLobbyValue : NetChannel.IPart
     internal float ArrivedAt(ulong player) => _values.TryGetValue(player, out var entry) ? entry.Arrived : 0f;
 
     /// <summary>On the wire: the sender's world, then 1 and the value, or 0 for none.</summary>
-    private void Send(ulong to)
+    private void Send(ulong to) => Send(to, Local == null ? null : Fresh != null ? Fresh() : Local);
+
+    private void Send(ulong to, byte[]? value)
     {
-        var value = Local == null ? null : Fresh != null ? Fresh() : Local;
         var world = _channel.Node.World;
         var framed = new byte[HeadBytes + (value?.Length ?? 0)];
         BitConverter.TryWriteBytes(framed.AsSpan(0), world.Number);

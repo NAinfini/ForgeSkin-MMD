@@ -52,14 +52,14 @@ foreach (var cue in catalog.Cues.Values)
             {
                 var mixed = CueMix.Render(cue, profile, variant, name => pcm[name]);
                 if (mixed == null) continue;
-                if (!CueMix.Fits(resident, mixed, AssetValidation.MaxDecodedBytes)) problems[cue.Name] = "AssetLimit: the mix would exceed the audio cache (512 MiB decoded in total).";
+                if (!CueMix.Fits(resident, mixed, AssetValidation.MaxDecodedBytes)) problems[cue.Name] = "AssetLimit: the mix would exceed the audio cache (" + (AssetValidation.MaxDecodedBytes >> 20) + " MiB decoded in total).";
                 else resident += (long)mixed.Samples.Length * sizeof(float);
             }
     }
     catch (InvalidDataException e) { problems[cue.Name] = "cannot be mixed: " + e.Message; }
 }
 if (compressed > AssetValidation.MaxCompressedCache || decoded > AssetValidation.MaxDecodedBytes)
-    problems["(folder)"] = "AssetLimit: the folder alone exceeds the shared audio cache (256 MiB compressed / 512 MiB decoded).";
+    problems["(folder)"] = "AssetLimit: the folder alone exceeds the shared audio cache (" + (AssetValidation.MaxCompressedCache >> 20) + " MiB compressed / " + (AssetValidation.MaxDecodedBytes >> 20) + " MiB decoded).";
 foreach (var problem in problems.OrderBy(x => x.Key)) Console.Error.WriteLine("cue '" + problem.Key + "': " + problem.Value);
 Console.WriteLine(JsonSerializer.Serialize(new
 {

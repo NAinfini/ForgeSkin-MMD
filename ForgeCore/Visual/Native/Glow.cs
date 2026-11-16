@@ -88,11 +88,13 @@ public static partial class Glow
 public sealed class GlowHandle : IDisposable
 {
     private readonly Material[] _materials;
+    private readonly bool[] _hdr;
     private readonly (Renderer Renderer, Material[] Shared)[] _owners;
 
     internal GlowHandle(Material[] materials, (Renderer, Material[])[] owners)
     {
         _materials = materials;
+        _hdr = Array.ConvertAll(materials, material => Glow.IsHdr(material, Glow.EmissiveColorName));
         _owners = owners;
     }
 
@@ -101,14 +103,17 @@ public sealed class GlowHandle : IDisposable
 
     public int Materials => _materials.Length;
 
-    /// <summary>Lights every material in <paramref name="hdr"/> (components may exceed 1). One call per material, no allocation.</summary>
+    /// <summary>Lights every material in <paramref name="hdr"/>, the linear colour its shader gets (components may exceed 1): an <c>[HDR]</c>
+    /// property takes it as it is, a plain one its sRGB (<see cref="Glow.IsHdr"/>), so it is converted once either way. One call per material,
+    /// no allocation.</summary>
     public void Set(Color hdr)
     {
         Colour = hdr;
+        var srgb = new Color(ColourSpace.ToSrgb(hdr.r), ColourSpace.ToSrgb(hdr.g), ColourSpace.ToSrgb(hdr.b), hdr.a);
         for (var i = 0; i < _materials.Length; i++)
         {
             var material = _materials[i];
-            if (material != null && !material.WasCollected) material.SetColor(Glow.EmissiveColor, hdr);
+            if (material != null && !material.WasCollected) material.SetColor(Glow.EmissiveColor, _hdr[i] ? hdr : srgb);
         }
     }
 
