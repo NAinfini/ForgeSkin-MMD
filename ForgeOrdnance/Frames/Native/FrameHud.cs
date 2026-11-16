@@ -154,8 +154,8 @@ internal sealed class FrameHud
                 IdleOpacity = 0.85f,
             };
         }
-        if (_hide != null) _hide.Released += why => KitReleased("game HUD hide", why);
-        if (_chat != null) _chat.Released += why => KitReleased("chat move", why);
+        if (_hide != null) _hide.Released += _ => KitReleased();
+        if (_chat != null) _chat.Released += _ => KitReleased();
 
         _banner = _ui.AddBanner("Banner", BannerPriority);
         _heldBanner = _ui.AddBanner("Held", HeldPriority);
@@ -361,7 +361,7 @@ internal sealed class FrameHud
 
     /// <summary>ForgeUI gave the game's HUD back by itself. The next <see cref="Sync"/> decides: a pilot who is not alive or out of the
     /// level is <see cref="CockpitPhase.Suspended"/>; anyone still worn takes it again after <see cref="RetrySeconds"/>.</summary>
-    private void KitReleased(string what, GameHudRelease why)
+    private void KitReleased()
     {
         _takeAgainAt = Time.time + RetrySeconds;
     }
@@ -452,8 +452,8 @@ internal sealed class FrameHud
     }
 
     /// <summary>Once the power-on has settled, twice a second until it is: every part the cockpit shows must be on screen (placed by
-    /// ForgeUI). A part that is not is logged with ForgeUI's reason (its layout state, not built), and logged again when the whole cockpit
-    /// is on screen, so a cockpit missing in a player's game says why in the log.</summary>
+    /// ForgeUI). A part that is not is logged once with ForgeUI's reason (its layout state, not built), so a cockpit missing in a
+    /// player's game says why in the log; the checks stop once the whole cockpit is on screen.</summary>
     private void CheckOnScreen(float boot, float now)
     {
         if (_onScreen) return;
@@ -465,7 +465,6 @@ internal sealed class FrameHud
         if (missing == 0)
         {
             _onScreen = true;
-
             return;
         }
         if (_missingSince >= 0f) return;

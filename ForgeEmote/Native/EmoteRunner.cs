@@ -133,6 +133,8 @@ internal static class EmoteRunner
     private static readonly PlayedBody Body = new();
     private static InventorySlot _wielded;
     private static float _health;
+    private static Dam_PlayerDamageBase _damage = null!;
+    private static PlayerInventoryBase? _inventory;
     private static FirstPersonArms? _arms;
     private static PlayerAgent? _local;
 
@@ -166,12 +168,6 @@ internal static class EmoteRunner
 
     private static PlayerAgent? AgentOf(ulong player) => ForgeCore.Level.PlayerByLookup(player);
 
-    private static InventorySlot Wielded(PlayerAgent agent)
-    {
-        var inventory = agent.Inventory;
-        return inventory == null ? InventorySlot.None : inventory.WieldedSlot;
-    }
-
     /// <summary>Starts an action if the rules allow it (the wheel's click and <see cref="EmoteControl"/> both come here); a new action fades over the one playing. Null when it started, else why not.</summary>
     internal static string? Start(Emotes.Entry entry)
     {
@@ -190,8 +186,11 @@ internal static class EmoteRunner
         _local = local;
         _current = entry;
         _began = now;
-        _wielded = Wielded(local);
-        _health = local.Damage.Health;
+        // The local player's damage and inventory are read through these every frame of the action, not looked up (and wrapped) again each frame.
+        _damage = local.Damage;
+        _inventory = local.Inventory;
+        _wielded = _inventory == null ? InventorySlot.None : _inventory.WieldedSlot;
+        _health = _damage.Health;
         Link.Clear();
         if (definition.Pair) StartPair(local, offerer);
         _slot.Publish(new State { Id = entry.NetId, Seq = ++_seq, Phase = (byte)Link.Now, Partner = Link.Partner }, now);
@@ -355,6 +354,8 @@ internal static class EmoteRunner
         Stop(0f, true);
         EndView();
         _local = null;
+        _damage = null!;
+        _inventory = null;
         Link.Clear();
         foreach (var other in Others.Values) other.Body.Stop(0f);
         Others.Clear();
@@ -434,18 +435,19 @@ internal static class EmoteRunner
         if (_current.Definition.Pair) Body.Hold(EmotePair.ClipTime(Link.Now, now - _began, _current.Definition.PairHold));
         if (Link.Expired(now)) Stop(CrossFade, false);
         else if (!Body.Playing) Stop(0f, false);
-        else if (Interrupted(local, motion, _current.Definition)) Stop(QuickFade, true);
+        // The damage and inventory read below are the ones the action began with: another local agent ends the action instead.
+        else if (_local == null || _local.Pointer != local.Pointer || Interrupted(motion, _current.Definition)) Stop(QuickFade, true);
     }
 
-    private static bool Interrupted(PlayerAgent local, PlayerMotion motion, EmoteDefinition definition)
+    private static bool Interrupted(PlayerMotion motion, EmoteDefinition definition)
     {
         if (EmoteRules.Interrupts(motion) || UIKit.GameScreenOpen) return true;
         // By what is in the hands, not by which key: the scroll wheel, the hacking tool, picking up a big item and the game's own switches change it too, and the action's hidden item would be the wrong one.
-        if (Wielded(local) != _wielded) return true;
+        if ((_inventory == null ? InventorySlot.None : _inventory.WieldedSlot) != _wielded) return true;
         if (definition.CancelOnHit)
         {
             // The health itself: the local player's hits go through Dam_PlayerDamageLocal's own overrides of the receive methods, on host and client alike.
-            var health = local.Damage.Health;
+            var health = _damage.Health;
             if (health < _health) return true;
             _health = health;
         }
@@ -567,8 +569,7 @@ internal static class EmoteRunner
             var together = other.Shown == _current!.NetId && (Link.Now == EmotePair.Phase.Paired
                 ? other.Partner == me && other.Phase == EmotePair.Phase.Paired
                 : other.Phase == EmotePair.Phase.Offering || (other.Phase == EmotePair.Phase.Paired && other.Partner == me));
-            if (!together) Stop(CrossFade, false);
-            if (!together) return;
+            if (!together) { Stop(CrossFade, false); return; }
         }
         // Two hands out for the same action at once (neither had seen the other's yet): the higher player number answers, so both sides decide the same.
         if (Link.Now == EmotePair.Phase.Offering && other.Phase == EmotePair.Phase.Offering && other.Shown == _current!.NetId && me > player && Near(local, agent))

@@ -79,6 +79,28 @@ internal sealed partial class SheddingHooks
     private static class GlueSound
     { [HarmonyPrefix] private static void Prefix(GlueGunProjectile __instance) => LoadSheddingController.Current?.Extras?.GlueDestroying(__instance); }
 
+    // The game's one caller of this overload is BulletWeapon.FixedUpdate dropping a reloaded gun's magazine from the gun's own pool.
+    [HarmonyPatch(typeof(ObjectPooler.Pool), nameof(ObjectPooler.Pool.Get), new[] { typeof(Vector3), typeof(Quaternion), typeof(bool) })]
+    private static class MagazineDrop
+    {
+        [HarmonyPostfix]
+        private static void Postfix(ObjectPooler.Pool __instance, GameObject __result)
+        { if (LoadSheddingController.Current is { Active: true } c) c.Extras?.MagazineDropped(__instance, __result); }
+    }
+
+    // Every repeller sphere's state changes pass here, a few times in its life; only the change into Disabled is handed on.
+    [HarmonyPatch(typeof(FogRepeller_Sphere), nameof(FogRepeller_Sphere.ChangeState))]
+    private static class RepellerState
+    {
+        [HarmonyPrefix] private static void Prefix(FogRepeller_Sphere __instance, out eFogRepellerSphereState __state) => __state = __instance.CurrentState;
+        [HarmonyPostfix]
+        private static void Postfix(FogRepeller_Sphere __instance, eFogRepellerSphereState state, eFogRepellerSphereState __state)
+        {
+            if (state == eFogRepellerSphereState.Disabled && __state != eFogRepellerSphereState.Disabled && LoadSheddingController.Current is { Active: true } c)
+                c.Extras?.RepellerSpent(__instance);
+        }
+    }
+
     [HarmonyPatch(typeof(UI_Apply), nameof(UI_Apply.ApplySetttings), new System.Type[0])]
     private static class GuiMirror
     { [HarmonyPrefix] private static void Prefix() => LoadSheddingController.Current?.Extras?.MirrorBefore(); }

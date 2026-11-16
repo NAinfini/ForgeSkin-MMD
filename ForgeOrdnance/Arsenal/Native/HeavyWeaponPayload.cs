@@ -39,11 +39,13 @@ internal sealed class HeavyWeaponPayload : IOrdnancePayload
 
     private static readonly OrdnanceOverrideField[] Fields =
     {
-        new("AmmoRatio", 0, 1), new("Magazine", HeavyWeaponSpec.MagazineMin, HeavyWeaponSpec.MagazineMax, true), new("AmmoCost", ArchetypeTuning.AmmoCostMin, ArchetypeTuning.AmmoCostMax)
+        new("AmmoRatio", 0, 1), new("Magazine", HeavyWeaponSpec.MagazineMin, HeavyWeaponSpec.MagazineMax, true), new("AmmoCost", ArchetypeTuning.AmmoCostMin, ArchetypeTuning.AmmoCostMax),
+        new("Count", 1, HeavyWeaponSpec.MaxCount, true), new(SupplyRule.SupplyField, 0, SupplyRule.SupplyMax, true), new(SupplyRule.RestockField, 0, SupplyRule.RestockMax)
     };
 
-    /// <summary>A placement may set the ammunition: <c>AmmoRatio</c> (reserve as a share of the special slot's full reserve) and <c>Magazine</c> (rounds loaded) and <c>AmmoCost</c> (reserve one shot spends, the block's CostOfBullet).
-    /// The racks' record carries the result to every peer.</summary>
+    /// <summary>A placement may set the ammunition: <c>AmmoRatio</c> (reserve as a share of the special slot's full reserve) and <c>Magazine</c> (rounds loaded) and <c>AmmoCost</c> (reserve one shot spends, the block's CostOfBullet);
+    /// <c>Count</c> (racks lying at once); and make the place a supply point (<see cref="SupplyRule"/>): <c>Supply</c> (weapons in all, 0 no limit) and
+    /// <c>Restock</c> (seconds until a taken rack is laid again). The racks' record carries the numbers to every peer; the supply rule stays with the host.</summary>
     public IReadOnlyList<OrdnanceOverrideField> OverrideFields => Fields;
 
     /// <summary>A direct arrival lays the weapon on the ground at the landing point, ready to take at once.</summary>

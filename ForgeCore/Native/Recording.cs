@@ -86,6 +86,9 @@ public enum ShownModelKind : byte
     Hidden,
     /// <summary>The renderers in <see cref="ShownModel.Token"/> are drawn again.</summary>
     Shown,
+    /// <summary>The model whose root is <see cref="ShownModel.Token"/> (a <c>Transform</c>) now follows the pose of the body <see cref="ShownModel.On"/>
+    /// (its animator's transform; null: it follows none now and rests). Reported by the pose copy of a body model (ForgeVisual <c>ModelHandle.FollowsBodies</c>).</summary>
+    Follows,
 }
 
 /// <summary>One model report (<see cref="ShownModelKind"/>).</summary>
@@ -187,7 +190,7 @@ public readonly struct ShownAnchor
 /// put in the world at the point every call of their kind passes, and any number of observers (a recorder, a census) hear them. While nobody observes, a
 /// report site costs one field read (<see cref="Watched"/>): no struct is built, nothing is looked up or allocated. Names travel as <see cref="RecordingNames"/>
 /// numbers that each handle takes once. Named joint clips played on a body (ForgeVisual's JointPlayer, or a mod's own <see cref="Pose"/> declaration) are reported as a name, a start and play options;
-/// a pose copied from the game's body every frame (PoseCopy) is derived and not reported. Main thread only.
+/// a pose copied from the game's body every frame (PoseCopy) is derived: only which body a model follows is reported (<see cref="ShownModelKind.Follows"/>). Main thread only.
 /// </summary>
 public static class Recording
 {

@@ -71,9 +71,11 @@ internal static class Replayer
             _stream = new FileStream(Pending.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             _timeline = new Timeline(ChunkLog.Open(_stream, ReplayHeader.FormatVersion));
             _clock = new PlaybackClock(_timeline.DurationMs);
-            _analysing = Analyse(Pending.Path, Pending.Header!);
+            _cancelAnalysis = new System.Threading.CancellationTokenSource();
+            _analysing = Analyse(Pending.Path, Pending.Header!, _cancelAnalysis.Token);
             if (!_lateRegistered) { _lateRegistered = true; Frame.OnLateUpdate(Plugin.Id, Late); }
             _active = true;
+            PlaybackHooks.Begin();
             _preparing = true; _leftElevator = false; _prepareFrom = ForgeCore.Frame.UnscaledTime;
         }
         catch (Exception error) { Fail("the recording could not be opened: " + error.Message); Stop(); ReplayScreen.Exit(); }
@@ -82,6 +84,8 @@ internal static class Replayer
     // The whole recording is read once for the bar, the statistics and who joined, on a worker thread over a stream and timeline of its own:
     // what it asks of the game data (a kill worth a mark, how far an enemy type hears) is read here on the game thread into plain tables first.
     private static System.Threading.Tasks.Task<Analysis>? _analysing;
+    // Cancelled when the replay stops, so an analysis nobody will read stops working too.
+    private static System.Threading.CancellationTokenSource? _cancelAnalysis;
 
     // Also what the replay list reads a recording's team tables with, so opening the details never reads a file on the game thread.
     internal static System.Threading.Tasks.Task<Analysis> Analyse(string path, ReplayHeader header, System.Threading.CancellationToken cancel = default)
@@ -154,11 +158,6 @@ internal static class Replayer
             Setter.Reset(); EventPresenter.Reset(); EventPresenter.Setter = Setter; GameVoices.Begin(); EnvironmentView.Begin();
             // The level objects, spawned items, fog and downed players as the recording starts, set at once like after a jump.
             EventPresenter.Jumped(_timeline.State);
-            // The game fills the slots it opens with bots; their player agents are the puppets of the recorded players (the local player is the observer).
-            var everHeld = 0;
-            for (var slot = 0; slot < 4; slot++) if (ReplayFeed.EverHeld(slot, header.Players, _analysis.Presence)) everHeld++;
-            Puppeteer.BotsAsked = Math.Min(3, everHeld);
-            Puppets.OpenBotSlots(Puppeteer.BotsAsked);
             Observer.Enter();
             _prepareFrom = ForgeCore.Frame.UnscaledTime;
             return true;
@@ -195,7 +194,7 @@ internal static class Replayer
 
     // The clock stands, and the screen says so instead of showing a half-made scene, until the level is what the replay needs: the observer out of the
     // elevator (while in it the game allows no wield and the first-person item stays in its elevator pose), the cage and shaft gone the way the game
-    // sends them away for a player dropping in, every recorded player's body held and dressed, the followed player's gear on the observer.
+    // sends them away for a player dropping in, the followed player's gear on the observer.
     private const float MaxElevatorSeconds = 60f, MaxPrepareSeconds = 30f;
     private static bool _preparing, _leftElevator;
     private static float _prepareFrom;
@@ -209,7 +208,7 @@ internal static class Replayer
         var waited = ForgeCore.Frame.UnscaledTime - _prepareFrom;
         if (!_leftElevator)
         {
-            var local = Players.Local?.TryCast<PlayerAgent>();
+            var local = Players.Local;
             var locomotion = local == null ? null : local.Locomotion;
             var riding = locomotion == null || locomotion.m_currentStateEnum == PlayerLocomotion.PLOC_State.InElevator;
             if (riding && waited < MaxElevatorSeconds) return;
@@ -218,9 +217,9 @@ internal static class Replayer
             LeaveElevator();
             return;
         }
-        var ready = Puppeteer.AllHeld(_timeline!.State, Pending!.Header!.Players) && FirstPerson.GearOn;
+        var ready = FirstPerson.GearOn;
         if (!ready && waited < MaxPrepareSeconds) return;
-        if (!ready) Plugin.Logger.Error("The replay started before everything was ready: players " + Puppeteer.AllHeld(_timeline.State, Pending.Header.Players) + ", first-person gear " + FirstPerson.GearOn + ".");
+        if (!ready) Plugin.Logger.Error("The replay started before the followed player's gear was on the observer.");
         _preparing = false;
         _clock!.Play();
     }
@@ -286,19 +285,21 @@ internal static class Replayer
     internal static void Stop()
     {
         _preparing = false;
-        Freeze(false);
-        FirstPerson.Forget();
-        RestoreFirstPerson();
-        Puppeteer.ReportUnshown();
-        Skipped.End();
-        Carried.Clear();
-        Puppeteer.Clear();
-        Observer.Exit();
-        ReplayAssist.Reset();
-        GameVoices.End();
-        ForgeAudio.AudioKit.SilenceGame(false); EventPresenter.Reset(); Setter.Reset(); Listening.Reset();
-        _stream?.Dispose(); _stream = null;
-        _timeline = null; _clock = null; _analysis = null; _analysing = null; Pending = null; _active = false;
+        // Each step is tried on its own: one that throws is logged and the ones after it still run, and the replay's flag always resets.
+        foreach (var step in new Action[]
+        {
+            () => Freeze(false), FirstPerson.Forget, RestoreFirstPerson, Puppeteer.ReportUnshown, Skipped.End,
+            Carried.Clear, Recorded.Clear, Puppeteer.Clear, Observer.Exit, ReplayAssist.Reset, GameVoices.End,
+            () => ForgeAudio.AudioKit.SilenceGame(false), EventPresenter.Reset, Setter.Reset, Listening.Reset,
+        })
+            try { step(); }
+            catch (Exception error) { Plugin.Logger.ErrorOnce("A step of ending the replay failed: " + error.Message); }
+        try { _cancelAnalysis?.Cancel(); _stream?.Dispose(); }
+        finally
+        {
+            _cancelAnalysis = null; _stream = null;
+            _timeline = null; _clock = null; _analysis = null; _analysing = null; Pending = null; _active = false;
+        }
     }
 
     internal static void Tick()
@@ -311,7 +312,7 @@ internal static class Replayer
         _clock.Advance(ForgeCore.Frame.UnscaledDeltaTime);
         _timeline.Advance(_clock.PositionMs, OnEvent);
         EventPresenter.Flush();
-        Setter?.WakeDoors();
+        Setter.WakeDoors();
         ShownPoses.Frame(_clock.PositionMs);
         Terminals.Frame(_clock.PositionMs);
         Flights.Frame(_clock.PositionMs);
@@ -409,19 +410,14 @@ internal static class Replayer
             if (!eyes) FirstPerson.Reset();
             HideObserver(eyes);
             if (_preparing && !_leftElevator) return;
+            Recorded.Read(_clock.PositionMs, Pending!.Header!.Players);
             // In the eyes, and for the player the replay opens on. The swap is heard (the game brings each piece up), so not on every switch of the automatic camera.
             if (_preparing || eyes) FirstPerson.Keep(_timeline.State, _follow, Pending!.Header!.Players);
             Vector3? view = ReplayCamera.Mode == ViewMode.Free ? ReplayCamera.Shown : null;
-            // The camera inside a head would see its inside: the viewed player's body is off while the eyes are the view.
-            // A piece the viewed player's body shows for a moment (a magazine in a reload) stands right at the camera, a second one beside the first-person one.
-            // Whatever the puppets' update does, the hide or the put-back of the bodies runs: a throw before it left a body hidden after the eyes were left.
+            // The camera inside a head would see its inside: the viewed player's stand-in is not shown while the eyes are the view.
             var inEyes = ReplayCamera.Mode == ViewMode.Eye || FirstPerson.Active;
-            try
-            {
-                Puppeteer.Sync(_timeline.State, _clock.PositionMs, _follow, view, _clock.Playing ? _clock.Speed : 0f, seconds, Pending!.Header!.Players);
-                Carried.Frame(_timeline.State, _follow, FirstPerson.Active);
-            }
-            finally { Puppeteer.HideViewed(inEyes ? _follow : -1, inEyes); }
+            Puppeteer.Sync(_timeline.State, _clock.PositionMs, _follow, inEyes, view, _clock.Playing ? _clock.Speed : 0f, seconds, Pending!.Header!.Players);
+            Carried.Frame(_timeline.State);
             if (ForgeCore.Frame.UnscaledTime >= _nextSweep) { _nextSweep = ForgeCore.Frame.UnscaledTime + 1f; Observer.Sweep(); }
             ReplayAssist.Frame(_follow, ReplayCamera.Mode == ViewMode.Eye || FirstPerson.Active);
             Listening.Frame();
@@ -431,63 +427,73 @@ internal static class Replayer
 
     // The observer is nobody in the recording. Its body stands where it was left: its clothes hang under the camera holder and its back items under
     // the agent, so a camera passing there saw them, a rifle, a pistol and a tool in the air. Off for the whole replay (re-checked as weapons change).
-    private static readonly List<Renderer> HiddenBody = new(), HiddenHeld = new();
+    private static readonly HiddenRenderers HiddenBody = new(), HiddenHeld = new();
     private static float _nextSweep, _nextBody, _nextHeld, _nextWield, _heldHotUntil;
     private static int _wielded = -2;
     private static void HideObserver(bool eyes)
     {
-        var local = Players.Local?.TryCast<PlayerAgent>();
-        if (local == null || local.WasCollected || local.FPItemHolder is not { } arms || arms == null) return;
+        var local = Players.Local;
+        if (local == null || local.FPItemHolder is not { } arms || arms == null) return;
         var now = ForgeCore.Frame.UnscaledTime;
         var holder = arms.transform;
-        if (now >= _nextBody)
-        {
-            _nextBody = now + 1f;
-            foreach (var renderer in local.GetComponentsInChildren<Renderer>(false))
-                if (renderer != null && renderer.enabled && !renderer.transform.IsChildOf(holder)) { renderer.enabled = false; HiddenBody.Add(renderer); }
-            var flat = holder.root.Find("FlatTransform");
-            if (flat != null)
-                for (var i = 0; i < flat.childCount; i++)
-                {
-                    // Every player's character rig may hang here: only the observer's, never a puppet's body (a hidden one was an invisible player).
-                    // A bot's rig can hang here before the bot can be told from the observer: when it can, what was hidden on it comes back.
-                    var rig = flat.GetChild(i);
-                    if (!rig.name.StartsWith("PlayerCharacter_rig", StringComparison.Ordinal)) continue;
-                    if (!Puppeteer.OthersRig(rig)) Hide(rig.GetComponentsInChildren<Renderer>(false), HiddenBody);
-                    else for (var r = HiddenBody.Count - 1; r >= 0; r--)
-                        if (HiddenBody[r] != null && HiddenBody[r].transform.IsChildOf(rig)) { HiddenBody[r].enabled = true; HiddenBody.RemoveAt(r); }
-                }
-        }
-        // The arms and what they hold show at the eyes, and only while it is what the recording says: not while the viewed player's gear is being put on
-        // one piece at a time, and not when the player's hands are empty or hold what the observer cannot (a resource pack: the recording does not say which).
-        if (eyes && FirstPerson.HoldsRecorded(local.Inventory)) { Restore(HiddenHeld); return; }
-        // At the eyes the held pieces are looked at every 0.1 s only for a second after the observer changed weapon (the new one comes up piece
-        // by piece); otherwise once a second.
+        // A change of weapon moves pieces onto and off the back: the body and the held pieces are looked at again at once, then for a second
+        // at the eyes every 0.1 s; otherwise the body every 5 s and the held pieces once a second.
         if (now >= _nextWield)
         {
             _nextWield = now + 0.2f;
             var inventory = local.Inventory;
             var wielded = inventory == null ? -1 : (int)inventory.WieldedSlot;
-            if (wielded != _wielded) { _wielded = wielded; _heldHotUntil = now + 1f; _nextHeld = 0f; }
+            if (wielded != _wielded) { _wielded = wielded; _heldHotUntil = now + 1f; _nextHeld = 0f; _nextBody = 0f; }
         }
+        if (now >= _nextBody)
+        {
+            _nextBody = now + 5f;
+            foreach (var renderer in local.GetComponentsInChildren<Renderer>(false))
+                if (renderer != null && renderer.enabled && !renderer.transform.IsChildOf(holder)) HiddenBody.Hide(renderer);
+            var flat = holder.root.Find("FlatTransform");
+            if (flat != null)
+                for (var i = 0; i < flat.childCount; i++)
+                {
+                    // The observer's character rig hangs here, not under its agent (the recorded players' stand-ins hang under nothing).
+                    var rig = flat.GetChild(i);
+                    if (rig.name.StartsWith("PlayerCharacter_rig", StringComparison.Ordinal)) HiddenBody.Hide(rig.GetComponentsInChildren<Renderer>(false));
+                }
+        }
+        // The arms and what they hold show at the eyes, and only while it is what the recording says: not while the viewed player's gear is being put on
+        // one piece at a time, and not when the player's hands are empty or hold what the observer cannot (a resource pack: the recording does not say which).
+        if (eyes && FirstPerson.HoldsRecorded(local.Inventory)) { HiddenHeld.Restore(); return; }
         if (now < _nextHeld) return;
         _nextHeld = now + (eyes && now < _heldHotUntil ? 0.1f : 1f);
-        Hide(arms.GetComponentsInChildren<Renderer>(false), HiddenHeld);
+        HiddenHeld.Hide(arms.GetComponentsInChildren<Renderer>(false));
     }
 
-    private static void Hide(Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppArrayBase<Renderer> renderers, List<Renderer> into)
+    // Renderers the replay turned off, each once (the game may turn one on again, and it is then turned off again, not listed twice).
+    private sealed class HiddenRenderers
     {
-        foreach (var renderer in renderers)
-            if (renderer != null && renderer.enabled) { renderer.enabled = false; into.Add(renderer); }
+        private readonly List<Renderer> _list = new();
+        private readonly HashSet<IntPtr> _pointers = new();
+
+        internal void Hide(Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppArrayBase<Renderer> renderers)
+        {
+            foreach (var renderer in renderers)
+                if (renderer != null && renderer.enabled) Hide(renderer);
+        }
+
+        internal void Hide(Renderer renderer)
+        {
+            renderer.enabled = false;
+            if (_pointers.Add(renderer.Pointer)) _list.Add(renderer);
+        }
+
+        internal void Restore()
+        {
+            foreach (var renderer in _list) if (renderer != null) renderer.enabled = true;
+            _list.Clear();
+            _pointers.Clear();
+        }
     }
 
-    private static void Restore(List<Renderer> hidden)
-    {
-        foreach (var renderer in hidden) if (renderer != null) renderer.enabled = true;
-        hidden.Clear();
-    }
-
-    private static void RestoreFirstPerson() { Restore(HiddenBody); Restore(HiddenHeld); }
+    private static void RestoreFirstPerson() { HiddenBody.Restore(); HiddenHeld.Restore(); }
 
 }
 

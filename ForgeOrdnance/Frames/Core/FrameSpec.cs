@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text.Json;
 using ForgeCore;
@@ -90,7 +91,13 @@ internal sealed record RocketLauncherSpec(string Pod, string Round, string Bone,
 /// line the suit's skeleton up with the game's, and the other listed bones (hips, legs) are the parts the pilot sees looking down.</summary>
 internal sealed record FrameSpec(string Model, float Armor, float DamageReduction, float EyeHeight,
     MovementSpec Movement, WeaponSpec Weapon, LightSpec Light, BoostSpec? Boost, SiegeSpec? Siege,
-    ScanSpec? Scan, ShieldSpec? Shield, bool CarryHeavy, RocketsSpec? Rockets, OpeningSpec? Opening, ShellBone[] Shell);
+    ScanSpec? Scan, ShieldSpec? Shield, bool CarryHeavy, RocketsSpec? Rockets, OpeningSpec? Opening, ShellBone[] Shell) : IOrdnanceDescribed
+{
+    /// <summary>A description's numbers (DEVELOPERS.md, "Description numbers"): {0} Scan.Interval, {1} Scan.Radius, {2} Rockets.Salvo,
+    /// {3} Rockets.Cooldown. A special the suit does not have reads 0.</summary>
+    public IReadOnlyList<double> DescriptionValues =>
+        new double[] { Scan?.Interval ?? 0, Scan?.Radius ?? 0, Rockets?.Salvo ?? 0, Rockets?.Cooldown ?? 0 };
+}
 
 /// <summary>Strict reader for the <c>Exosuit</c> payload. Unknown fields, wrong types and values out of range are errors that
 /// name the field; nothing is silently clamped.</summary>

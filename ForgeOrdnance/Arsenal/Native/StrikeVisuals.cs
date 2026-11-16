@@ -231,7 +231,7 @@ internal static class StrikeVisuals
                 ArsenalAudio.PlayAt(ArsenalAudio.Cue.BeamEnd, new Vector3(r.X, r.Y, r.Z));
                 StrikeBursts.NoTarget(new Vector3(r.X, r.Floor, r.Z), now);
                 if (d.SummonerLookup == SNetwork.SNet.LocalPlayer?.Lookup)
-                    Plugin.Session.PostNotice(OrdnanceText.T("strike.noTargetRefund", (int)StrikeTiming.HunterMissCooldown));
+                    Plugin.Session.PostNotice(OrdnanceText.T("strike.noTargetRefund", DescriptionText.Number(StrikeTiming.HunterMissCooldown)));
                 break;
         }
     }

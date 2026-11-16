@@ -14,14 +14,13 @@ import tempfile
 import unittest
 from unittest import mock
 import wave
-import zipfile
 
 
 TOOLS = Path(__file__).resolve().parent
 
 
-def load(name: str, folder: Path = TOOLS):
-    spec = importlib.util.spec_from_file_location(name, folder / (name + ".py"))
+def load(name: str):
+    spec = importlib.util.spec_from_file_location(name, TOOLS / (name + ".py"))
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -31,7 +30,7 @@ def load(name: str, folder: Path = TOOLS):
 convert_audio = load("convert_audio")
 sys.path.insert(0, str(TOOLS.parents[2] / "Build"))
 import package_common
-package_release = load("package_release", TOOLS.parents[1] / "tools")  # ForgeCore's packager, which ships the audio decoder
+METADATA = ("manifest.json", "icon.png", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE")
 
 
 def write_wav(path: Path) -> None:
@@ -51,7 +50,7 @@ def write_table(folder: Path, version: str) -> None:
 
 
 def write_package(folder: Path, version: str = "0.0.1") -> None:
-    """A ForgeCore package folder (<root>/Mods/ForgeCore) with test copies of every file its packager ships besides the dll."""
+    """A package folder (<root>/Mods/ForgeCore) with its manifest, icon, documents and version table."""
     folder.mkdir(parents=True)
     (folder / "manifest.json").write_text(
         json.dumps(
@@ -65,22 +64,8 @@ def write_package(folder: Path, version: str = "0.0.1") -> None:
         ),
         encoding="utf-8",
     )
-    vendor = folder / "Audio" / "vendor" / "NVorbis"
-    vendor.mkdir(parents=True)
-    (vendor / "LICENSE").write_text("MIT test license", encoding="utf-8")
-    (vendor / "NOTICE.md").write_text("test provenance", encoding="utf-8")
-    (folder / "lang").mkdir()
-    for name in ("en.forge", "zh.forge"):
-        (folder / "lang" / name).write_text('{"ok": "OK"}\n', encoding="utf-8")
-    (folder / "Assets" / "fonts").mkdir(parents=True)
-    for name in package_release.FONTS:
-        (folder / "Assets" / "fonts" / name).write_bytes(b"UnityFS test fonts" if name.endswith(".bundle") else b"font licence")
-    (folder / "README.md").write_text("readme\n", encoding="utf-8")
-    (folder / "DEVELOPERS.md").write_text("public API\n", encoding="utf-8")
-    (folder / "CHANGELOG.md").write_text("changes\n", encoding="utf-8")
-    (folder / "LICENSE").write_text("MIT test license\n", encoding="utf-8")
-    (folder / "NOTICE").write_text("test notice\n", encoding="utf-8")
-    (folder / "web-manifest.forge").write_text('{"library": "ForgeCore"}\n', encoding="utf-8")
+    for name in METADATA[2:]:
+        (folder / name).write_text("test " + name + "\n", encoding="utf-8")
     write_table(folder, version)
     (folder / "icon.png").write_bytes(
         b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + struct.pack(">II", 256, 256) + b"\x08\x06\x00\x00\x00\x00\x00\x00\x00"
@@ -189,46 +174,19 @@ class ConvertChecks(unittest.TestCase):
 
 
 class PackageChecks(unittest.TestCase):
-    """The shared packager (Mods/Build/package_common.py) with ForgeCore's own extra files (language files, fonts, the audio decoder)."""
-
-    def build(self, root: Path, version: str = "0.0.1"):
-        folder = root / "Mods" / "ForgeCore"
-        write_package(folder, version=version)
-        built = root / "artifacts" / "bin" / "ForgeCore" / "release"
-        built.mkdir(parents=True)
-        (built / "ForgeCore.dll").write_bytes(b"MZtest assembly")
-        (built / "NVorbis.dll").write_bytes(b"test decoder")
-        return folder, built
-
-    def test_package_is_deterministic_and_contains_only_release_files(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            folder, built = self.build(root)
-            extra = package_release.extra(folder, built)
-            with contextlib.redirect_stdout(io.StringIO()):
-                first = package_common.package_library(folder, "ForgeCore", ("ForgeCore.dll",), root / "artifacts", root / "out", extra=extra)
-                digest = hashlib.sha256(first.read_bytes()).digest()
-                second = package_common.package_library(folder, "ForgeCore", ("ForgeCore.dll",), root / "artifacts", root / "out", extra=extra)
-            self.assertEqual(digest, hashlib.sha256(second.read_bytes()).digest())
-            with zipfile.ZipFile(second) as archive:
-                self.assertEqual(archive.read("plugins/ForgeCore/NVorbis.dll"), b"test decoder")
-                self.assertEqual(archive.read("plugins/ForgeCore/NVorbis.LICENSE"), (folder / "Audio" / "vendor" / "NVorbis" / "LICENSE").read_bytes())
-                self.assertEqual(
-                    sorted(archive.namelist()),
-                    ["CHANGELOG.md", "README.md", "icon.png", "manifest.json"]
-                    + ["plugins/ForgeCore/" + name for name in (
-                        "DEVELOPERS.md", "ForgeCore.dll", "LICENSE", "NOTICE", "NVorbis.LICENSE", "NVorbis.NOTICE.md", "NVorbis.dll",
-                        "fonts/ForgeUI-fonts.bundle", "fonts/OFL-GlowSans.forge", "fonts/OFL-Rajdhani.forge", "lang/en.forge", "lang/zh.forge",
-                        "web-manifest.forge")],
-                )
+    """The shared packager's gate (Mods/Build/package_common.py): the manifest version must be the one release.json gives."""
 
     def test_release_table_must_match_manifest_version(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            folder, _built = self.build(root)
+            folder = root / "Mods" / "ForgeCore"
+            write_package(folder)
             write_table(folder, "0.0.2")
+            built = root / "artifacts" / "bin" / "ForgeCore" / "release"
+            built.mkdir(parents=True)
+            (built / "ForgeCore.dll").write_bytes(b"MZtest assembly")
             with self.assertRaisesRegex(ValueError, "differs from manifest"):
-                package_common.package_library(folder, "ForgeCore", ("ForgeCore.dll",), root / "artifacts", root / "out")
+                package_common.package_library(folder, "ForgeCore", ("ForgeCore.dll",), root / "artifacts", root / "out", METADATA)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

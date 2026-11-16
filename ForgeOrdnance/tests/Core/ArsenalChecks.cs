@@ -116,8 +116,38 @@ internal static class ArsenalChecks
             check(inForce.Damage == 5.6f && inForce.ShotDelay == .08f && inForce.Magazine == 80 && inForce.AmmoCost == 1.9f && inForce.Valid()
                 && inForce.Rounds(1f, 230f) == Math.Floor(230d / 1.9f) + 80, "factory settings over the game's numbers; the budget counts reserve plus magazine");
             check(Throws<ForgeCore.StrictJsonException>(() => HeavyWeaponSpec.Parse(Json("{\"Model\":\"Arsenal:heavy-mg\",\"Gear\":38,\"Magazine\":2.5}")), "fractional magazine").Field == "Magazine", "magazine is whole");
-            var placed = tuned.WithAmmo(0.5f, 20, 4f).Tuning;
-            check(placed.Magazine == 20 && placed.AmmoCost == 4f && placed.Damage == 5.6f && tuned.WithAmmo(null, null, null).Tuning.SameAs(tuned.Tuning) && placed.Over(vanillaNumbers).Rounds(0.5f, 230f) == Math.Floor(115d / 4f) + 20, "a placement sets magazine and round cost over the definition; the budget follows");
+            var placed = tuned.Placed(0.5f, 20, 4f).Tuning;
+            check(placed.Magazine == 20 && placed.AmmoCost == 4f && placed.Damage == 5.6f && tuned.Placed(null, null, null).Tuning.SameAs(tuned.Tuning) && placed.Over(vanillaNumbers).Rounds(0.5f, 230f) == Math.Floor(115d / 4f) + 20, "a placement sets magazine and round cost over the definition; the budget follows");
+            check(tuned.Placed(null, null, null, 2).Count == 2 && Wire.TryRack(Wire.Rack(new RackRecord(tuned.Placed(null, null, null, 2), 38, 0, 0, 0, 0, "mg")), out var twoRacks) && twoRacks.Spec.Count == 2,
+                "a placement sets how many racks lie at once, and the rack record carries it");
+
+            // A supply point: lays its racks, lays a taken one again after the wait, stops at its supply, and a checkpoint brings back the
+            // racks lying, the waits with the seconds they had left and the count laid out.
+            check(SupplyRule.From(new Dictionary<string, double> { ["AmmoRatio"] = 1 }) == null && SupplyRule.From(new Dictionary<string, double> { ["Supply"] = 0 }) == new SupplyRule(0, SupplyRule.DefaultRestock),
+                "only Supply or Restock makes a supply point; Supply 0 is no limit with the default wait");
+            var point = new SupplyPoint(new SupplyRule(3, 5f), 2);
+            var due = new List<int>();
+            check(point.Start().SequenceEqual(new[] { 0, 1 }) && point.Given == 2, "the first racks are laid");
+            point.Taken(0, 10f);
+            point.Due(14.9f, due);
+            check(due.Count == 0 && point.Given == 3 && !point.IsStocked(0), "a taken rack waits its restock and is counted when its wait starts");
+            var saved = point.Capture(12f);
+            point.Due(15f, due);
+            check(due.SequenceEqual(new[] { 0 }) && point.IsStocked(0), "the rack is laid again when its wait is over");
+            point.Taken(0, 20f);
+            point.Taken(1, 20f);
+            point.Due(100f, due);
+            check(due.Count == 0 && point.Spent, "the supply is spent: no rack is laid again and the point is done");
+            var reloaded = new SupplyPoint(new SupplyRule(3, 5f), 2);
+            check(reloaded.Restore(saved, 50f, out var lying) && lying.SequenceEqual(new[] { 1 }) && reloaded.Given == 3 && !reloaded.IsStocked(0), "a checkpoint restores the racks lying and the count laid out");
+            reloaded.Due(52.9f, due);
+            check(due.Count == 0, "a restored wait keeps the seconds it had left");
+            reloaded.Due(53f, due);
+            check(due.SequenceEqual(new[] { 0 }), "and ends then");
+            var endless = new SupplyPoint(new SupplyRule(0, 0f), 1);
+            endless.Start();
+            for (var i = 0; i < 50; i++) { endless.Taken(0, i); endless.Due(i, due); }
+            check(endless.IsStocked(0) && !endless.Spent && endless.Given == 51, "with no limit and no wait a taken rack is laid again at once, without end");
             check(ArchetypeTuning.FromWire(new[] { float.NaN, 0f, float.NaN, float.NaN, float.NaN, float.NaN, float.NaN, float.NaN, float.NaN, float.NaN, float.NaN, float.NaN }) == null, "tuning outside its range rejected on the wire");
             // Damage falloff in metres: both or neither, the end beyond the start; unset takes the game block's own.
             check(Throws<ForgeCore.StrictJsonException>(() => HeavyWeaponSpec.Parse(Json("{\"Model\":\"Arsenal:heavy-mg\",\"Gear\":38,\"FalloffStart\":80}")), "falloff start alone").Field == "FalloffStart"
@@ -154,10 +184,14 @@ internal sealed class ItemParser : IOrdnancePayloadParser
     // CONSUMABLE_Syringe_MeleeBuff 142, CONSUMABLE_Tripmine_Glue 144, CONSUMABLE_LockMelter 116.
     private static readonly HashSet<uint> Known = new() { 101, 102, 127, 132, 115, 139, 117, 114, 140, 142, 144, 116 };
 
-    public object Parse(JsonElement payload) => ItemList.Parse(payload, (id, name) => id.HasValue && Known.Contains(id.Value) ? id : null);
+    public object Parse(JsonElement payload) => new ItemParameters(ItemList.Parse(payload, (id, name) => id.HasValue && Known.Contains(id.Value) ? id : null));
 }
 
-internal sealed record TurretSpec(uint Gear, float AmmoRatio, float Lifetime, bool Pickable, string Look);
+/// <summary>The framework's <c>Gear</c> parameters as far as this test reads them, with the same description numbers ({0} Lifetime).</summary>
+internal sealed record TurretSpec(uint Gear, float AmmoRatio, float Lifetime, bool Pickable, string Look) : IOrdnanceDescribed
+{
+    public IReadOnlyList<double> DescriptionValues => new double[] { Lifetime };
+}
 
 /// <summary>The framework's <c>Gear</c> fields; the gear must be one of the game's three player sentries.</summary>
 internal sealed class GearParser : IOrdnancePayloadParser

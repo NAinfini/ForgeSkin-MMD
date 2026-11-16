@@ -5,5 +5,5 @@ Package: NuGet NVorbis 0.10.5, restored by PackageReference; NVorbis.dll is copi
 
 LICENSE is copied verbatim from that package. The package's System.Memory and
 System.ValueTuple APIs are supplied by the plugin's .NET 6 host. No additional
-runtime DLLs are needed. Ship NVorbis.dll beside ForgeCore.dll, with LICENSE
-and this notice (the release packager names them NVorbis.LICENSE and NVorbis.NOTICE.md).
+runtime DLLs are needed. Ship NVorbis.dll beside ForgeCore.dll with this LICENSE: the ForgeCore row of
+Mods/Release/release.json carries its text (bundledLibraries, shipped as NVorbis.LICENSE.forge) and NOTICE credits it.

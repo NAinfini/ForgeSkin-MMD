@@ -1,3 +1,4 @@
+# reason: 7 detection ability of a gate. The Frames audio source contract must refuse a changed source file.
 """Offline checks for the Frames audio source contract."""
 import importlib.util
 import json

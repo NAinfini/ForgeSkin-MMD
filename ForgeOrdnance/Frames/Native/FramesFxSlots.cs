@@ -2,8 +2,7 @@ using ForgeVisual;
 
 namespace ForgeOrdnance.Frames;
 
-/// <summary>The suit moments whose effect comes from the effect library (the bundle <c>forge-frames-fx.bundle</c> and its slot table
-/// <c>fx-slots.forge</c> in the plugin's <c>Frames</c> folder, made by <c>Tools/Vfx/FxLibrary/fx_slots.py</c> from the owner's selection). Which prefab plays
+/// <summary>The suit moments whose effect comes from the mod's effect library (<see cref="OrdnanceFxSlots"/>). Which prefab plays
 /// for a slot is data in that table, not code here; a slot the table does not list, or an install without the files, logs its error and draws
 /// nothing. Playing is ForgeVisual's <see cref="Fx"/>. The moments in a suit's light colour (the landing and
 /// kick rings, the barrier's pulse, hit and break, the siege ring, the ram) are resolved here once and played with that suit's <c>Light.Glow</c>: their layers take the hue of the colour passed (<c>@tint</c>).</summary>
@@ -12,12 +11,10 @@ internal static class FramesFxSlots
     internal static FxHandle? Explosion, Pulse, ShieldHit, ShieldBreak, Siege, Ram,
         Kick, Landing, ChargeDust, Backblast, Wreck, WreckSmoke, Eject, Vent, Heat, RocketMuzzle, GunMuzzle;
 
-    /// <summary>The loaded set; <see cref="FxSlots.Empty"/> when the bundle is not shipped.</summary>
-    internal static FxSlots Set = FxSlots.Empty;
-
+    /// <summary>Finds the suit moments in the library <see cref="OrdnanceFxSlots.Load"/> read.</summary>
     internal static void Load()
     {
-        var set = Set = FxSlots.Load(Plugin.Id, "FramesFx", "Frames/forge-frames-fx.bundle", "Frames/fx-slots.forge");
+        var set = OrdnanceFxSlots.Set;
         Explosion = set.Find("frame.explode");
         Pulse = set.Find("frame.pulse");
         ShieldHit = set.Find("frame.shield.hit");

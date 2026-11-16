@@ -35,17 +35,11 @@ internal static class GearTypeNames
         if (category == null) return "";
         if (line == 2)
         {
-            var melee = Text(category.PublicName);
+            var melee = ForgeUI.GameText.Read(category.PublicName);
             return melee.Length > 0 ? melee : MeleeArchetypeDataBlock.GetBlock(category.MeleeArchetype)?.PublicName ?? "";
         }
-        if (line == 3) return Text(category.PublicName);
-        var type = ArchetypeDataBlock.GetBlock(ForgeCore.Gear.ArchetypeId(gear)) is { } block ? Text(block.PublicName) : "";
-        return type.Length > 0 ? type : Text(category.PublicName);
+        if (line == 3) return ForgeUI.GameText.Read(category.PublicName);
+        var type = ArchetypeDataBlock.GetBlock(ForgeCore.Gear.ArchetypeId(gear)) is { } block ? ForgeUI.GameText.Read(block.PublicName) : "";
+        return type.Length > 0 ? type : ForgeUI.GameText.Read(category.PublicName);
     }
-
-
-    // The game's text for a name, in the language the game is set to; an author's inline text where it has no text ID. "is null": the type's == throws on a null.
-    /// <summary>A localized text in the game's language, or its author text when it has no id; empty for none.</summary>
-    internal static string Text(Localization.LocalizedText? text)
-        => text is null ? "" : (text.Id != 0 ? Localization.Text.Get(text.Id) : text.UntranslatedText) ?? "";
 }

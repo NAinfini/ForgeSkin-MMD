@@ -1,3 +1,4 @@
+# reason: 7 detection ability of a gate. The Ordnance package check must refuse stale, unreceipted or changed bundles and stray or missing clips.
 """Offline packaging checks on a synthetic package; the bundle bytes never claim to be a real Unity build."""
 import importlib.util
 import json
@@ -62,8 +63,16 @@ class PackageTests(unittest.TestCase):
         self.write(self.assets / "Arsenal/icons/strike.png", PNG)
         self.write(self.assets / "Arsenal/Audio/test.cue.ogg", b"OggStest")
         self.write(self.assets / "Arsenal/Audio/cues.forge", json.dumps({"buses": {}, "cues": {"test.cue": {"gain": 0.8}}}))
+        # The mod's own copy of the heavy blast, with its build receipt.
+        self.blast = self.assets / "Vfx/HeavyBlast/forge-visual-fx.bundle"
+        self.write(self.blast, b"UnityFS blast")
+        self.write(self.blast.with_name("fx-slots.forge"), "{}")
+        self.write(self.blast.with_name("fx-licences.forge"), "blast licences")
+        self.write(self.blast.with_name("forge-visual-fx.manifest.json"), json.dumps({"bundle": self.blast.name, "bytes": self.blast.stat().st_size, "sha256": module.sha256(self.blast)}))
         # Frames: four definitions with icons, the cockpit art at 1x and @2x with the visor drawing, and the receipt that pins the build inputs.
-        definitions = [{"Id": "frame" + str(i), "Icon": str(i) + ".png", "Payload": {"Model": "Frames:frame-m" + str(i)}} for i in range(15, 19)]
+        definitions = [{"Id": "frame" + str(i), "Icon": str(i) + ".png", "Description": "Marks enemies every 5 seconds.",
+                        "Payload": {"Model": "Frames:frame-m" + str(i), "Opening": {"Parts": [{"Node": "hatch", "Seconds": 1}]}}} for i in range(15, 19)]
+        self.definitions = definitions
         self.write(self.folder / "Frames/Definitions/frames.forge", json.dumps(definitions))
         for entry in definitions:
             self.write(self.assets / "Frames/icons" / entry["Icon"], PNG)
@@ -73,15 +82,18 @@ class PackageTests(unittest.TestCase):
         self.write(self.assets / "Frames/Audio/cues.forge", json.dumps({"buses": {}, "cues": {"exo.test": {"layers": [{"clips": ["exo.test-a.ogg"]}]}}}))
         self.frames = self.assets / "Frames/Models/forge-frames.bundle"
         self.write(self.frames, b"UnityFS frames")
+        for name in module.FRAMES_BUILD_FILES:
+            if not (self.root / name).exists():
+                self.write(self.root / name, name + " source")
         self.script = self.folder / "tools/Frames/build_assets.ps1"
         self.write(self.script, "build source")
         self.write(self.root / "Tools/Blender/hinge_tool/bake.py", "bake source")  # the Blender add-on the build bakes with is an input too
+        self.write(self.folder / "tools/Frames/build_icons.ps1", "icon source")  # a tool that never reaches the bundle is no input
         self.write(self.root / "cut/M15_cut.draft.blend", b"cut source")
-        inputs = ["Mods/ForgeOrdnance/Frames/Definitions/frames.forge", "Mods/ForgeOrdnance/tools/Frames/build_assets.ps1", "Tools/Blender/hinge_tool/bake.py"]
-        self.receipt = {"format": 3, "bundleBytes": self.frames.stat().st_size, "bundleSha256": module.sha256(self.frames),
+        self.receipt = {"format": module.FRAMES_RECEIPT_FORMAT, "bundleBytes": self.frames.stat().st_size, "bundleSha256": module.sha256(self.frames),
                         "models": [entry["Payload"]["Model"].split(":", 1)[1] for entry in definitions],
                         "roots": {"cut": str(self.root / "cut"), "pilot": str(self.root / "pilot"), "props": str(self.root / "props")},
-                        "inputs": {name: module.text_sha256(self.root / name) for name in inputs},
+                        "inputs": {name: module.build_input_sha256(self.root, name) for name in module.frames_build_inputs(self.root)},
                         "sources": {"cut/M15_cut.draft.blend": module.sha256(self.root / "cut/M15_cut.draft.blend")}}
         self.frames_receipt = self.assets / "Frames/Models/forge-frames.receipt.json"
         self.save_receipt()
@@ -136,12 +148,18 @@ class PackageTests(unittest.TestCase):
     def test_a_bundle_changed_after_its_build_is_rejected(self):
         self.arsenal.write_bytes(b"UnityFS staled!")  # same length as the receipted bundle; only the hash differs
         self.assert_rejected("does not match its Unity build receipt")
+        self.write_receipt(self.arsenal, "forge-ordnance-arsenal.manifest.json", {"prefabs": [{"name": name} for name in module.ARSENAL_PREFABS]})
+        self.blast.write_bytes(b"UnityFS blasT")  # the heavy blast's copy is held to its own receipt the same way
+        self.assert_rejected("does not match its build receipt")
 
     def test_a_carrier_bundle_the_kept_build_log_did_not_verify_is_rejected(self):
         self.write(self.log, "ORDNANCE_BUNDLE_VERIFIED forge-ordnance.bundle 1 bytes 00")
         self.assert_rejected("no matching successful-build marker")
 
     def test_frames_bundle_without_its_receipt_is_rejected(self):
+        self.receipt["format"] = 3  # a receipt of an earlier format is no receipt
+        self.save_receipt()
+        self.assert_rejected("not format 1.0.0")
         self.frames_receipt.unlink()
         self.assert_rejected("missing bundle receipt")
 
@@ -159,6 +177,15 @@ class PackageTests(unittest.TestCase):
         self.write(self.output, b"previous release")
         self.script.write_bytes(b"build source changed\r\n")
         self.assert_rejected("input changed")
+        # Of the definitions only what the build reads is an input: new words pass, a different opening part is refused.
+        self.script.write_bytes(b"build source\n")
+        self.definitions[0]["Description"] = "Marks enemies every {0} seconds."
+        self.write(self.folder / "Frames/Definitions/frames.forge", json.dumps(self.definitions, indent=2))
+        self.run_package()
+        self.write(self.output, b"previous release")
+        self.definitions[0]["Payload"]["Opening"]["Parts"][0]["Node"] = "door"
+        self.write(self.folder / "Frames/Definitions/frames.forge", json.dumps(self.definitions))
+        self.assert_rejected("input changed: Mods/ForgeOrdnance/Frames/Definitions/frames.forge")
 
     def test_missing_clip_is_rejected(self):
         (self.assets / "Carrier/Audio/boom-02.ogg").unlink()
@@ -185,12 +212,14 @@ class PackageTests(unittest.TestCase):
                                                     "ForgeOrdnance/lang/zh.forge", "hud/visor-cracks.png"]
                       + ["ForgeOrdnance/" + str(i) + ".png" for i in range(15, 19)]
                       + ["hud/" + art for name in module.HUD_ART for art in (name, name[:-4] + "@2x.png")]]
-            root = ["ForgeOrdnance.dll", "lang/en.forge", "lang/zh.forge", *module.METADATA]
-            self.assertEqual(sorted(names), sorted(root + carrier + arsenal + frames))
-            self.assertEqual(archive.read("ForgeOrdnance.dll"), b"MZ synthetic dll")
-            self.assertEqual(archive.read("Frames/models/LICENSE.forge"), b"Frames models licence")
+            root = ["ForgeOrdnance.dll", "lang/en.forge", "lang/zh.forge", *module.METADATA,
+                    "Vfx/HeavyBlast/forge-visual-fx.bundle", "Vfx/HeavyBlast/fx-slots.forge", "Vfx/HeavyBlast/fx-licences.forge"]
+            entry = lambda path: package_common.zip_entry("ForgeOrdnance", path)  # noqa: E731
+            self.assertEqual(sorted(names), sorted(map(entry, root + carrier + arsenal + frames)))
+            self.assertEqual(archive.read(entry("ForgeOrdnance.dll")), b"MZ synthetic dll")
+            self.assertEqual(archive.read(entry("Frames/models/LICENSE.forge")), b"Frames models licence")
             # The carrier reads definitions from every ForgeOrdnance/ folder under the plugin: without them the whole category is gone.
-            self.assertEqual(archive.read("Frames/ForgeOrdnance/frames.forge"), (self.folder / "Frames/Definitions/frames.forge").read_bytes())
+            self.assertEqual(archive.read(entry("Frames/ForgeOrdnance/frames.forge")), (self.folder / "Frames/Definitions/frames.forge").read_bytes())
         self.write(self.output, b"old package")
         self.run_package()
         self.assertEqual(self.output.read_bytes(), first)

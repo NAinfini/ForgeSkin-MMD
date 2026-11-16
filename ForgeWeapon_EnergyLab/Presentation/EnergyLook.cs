@@ -99,6 +99,8 @@ internal sealed class EnergyLook
                 else Plugin.Logger.ErrorOnce($"{id} Look.Sounds.{name}: no sound '{reference}' (a cue of this gun's audio folder, or identity/cue of a loaded ForgeAudio library); the gun plays its own.");
             }
         var effects = new Dictionary<FxHandle, FxHandle>();
+        // Before the effect library is read (no level with an energy gun yet) there are no slots to replace; it looks again once it is read.
+        if (!EnergyVfx.LibraryRead) return new EnergyLook(cues, effects);
         foreach (var (slot, reference) in look.Fx)
         {
             var shipped = EnergyVfx.Library.Find(slot);

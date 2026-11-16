@@ -50,24 +50,13 @@ foreach ($prefab in $blends.Keys) {
     & $Blender --background --factory-startup $blends[$prefab] --python-exit-code 1 --python "$pipeline/export_blender.py" -- --prefab $prefab --out "$stage/models/$prefab" --max-texture 2048 @require
     if ($LASTEXITCODE -ne 0) { throw "Export of $prefab failed." }
 }
-$project = Join-Path $Build 'unity'
-if (!(Test-Path -LiteralPath (Join-Path $project 'ProjectSettings'))) {
-    $log = Join-Path $Build 'unity-create.log'
-    $proc = Start-Process -FilePath $Unity -WindowStyle Hidden -PassThru -ArgumentList @('-batchmode', '-nographics', '-quit', '-createProject', "`"$project`"", '-logFile', "`"$log`"")
-    $proc.WaitForExit()
-    if ($proc.ExitCode -ne 0) { throw "Unity could not create the project; see $log" }
-}
-New-Item -ItemType Directory -Force (Join-Path $project 'Assets/Editor') | Out-Null
-Copy-Item -LiteralPath "$pipeline/OrdnanceBundleBuild.cs" -Destination (Join-Path $project 'Assets/Editor/OrdnanceBundleBuild.cs') -Force
-
+. (Join-Path $PSScriptRoot '../../../ForgeCore/tools/Unity/UnityBatch.ps1')
 $env:FORGE_ORDNANCE_BUNDLE = $bundleName
 $env:FORGE_ORDNANCE_STAGE = $stage
 $env:FORGE_ORDNANCE_OUT = $out
 $log = Join-Path $Build 'unity-build.log'
 if (Test-Path -LiteralPath $log) { Remove-Item -LiteralPath $log }
-$proc = Start-Process -FilePath $Unity -WindowStyle Hidden -PassThru -ArgumentList @('-batchmode', '-nographics', '-quit', '-projectPath', "`"$project`"", '-executeMethod', 'OrdnanceBundleBuild.Build', '-logFile', "`"$log`"")
-$proc.WaitForExit()
-if ($proc.ExitCode -ne 0) { throw "Unity build failed; see $log" }
+if ((Invoke-UnityBatch $Unity (Join-Path $Build 'unity') @("$pipeline/OrdnanceBundleBuild.cs") 'OrdnanceBundleBuild.Build' $log (Join-Path $Build 'unity-create.log')) -ne 0) { throw "Unity build failed; see $log" }
 $bundle = Join-Path $out $bundleName
 $length = (Get-Item -LiteralPath $bundle).Length
 $hash = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash.ToLowerInvariant()

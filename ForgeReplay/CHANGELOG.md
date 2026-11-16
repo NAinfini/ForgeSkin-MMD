@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.1
+
+- Recordings are stored in a new way: they are much smaller and get on better with other mods. Because of this change, this version cannot read the old way of storing them, so recordings made with 1.0.0 cannot be played in this version; they are listed under "Unreadable files" in the replays list.
+- Needs ForgeCore 1.0.1.
+- Every player, yourself included, is played back by the same stand-in body, which now replays the recorded body animation layers (stance, movement, interactions, throws, melee, shooting).
+- The stand-in is built from the game's own player body: it wears the recorded clothing and face, a ForgeSkin character skin and gun skins when the recording has them (and the viewer has those packs), and holds its weapon the way the game holds it for a teammate, with both hands on the gun and aiming where the player aimed. A look that is still loading is asked for again until it is ready; a look that cannot be worn falls back to the original.
+- The outline of a watched player covers the whole character model and follows a change of look.
+- Recordings also carry the pickups lying in the level when recording starts and objects other Forge mods place in the level (their position, size, visibility and state), so a replay shows them where they were.
+- The terminal panel in a replay is laid out like the game's: command lists in two aligned columns, long lines wrapped instead of cut, the newest line at the bottom, each line recorded once.
+- A recording that cannot be played is dimmed in the list with "UNAVAILABLE", and under the play button it says what is missing and what to do (the rundown not installed, the level missing, a file that cannot be read).
+- The Chase camera no longer turns with the mouse: it stays behind the player and looks where they looked. Orbit still circles the player with the mouse.
+- Replay screen and replays list redesigned: four fixed player cards, collapsed to a narrow strip at the right edge by default and opened on mouse-over; one bottom panel with the time bar and play controls; list filters as tabs (result, rundown, unreadable files) with the total size.
+- The events page lists wake-ups: who woke which enemy and how.
+- Closing a recording no longer holds up the end of the level: pruning and reading the finished file run in the background. Stopping a replay stops its background analysis.
+- Multiplayer goes through ForgeCore's networking.
+- Replay screen: the view buttons and the watched player's name, weapon and health moved from the top middle to the row above the time bar, between the panel tabs and the key hints.
+- Replays list: a row no longer carries the players' names and grades (they were crowding the next row); they are in the details' team table, in each player's colour.
+- Added: `Recording.Folder` chooses where recordings are kept (empty: `replay` beside the game); recordings already in the old place are not moved. The rating cache moved to `BepInEx/cache/ForgeReplay` (rebuilt on its own).
+
 ## 1.0.0
 
 - Recording: players, enemies, damage, shots, melee, doors, scans, alarms, waves, terminals, generators, items, checkpoints, chat, noise, pings, sentries, mines, tongues and projectiles, in a crash-safe block file (format version 9) with the level seeds and the map fingerprint in its header.

@@ -4,7 +4,7 @@ using ForgeVisual;
 using UnityEngine;
 
 namespace ForgeOrdnance;
-/// <summary>Carrier/forge-ordnance.bundle next to the plugin, registered with ForgeVisual as the pack <c>Ordnance</c>: the summoning ball, drop pod, turret shell and the effect prefabs. Registered when a level has been built and kept for the session; a level whose load failed tries again at the next level. When the file is missing or broken
+/// <summary>Carrier/forge-ordnance.bundle next to the plugin, registered with ForgeVisual as the pack <c>Ordnance</c>: the summoning ball, drop pod, turret shell and the effect prefabs. Registered and made ready while a level that can call something in is built (the plugin's level step) and kept for the session; a load that failed tries again at the next such level or call-in. When the file is missing or broken
 /// the ball keeps the glow stick look, deliveries fall back to the game's items on the ground and sentries keep the game's
 /// look, and the log says why.</summary>
 internal static class OrdnanceAssets
@@ -51,7 +51,7 @@ internal static class OrdnanceAssets
     internal static ModelHandle? Shell { get; private set; }
     internal static ModelHandle? Beacon { get; private set; }
 
-    /// <summary>When a level has been built, until one load succeeds.</summary>
+    /// <summary>While a level that can call something in is built, until one load succeeds.</summary>
     internal static void Load()
     {
         if (Bundle != null) return;
@@ -77,6 +77,10 @@ internal static class OrdnanceAssets
         Shell = shell;
         Beacon = bundle.TryModel(BeaconPrefab, out var beacon) ? beacon : null;
         PodAppearance = BuildPodAppearance(pod);
+        // The level is built: the pod, shell and ball are made ready now, not on the frame the first call-in lands.
+        _ = pod.Ready;
+        _ = shell.Ready;
+        _ = Beacon?.Ready;
         try { PodImpactEffects.Load(bundle); }
         catch (Exception error) { Plugin.Logger.ErrorOnce("Pod impact particles could not be prepared: " + error); }
     }

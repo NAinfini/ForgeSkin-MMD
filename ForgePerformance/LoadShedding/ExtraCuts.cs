@@ -39,6 +39,8 @@ internal sealed class ExtraCuts
     private readonly Dictionary<IntPtr, DecayHook> _decays = new();
     private readonly DueQueue<DestructionObjects> _debrisQueue = new(QueueCapacity);
     private readonly Dictionary<IntPtr, DebrisState> _frozenDebris = new();
+    private readonly DueQueue<GameObject> _magazineQueue = new(QueueCapacity);
+    private readonly Dictionary<IntPtr, MagazineDrop> _magazines = new();
     private readonly Dictionary<IntPtr, MipState> _spitterMips = new();
     private readonly HashSet<IntPtr> _recycledGlue = new();
     private readonly System.Random _debrisRandom = new();
@@ -50,6 +52,8 @@ internal sealed class ExtraCuts
     private long _leakAssets, _leakLights, _leakIrf, _leakEnemy, _leakTerminals, _leakMessages, _leakHeaders;
     private long _spitterSeen, _spitterChanged, _spitterRestored, _spitterDecals;
     private long _glueSeen, _glueRecycled, _recycleSeen, _recycleChanged;
+    private long _magazineSeen, _magazineReturned, _magazineReused, _magazineDropped;
+    private long _repellerSeen, _repellerHidden, _repellerRenderers;
 
     internal ExtraCuts(LoadSheddingController owner, SheddingSettings settings)
     { _owner = owner; _settings = settings; _render = new RenderCuts(owner, settings); }
@@ -96,6 +100,8 @@ internal sealed class ExtraCuts
         _debrisSeen = _debrisFrozen = _debrisRestored = _debrisDropped = 0;
         _spitterSeen = _spitterChanged = _spitterRestored = _spitterDecals = 0;
         _glueSeen = _glueRecycled = _recycleSeen = _recycleChanged = 0;
+        _magazineSeen = _magazineReturned = _magazineReused = _magazineDropped = 0;
+        _repellerSeen = _repellerHidden = _repellerRenderers = 0;
         _failedItems = 0; _nextTick = 0;
         IrfCulling.BeginLevel();
         _shadow.Reset(); _soft.Reset();
@@ -152,6 +158,10 @@ internal sealed class ExtraCuts
         {
             try { DrainDebris(now); } catch (Exception error) { Failed("debris-freeze", error); }
         }
+        if (_magazineQueue.Count != 0)
+        {
+            try { DrainMagazines(now); } catch (Exception error) { Failed("dropped-magazine", error); }
+        }
     }
 
     private void DrainDecay(float now)
@@ -188,6 +198,30 @@ internal sealed class ExtraCuts
         }
     }
 
+    // The gun's pool hands out the oldest magazine again once all five lie on the floor (allowStealing); a magazine handed out
+    // again since it was queued carries a newer generation, and only a magazine still in the pool's used list is given back.
+    private void DrainMagazines(float now)
+    {
+        for (var steps = 0; steps < 8 && _magazineQueue.TryTakeDue(now, out var magazine, out var generation); steps++)
+        {
+            if (magazine == null) continue;
+            if (!_magazines.TryGetValue(magazine.Pointer, out var drop) || drop.Generation != generation) { _magazineReused++; continue; }
+            _magazines.Remove(magazine.Pointer);
+            if (!InUse(drop.Pool, magazine)) continue;
+            // The game's own return: off the used list, onto the free list, under the pool container, inactive.
+            drop.Pool.Return(magazine);
+            _magazineReturned++;
+        }
+    }
+
+    // Return adds to the free list whatever it is given, so one that is not in use would be listed twice.
+    private static bool InUse(ObjectPooler.Pool pool, GameObject magazine)
+    {
+        for (var node = pool.m_usedInstances?.First; node != null; node = node.Next)
+            if (node.Value is { } used && used.Pointer == magazine.Pointer) return true;
+        return false;
+    }
+
     internal void EndLevel()
     {
         Exception? first = null;
@@ -215,6 +249,10 @@ internal sealed class ExtraCuts
                 "queue_full_dropped=" + _debrisDropped + "\tstill_moving_retries_max=" + ExtraPolicy.DebrisMaximumRetries);
             if (_settings.LowQualitySpitter) _owner.LogItem("low-quality-spitter", _spitterSeen, _spitterChanged, _spitterRestored, "decals_removed=" + _spitterDecals);
             if (_settings.GlueSoundRecycle) _owner.LogItem("glue-sound-recycle", _glueSeen, _glueRecycled, 0, "scope=sound_player_only");
+            if (_settings.DroppedMagazineCleanup) _owner.LogItem("dropped-magazine", _magazineSeen, _magazineReturned, 0,
+                "after_s=" + F(_settings.DroppedMagazineSeconds) + "\treused_before_return=" + _magazineReused + "\tqueue_full_dropped=" + _magazineDropped + "\tto=native_pool");
+            if (_settings.SpentFogRepellerCleanup) _owner.LogItem("spent-fog-repeller", _repellerSeen, _repellerHidden, 0,
+                "renderers_hidden=" + _repellerRenderers + "\tby=local_force_rendering_off");
             if (_settings.CorpseRecycle) _owner.LogItem("corpse-recycle", _recycleSeen, _recycleChanged, 0,
                 "cap_s=" + F(_settings.CorpseRecycleSeconds) + "\tdespawn=native");
             if (_settings.IrfOffscreenSkip) _owner.LogItem("irf-offscreen-skip", irfConsidered, irfSkipped, 0, "bounds=static_main_camera_frustum");
@@ -228,6 +266,7 @@ internal sealed class ExtraCuts
         if (irfFailure != null) _owner.LogExtraFailure("irf-culling", irfFailure);
         if (_failedItems != 0) _owner.LogItem("extra-failures", _failedItems, 0, 0, "scope=level");
         _decayQueue.Clear(); _debrisQueue.Clear(); _frozenDebris.Clear(); _spitterMips.Clear(); _recycledGlue.Clear();
+        _magazineQueue.Clear(); _magazines.Clear();
         PruneDecays();
         if (first != null) throw first;
     }
@@ -455,6 +494,42 @@ internal sealed class ExtraCuts
         });
     }
 
+    // A gun's dropped magazine, as its pool hands it out (local and other players' guns alike; the drop is not networked).
+    internal void MagazineDropped(ObjectPooler.Pool pool, GameObject magazine)
+    {
+        if (pool == null || magazine == null) return;
+        Guard("dropped-magazine", () =>
+        {
+            _magazineSeen++;
+            if (!_magazines.TryGetValue(magazine.Pointer, out var drop)) _magazines.Add(magazine.Pointer, drop = new MagazineDrop());
+            drop.Pool = pool;
+            drop.Generation++;
+            if (!_magazineQueue.Enqueue(magazine, Time.time + _settings.DroppedMagazineSeconds, drop.Generation)) _magazineDropped++;
+        });
+    }
+
+    // A repeller sphere that just turned Disabled. Only a thrown repeller's own sphere counts (the large carried repeller and
+    // anything else that uses the sphere are left alone); the thrown one gets there only after its shrink has run out.
+    internal void RepellerSpent(FogRepeller_Sphere sphere)
+    {
+        if (sphere == null) return;
+        Guard("spent-fog-repeller", () =>
+        {
+            var repeller = sphere.GetComponentInParent<FogRepellerInstance>();
+            if (repeller == null || repeller.m_repellerSphere?.Pointer != sphere.Pointer) return;
+            _repellerSeen++;
+            // A disabled thrown sphere never starts again (only the repeller's Start starts it), so its end is final. This
+            // machine's copy stops being drawn and nothing else changes: the object, its colliders, rigidbody, sound, the
+            // replicator and every renderer's enabled flag stay as they are. forceRenderingOff is a draw switch of its own;
+            // in the game only the culling system's CullShow writes it, and a thrown item has no item culler.
+            var hidden = 0;
+            foreach (var renderer in repeller.GetComponentsInChildren<Renderer>(true))
+                if (renderer != null && !renderer.forceRenderingOff) { renderer.forceRenderingOff = true; hidden++; }
+            _repellerRenderers += hidden;
+            if (hidden != 0) _repellerHidden++;
+        });
+    }
+
     // Called from the native corpse timer, first step only. The game still despawns the body itself.
     internal void RecycleCorpse(ES_Dead._DecayDelayed_d__20 iterator)
     {
@@ -520,6 +595,11 @@ internal sealed class ExtraCuts
         internal readonly Il2CppSystem.Action Callback;
         internal int Generation;
         internal DecayHook(Decay decay, Il2CppSystem.Action callback) { Decay = decay; Callback = callback; }
+    }
+    private sealed class MagazineDrop
+    {
+        internal ObjectPooler.Pool Pool = null!;
+        internal int Generation;
     }
     private readonly record struct DebrisState(bool ColliderEnabled, bool Dynamic, bool DetectCollisions);
     private readonly record struct MipState(Texture Texture, float Original);

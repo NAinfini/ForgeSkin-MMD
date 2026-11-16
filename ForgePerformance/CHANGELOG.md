@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- 启动时游戏文件的哈希跨启动缓存在 `BepInEx/cache/ForgePerformance/file-sha256.txt`，文件变了才重算。
+- 装饰剔除不再每帧逐个查找。
+
 ## 1.0.0
 
 - `FastCorpseHide` 隐藏尸体后同时关掉尸体碰撞体，复用或退图时恢复。
@@ -15,6 +20,8 @@
 - 数值默认：所有者 2026-11-09 指定 `CorpseLifetime=0.01` 秒、`CorpseRecycleSeconds=1` 秒、`ParticleFactor=0.01`、`ParticleHz=1`、`WindLimit=1`、`DecalLimit=1`、`DecalLifetime=0.01` 秒、`CullDistance=10` 米；`RagdollLimit=4`、`ShellLimit=6`、`LightLimit=12`、`ClosedDoorDepth=2` 是挑选值；阴影两项不变。全部未在游戏里实测。
 - 修复 `MeleePacketReuse` 混装报错：不再从网络复制器里删包位，改为把新包的位置指向共用包，网络包编号与原版一致，与未装本项、未装本模组或装了别的版本的玩家同局不再错位。
 - 修复 `GlueSoundRecycle`：防重复回收只在同一帧内生效，后来的泡沫球不会因为对象地址被复用而漏掉音源回收。
+- 新增 `DroppedMagazineCleanup`（默认开）与 `DroppedMagazineSeconds`（默认 3 秒）：换弹掉到地上的弹夹落地后到时间就还回枪自己的对象池，从地上消失；别的玩家掉的弹夹在本机同样处理。换弹、弹药、声音不变，不发任何联机数据。
+- 新增 `SpentFogRepellerCleanup`（默认开）：扔出的驱雾器在本机这份驱雾结束（原版状态变为停用）后，本机不再画它的模型；物品、碰撞、联机状态都保持原版，不发任何数据，各台机器按自己的设置。还在驱雾的不动，搬运的大型驱雾器不动。用完的发光棒原版已在熄灭后移除，不另设开关。
 - `CombatDecals` 去掉 `Decal.Shown` 钩子：游戏只在回池时隐藏贴花，回池入口已处理，这个钩子每次回池都白扫一遍全部登记贴花。
 
 - 修复 `LowQualitySpitter`：建关时已生成的喷吐体在进关后补扫处理，原来只处理进关后才出现的。

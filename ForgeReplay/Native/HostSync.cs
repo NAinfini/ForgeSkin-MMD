@@ -23,9 +23,8 @@ internal static class HostSync
     private static uint _openMs, _snapshotMs;
     private static bool _resnap;
 
-    // Client side: whether the host's records are in force, and what the sync did, for the log line at the end of the level.
+    // Client side: whether the host's records are in force.
     private static bool _linked;
-    private static int _packets, _snapshots, _rejected, _unknownEnemy, _sentPackets, _sentBytes, _sentRecords;
 
     private static uint Clock => (uint)Environment.TickCount64;
 
@@ -37,7 +36,6 @@ internal static class HostSync
         net.PeerSynced += _ => _resnap = true;
         _net = net;
         Net.WorldChanged += WorldChanged;
-        GameEvents.LevelEnded += Report;
     }
 
     // ---- Host: add records ---------------------------------------------------------------------------------------------------------
@@ -58,7 +56,6 @@ internal static class HostSync
         var offset = Offset();
         Out.Hit(new HostHit(enemy.GlobalID, kind, slot, Math.Clamp(limbType, 0, 2), lethal, behind, (uint)Math.Clamp((int)MathF.Round(taken * 10f), 0, (int)HostLink.MaxTakenTenths), gear,
             (uint)Math.Clamp((int)MathF.Round(distanceMetres * 100f), 0, (int)HostLink.MaxDistanceCm), offset));
-        _sentRecords++;
         if (Out.Full) Flush();
     }
 
@@ -67,7 +64,6 @@ internal static class HostSync
         if (!Sending) return;
         var offset = Offset();
         Out.Wake(new HostWake(enemy.GlobalID, propagated, heard, detection is >= 0 and < 7 ? detection : 7, Math.Clamp(player, 0, 4), Math.Clamp(action, 0, 15), EnemyRecorder.KeyOf(propagatorEntity, out var propagator), propagator, offset));
-        _sentRecords++;
         if (Out.Full) Flush();
     }
 
@@ -78,7 +74,6 @@ internal static class HostSync
         if (!Sending || (uint)slot > 3 || (uint)kind > 6 || fromPlayer > 3) return;
         var offset = Offset();
         Out.Hurt(new HostHurt(slot, kind, fromPlayer, enemyKey, (uint)Math.Clamp((int)MathF.Round(damage * 10f), 0, (int)HostLink.MaxPlayerTenths), offset));
-        _sentRecords++;
         if (Out.Full) Flush();
     }
 
@@ -87,7 +82,6 @@ internal static class HostSync
         if (!Sending || (uint)giver > 3 || (uint)receiver > 3 || (uint)kind > 2) return;
         var offset = Offset();
         Out.Supply(new HostSupply(giver, receiver, kind, offset));
-        _sentRecords++;
         if (Out.Full) Flush();
     }
 
@@ -96,7 +90,6 @@ internal static class HostSync
         if (!Sending || (uint)slot > 3) return;
         var offset = Offset();
         Out.Pack(new HostPack(slot, offset));
-        _sentRecords++;
         if (Out.Full) Flush();
     }
 
@@ -106,7 +99,6 @@ internal static class HostSync
         if (!Sending || (uint)slot > 3) return;
         var offset = Offset();
         Out.Ray(new HostRay(slot, hit, offset));
-        _sentRecords++;
         if (Out.Full) Flush();
     }
 
@@ -115,7 +107,6 @@ internal static class HostSync
     private static void Send(byte[] packet)
     {
         _records.Broadcast(packet);
-        _sentPackets++; _sentBytes += packet.Length;
     }
 
     private static void Flush()
@@ -162,16 +153,6 @@ internal static class HostSync
     internal static void RecordingStarted()
     {
         Out.Reset(); _resnap = true; _snapshotMs = 0; _linked = false;
-        _packets = _snapshots = _rejected = _unknownEnemy = _sentPackets = _sentBytes = _sentRecords = 0;
-    }
-
-    private static void Report()
-    {
-        if (_net == null) return;
-        if (_net.IsHost) { if (_sentPackets > 0) Plugin.Diagnostic.LogInfo($"[sync] host: {_sentRecords} records in {_sentPackets} packets, {_sentBytes} bytes, for each client that runs the same Forge Replay"); }
-        else if (_packets > 0 || _net.State(ForgeCore.Session.HostLookup) == PeerState.Compatible)
-            Plugin.Diagnostic.LogInfo($"[sync] client: {_packets} packets ({_snapshots} snapshots), {_rejected} rejected, {_unknownEnemy} records of enemies not in this recording, host records {(_linked ? "in force" : "not in force: statistics are estimated")}");
-        _packets = _snapshots = _rejected = _unknownEnemy = _sentPackets = _sentBytes = _sentRecords = 0;
     }
 
     // ---- Client: receive ------------------------------------------------------------------------------------------------------------
@@ -182,11 +163,7 @@ internal static class HostSync
         if (net == null || !net.FromHost(sender) || !Rec.On) return;
         try
         {
-            var sink = Sink;
-            sink.Snapshots = 0;
-            if (!HostLink.Read(data, sink)) { _rejected++; Net.Drop("replay-sync-malformed"); Plugin.Logger.ErrorOnce("A malformed host record packet was dropped."); return; }
-            _packets++; _snapshots += sink.Snapshots;
-            if (_packets == 1) Plugin.Diagnostic.LogInfo("[sync] client: first host packet received");
+            if (!HostLink.Read(data, Sink)) { Net.Drop("replay-sync-malformed"); Plugin.Logger.ErrorOnce("A malformed host record packet was dropped."); return; }
         }
         catch (Exception e) { Rec.Fail("host-sync", e); }
     }
@@ -195,12 +172,10 @@ internal static class HostSync
 
     private sealed class Receiver : HostLink.IRecords
     {
-        internal int Snapshots;
-
         public void OnHit(in HostHit hit)
         {
             var entity = EnemyRecorder.EntityOfGlobal(hit.Key);
-            if (entity < 0) { _unknownEnemy++; return; }
+            if (entity < 0) return;
             HostLink.WriteHit(Rec.Begin(), entity, hit);
             Rec.Emit(EventKind.HostHit);
         }
@@ -208,15 +183,14 @@ internal static class HostSync
         public void OnWake(in HostWake wake)
         {
             var entity = EnemyRecorder.EntityOfGlobal(wake.Key);
-            if (entity < 0) { _unknownEnemy++; return; }
+            if (entity < 0) return;
             HostLink.WriteWake(Rec.Begin(), entity, wake.HasPropagator ? EnemyRecorder.EntityOfGlobal(wake.PropagatorKey) : -1, wake);
             Rec.Emit(EventKind.HostWake);
         }
 
         public void OnSnapshot(int mask, ReadOnlySpan<HostTotals> totals)
         {
-            Snapshots++;
-            if (!_linked) { _linked = true; Plugin.Diagnostic.LogInfo("[sync] client: host snapshot taken, host records in force"); }
+            _linked = true;
             HostLink.WriteLink(Rec.Begin(), true, mask, totals);
             Rec.Emit(EventKind.HostLink);
         }

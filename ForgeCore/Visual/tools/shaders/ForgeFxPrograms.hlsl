@@ -6,7 +6,7 @@
 //
 // A program is `float4 fx_<name>(FxIn i)` where <name> is its catalogue name; its parameters are i.p0.x .. i.p1.w in catalogue
 // order, its colours i.c0 .. i.c3 (linear, alpha = coverage). It returns colour and coverage. The consumer generates
-// `fx_dispatch(int program, FxIn i)` from the catalogue order (the Unity build: ShaderBuild.cs).
+// `fx_dispatch(int program, FxIn i)` from the catalogue order (the Unity build: ForgeVisualShaderBuild.cs).
 #ifndef FX_HLSL
 #define float2 vec2
 #define float3 vec3

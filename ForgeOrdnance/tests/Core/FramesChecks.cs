@@ -108,8 +108,18 @@ internal static class FramesChecks
         check(ForgeVisual.PoseSolver.ValidateReach(FrameBodyRig.ArmReach, FrameBodyRig.PoseLinks.Length) == null
             && FrameBodyRig.ArmReach.Length == 2 && Array.TrueForAll(FrameBodyRig.ArmReach, r =>
                 FrameBodyRig.PoseLinks[r.Upper].Model.StartsWith("upperarm.") && FrameBodyRig.PoseLinks[r.Lower].Model.StartsWith("forearm.")
-                && FrameBodyRig.PoseLinks[r.End].Model.StartsWith("hand.") && FrameBodyRig.PoseLinks[r.Upper].Model[^1] == FrameBodyRig.PoseLinks[r.End].Model[^1]
-                && FrameBodyRig.PoseLinks[r.Anchor].Model == "chest"), "both arms reach the body's wrists from the chest, each its own side's upper arm, forearm and hand");
+                && FrameBodyRig.PoseLinks[r.End].Model.StartsWith("hand.") && FrameBodyRig.PoseLinks[r.Upper].Model[^1] == FrameBodyRig.PoseLinks[r.End].Model[^1]),
+            "both arms reach, each its own side's upper arm, forearm and hand");
+        // The 30 optional finger links (ForgeVisual pose copy): well formed after any table, and a missing joint takes only the joints after it on its finger.
+        {
+            var body = FrameBodyRig.PoseLinks;
+            var all = body.Concat(ForgeVisual.PoseFingers.Links(body.Length, FrameBodyRig.LeftHandLink, FrameBodyRig.RightHandLink)).ToArray();
+            var absent = new bool[all.Length];
+            absent[body.Length + 4] = true; // left index, middle joint
+            var skip = ForgeVisual.PoseSolver.Skipped(all, absent);
+            check(all.Length == body.Length + 30 && ForgeVisual.PoseSolver.Validate(all) == null && skip.Count(s => s) == 2 && skip[body.Length + 4] && skip[body.Length + 5],
+                "the finger links are well formed and a missing joint skips only its own finger's later joints");
+        }
 
         // ---- host rules ----------------------------------------------------------------------------------------------
 
@@ -246,7 +256,7 @@ internal static class FramesChecks
         check(Marshal.SizeOf<FrameStateMessage>() == 95 && Marshal.OffsetOf<FrameStateMessage>(nameof(FrameStateMessage.Pilot)).ToInt32() == 6
             && Marshal.OffsetOf<FrameStateMessage>(nameof(FrameStateMessage.Ejection)).ToInt32() == 54 && Marshal.OffsetOf<FrameStateMessage>(nameof(FrameStateMessage.Spec)).ToInt32() == 55
             && Marshal.OffsetOf<FrameStateMessage>(nameof(FrameStateMessage.Definition)).ToInt32() == 63
-            && Marshal.SizeOf<FrameRequestMessage>() == 26 && Marshal.SizeOf<FrameFireMessage>() == 37 && Marshal.SizeOf<FrameRocketMessage>() == 30
+            && Marshal.SizeOf<FrameRequestMessage>() == 26 && Marshal.SizeOf<FrameFireMessage>() == 24 && Marshal.SizeOf<FrameRocketMessage>() == 30
             && Marshal.SizeOf<FrameHitMessage>() == 25 && Marshal.OffsetOf<FrameHitMessage>(nameof(FrameHitMessage.Damage)).ToInt32() == 20
             && Marshal.SizeOf<FrameCheckpointEntry>() == 107 && Marshal.OffsetOf<FrameCheckpointEntry>(nameof(FrameCheckpointEntry.State)).ToInt32() == 12, "message and checkpoint entry layouts");
         {

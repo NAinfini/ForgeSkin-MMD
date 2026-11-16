@@ -120,23 +120,50 @@ internal static class Session
 
     /// <summary>The gear of the four weapon and tool slots, as the game's own gear JSON one slot per line (an empty line for an empty slot),
     /// so a replay can rebuild what each player carried; a slot whose backpack entry names no gear yet reads it from the item made from it.
-    /// Also written by the Presence event of a player who joins, and again (Presence) whenever it differs from what the file last said.</summary>
+    /// A fifth line is the outfit (<see cref="Outfit"/>), a sixth the look (<see cref="Look"/>). Also written by the Presence event of a player who
+    /// joins, and again (Presence) whenever it differs from what the file last said.</summary>
     internal static string Loadout(SNet_Player player)
     {
         if (!Player.PlayerBackpackManager.TryGetBackpack(player, out var backpack)) return "";
-        var lines = new string[LoadoutSlots.Length];
-        for (var i = 0; i < lines.Length; i++) lines[i] = GearAt(backpack, LoadoutSlots[i]) is { } gear ? gear.ToJSON().Replace("\n", " ") : "";
+        var lines = new string[LoadoutSlots.Length + 2];
+        for (var i = 0; i < LoadoutSlots.Length; i++) lines[i] = GearAt(backpack, LoadoutSlots[i]) is { } gear ? gear.ToJSON().Replace("\n", " ") : "";
+        lines[LoadoutSlots.Length] = Outfit(backpack);
+        lines[LoadoutSlots.Length + 1] = Look(player);
         return string.Join("\n", lines);
     }
 
-    /// <summary>A number that changes when the gear of any of <see cref="Loadout"/>'s slots does: the game's own checksum of each slot's
-    /// <c>GearIDRange</c> folded together, read without making any JSON. -1 when the player has no backpack. Equal keys mean an equal loadout,
+    /// <summary>What ForgeCore's player look provider (a character-model mod, if one is installed) says the player looks like: its id and the
+    /// description in base64, space separated; "" when the game's own body shows. ForgeReplay knows no provider.</summary>
+    private static string Look(SNet_Player player)
+        => ForgeVisual.PlayerLooks.Describe(player) is { } look ? look.ProviderId + " " + Convert.ToBase64String(look.Data) : "";
+
+    // Bumped whenever the look provider says a player looks different, so the next LoadoutKey moves and the loadout is written again.
+    private static long _looksChanged;
+    private static bool _watchingLooks;
+
+    // The game's clothes slots in the order the outfit line keeps them.
+    private static readonly ClothesType[] OutfitSlots = { ClothesType.Helmet, ClothesType.Torso, ClothesType.Legs, ClothesType.Backpack, ClothesType.Palette };
+
+    /// <summary>The outfit the player wears: the vanity item ID (<c>VanityItemsTemplateDataBlock</c>) of the helmet, torso, legs, backpack and
+    /// palette, space separated, 0 for the character's default. Read from the backpack, which the game keeps synced for every player
+    /// (<c>pInventorySync</c>), so a client records the others' clothes as they are, not its own guess.</summary>
+    private static string Outfit(Player.PlayerBackpack backpack)
+    {
+        var ids = new string[OutfitSlots.Length];
+        for (var i = 0; i < ids.Length; i++) ids[i] = backpack.GetBackpackVanityItem(OutfitSlots[i]).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return string.Join(" ", ids);
+    }
+
+    /// <summary>A number that changes when the gear of any of <see cref="Loadout"/>'s slots or the outfit does: the game's own checksum of each slot's
+    /// <c>GearIDRange</c> and the vanity item IDs folded together, plus a count of the look provider's changes (<c>PlayerLooks.Changed</c>), read without making any JSON. -1 when the player has no backpack. Equal keys mean an equal loadout,
     /// so the recorder builds the JSON only when the key moved.</summary>
     internal static long LoadoutKey(SNet_Player player)
     {
         if (!Player.PlayerBackpackManager.TryGetBackpack(player, out var backpack)) return -1;
-        long key = 17;
+        if (!_watchingLooks) { _watchingLooks = true; ForgeVisual.PlayerLooks.Changed += _ => _looksChanged++; }
+        long key = 17 + _looksChanged;
         foreach (var slot in LoadoutSlots) key = key * 1000003 + (GearAt(backpack, slot) is { } gear ? gear.GetChecksum() + 1L : 0L);
+        foreach (var clothes in OutfitSlots) key = key * 1000003 + backpack.GetBackpackVanityItem(clothes);
         return key & long.MaxValue;
     }
 
@@ -213,10 +240,25 @@ internal static class Session
         _stream?.Dispose();
         // The file is finished and closed: from here it is an ordinary recording the list may star or delete.
         _stream = null; _writer = null; FilePath = null;
-        // Only the newest non-starred recordings stay (PLAN: the list's retention rule).
+        // Only the newest non-starred recordings stay (PLAN: the list's retention rule). The folder and the closed file are read on a worker
+        // thread, not on the frame that cleans the level up; the finished event is raised on the main thread when that is done.
         if (!finished) return;
-        try { ReplayLibrary.Prune(Plugin.ReplayFolder, Math.Max(0, Plugin.DiskLimitMb.Value) * 1048576L); }
-        catch (Exception error) { Plugin.Logger.Error("Removing old recordings failed: " + error.Message); }
-        if (path != null && File.Exists(path)) ReplayEvents.Finished(ReplayEvents.Info(ReplayLibrary.One(path, starred: false)));
+        var folder = Plugin.ReplayFolder;
+        var limit = Math.Max(0, Plugin.DiskLimitMb.Value) * 1048576L;
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            try { ReplayLibrary.Prune(folder, limit); }
+            catch (Exception error) { Plugin.Logger.Error("Removing old recordings failed: " + error.Message); }
+            try { if (path != null && File.Exists(path)) Closed.Enqueue(ReplayLibrary.One(path, starred: false)); }
+            catch (Exception error) { Plugin.Logger.Error("Reading the finished recording failed: " + error.Message); }
+        });
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<ReplayEntry> Closed = new();
+
+    /// <summary>Every frame: raises the finished event for each recording the worker thread has read since.</summary>
+    internal static void RaiseFinished()
+    {
+        while (Closed.TryDequeue(out var entry)) ReplayEvents.Finished(ReplayEvents.Info(entry));
     }
 }

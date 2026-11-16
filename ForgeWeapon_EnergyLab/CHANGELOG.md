@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.2
+
+- Needs ForgeCore 1.0.1.
+- Multiplayer: this version cannot play together with earlier ones. Its messages changed, so the two refuse each other (a chat line and a line in each log) and every player needs the same version.
+- Less network traffic, the same effects: the host no longer sends a player's own shots and charges back to that player, and every gun but the Arc Chain sends its shots in 63 bytes instead of 108.
+- The Blast Gun's explosion ships in this package (`HeavyBlast/`) instead of with ForgeCore.
+- Model bundles are format 5: textures several guns share are in one shared bundle that each gun's bundle depends on. Format 4 model bundles are refused with an error naming the bundle; rebuild them as format 5.
+- The effects library is loaded only in a level where a player carries an energy gun.
+
 ## 1.0.1
 
 Changes since the first upload. Version 1.0.1 because it is released early; it needs ForgeCore, ForgeUI, ForgeAudio and ForgeVisual 1.0.0.

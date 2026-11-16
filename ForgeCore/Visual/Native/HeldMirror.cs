@@ -20,7 +20,9 @@ public sealed class HeldMirror
 {
     private const int Keep = 4;
 
-    private readonly PlayerAgent _agent;
+    private readonly PlayerAgent? _agent;
+    // A body with no player behind it (a replay's stand-in): what hangs in its hand socket (PlayerSyncModelData.ItemAlign) is what it holds.
+    private readonly Transform? _socket;
     private readonly bool _local;
     private readonly int _layer;
     private readonly string _label;
@@ -30,10 +32,11 @@ public sealed class HeldMirror
     private bool _shadowOnly;
     private float _scale = 1f;
 
-    internal HeldMirror(PlayerAgent agent, int layer, string label)
+    internal HeldMirror(PlayerAgent? agent, Transform? socket, int layer, string label)
     {
         _agent = agent;
-        _local = BodyConvert.IsLocal(agent);
+        _socket = socket;
+        _local = agent != null && BodyConvert.IsLocal(agent);
         _layer = layer;
         _label = label;
     }
@@ -44,13 +47,21 @@ public sealed class HeldMirror
     /// <summary>Re-reads what the player wields; makes its copy the first time (or, for a gear item still being built, at a later call).</summary>
     public void Refresh()
     {
-        var inventory = _agent != null && !_agent.WasCollected ? _agent.Inventory : null;
+        if (_agent == null)
+        {
+            // The active item hanging in the socket (what the body is shown holding); none while the body holds nothing or is gone.
+            var held = _socket != null && !_socket.WasCollected ? _socket.GetComponentInChildren<ItemEquippable>(false) : null;
+            Select(held);
+            _source = held != null ? held.transform : null;
+            return;
+        }
+        var inventory = !_agent.WasCollected ? _agent.Inventory : null;
         var slot = inventory != null ? inventory.WieldedSlot : InventorySlot.None;
         var item = slot is InventorySlot.None or InventorySlot.InLevelCarry || inventory == null ? null : inventory.WieldedItem;
         if (item != null && item.WasCollected) item = null;
         Select(item);
         if (item == null) { _source = null; return; }
-        var model = _local ? _agent!.PlayerSyncModel : null;
+        var model = _local ? _agent.PlayerSyncModel : null;
         var source = _local ? model != null ? model.ItemAlign : null : item.transform;
         if (source == null) Plugin.Logger.ErrorOnce("visual-held-copy-players-third-person-body", "ForgeVisual held copy " + _label + ": the player's third-person body has no item align; the hand holds nothing.");
         _source = source;
@@ -88,14 +99,16 @@ public sealed class HeldMirror
     }
 
     /// <summary>Shows the current copy where the game holds the item near <paramref name="bodyHand"/>, carried over to
-    /// <paramref name="modelHand"/> by the body-to-model <paramref name="turn"/>, its offset from the hand and its size times
-    /// <paramref name="scale"/> (a <see cref="PoseCopy"/> gives <see cref="PoseCopy.Turn"/> and <see cref="PoseCopy.Scale"/>).</summary>
-    public void Place(Quaternion turn, Transform bodyHand, Transform modelHand, float scale)
+    /// <paramref name="modelHand"/> by <paramref name="copy"/>'s body-to-model turn, its offset from the hand and its size times the
+    /// copy's <see cref="PoseCopy.Scale"/>; when the copy already carried the item to the model's hand (<see cref="PoseCopy.CarriesHeld"/>)
+    /// only its offset from that hand is scaled.</summary>
+    public void Place(PoseCopy copy, Transform bodyHand, Transform modelHand)
     {
         if (_current == null) return;
         if (_source == null || _source.WasCollected) { _current.Show(false); return; }
+        var scale = copy.Scale;
         if (scale != _scale) { _scale = scale; _current.Resize(scale); }
-        _current.Place(turn, _source, bodyHand.position, modelHand.position, scale);
+        _current.Place(copy.CarriesHeld, copy.Turn, _source, bodyHand, modelHand, scale);
         _current.Show(true);
     }
 
@@ -238,11 +251,16 @@ internal sealed class HeldCopy
         if (_root != null && !_root.WasCollected) _root.transform.localScale = Vector3.one * (_itemScale * scale);
     }
 
-    internal void Place(Quaternion turn, Transform source, Vector3 bodyHand, Vector3 modelHand, float scale)
+    /// <summary>Where the game holds the item against <paramref name="bodyHand"/>, carried over to <paramref name="modelHand"/> by
+    /// <paramref name="turn"/>; <paramref name="carried"/>: the item is at the model's hand already, only its offset from it is scaled.</summary>
+    internal void Place(bool carried, Quaternion turn, Transform source, Transform bodyHand, Transform modelHand, float scale)
     {
         if (_root == null || _root.WasCollected) return;
-        var at = HeldPlacement.Position(BodyConvert.N(turn), BodyConvert.N(source.position), BodyConvert.N(bodyHand), BodyConvert.N(modelHand), scale);
-        _root.transform.SetPositionAndRotation(BodyConvert.U(at), turn * source.rotation);
+        var hand = BodyConvert.N(modelHand.position);
+        var at = HeldPlacement.Position(carried ? System.Numerics.Quaternion.Identity : BodyConvert.N(turn), BodyConvert.N(source.position),
+            carried ? hand : BodyConvert.N(bodyHand.position), hand, scale);
+        var rotation = source.rotation;
+        _root.transform.SetPositionAndRotation(BodyConvert.U(at), carried ? rotation : turn * rotation);
     }
 
     internal void Show(bool on)

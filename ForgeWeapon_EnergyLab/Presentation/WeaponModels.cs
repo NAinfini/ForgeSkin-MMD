@@ -260,6 +260,7 @@ internal static class WeaponModels
         if (holder == null || holder.CategoryData == null) return false;
         var gear = EnergyGears.ForCategory(holder.CategoryData.persistentID);
         if (gear == null) return false;
+        EnergyVfx.GunAssembled();
         if (GunMount.Of(holder) is { } mounted)
         {
             mounted.Refresh();

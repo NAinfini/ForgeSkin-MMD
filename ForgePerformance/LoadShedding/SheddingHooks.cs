@@ -61,6 +61,8 @@ internal sealed partial class SheddingHooks : IDisposable
         SheddingHookId.MeleePacket => typeof(MeleePacket),
         SheddingHookId.IrfDraw => typeof(IrfDraw),
         SheddingHookId.IrfLateUpdate => typeof(IrfLateUpdate),
+        SheddingHookId.MagazineDrop => typeof(MagazineDrop),
+        SheddingHookId.RepellerState => typeof(RepellerState),
         _ => throw new ArgumentOutOfRangeException(nameof(id))
     };
     public void Dispose() => _harmony.UnpatchSelf();
@@ -123,10 +125,7 @@ internal sealed partial class SheddingHooks : IDisposable
         [HarmonyPostfix]
         private static void Postfix(ES_Dead __instance)
         {
-            var current = LoadSheddingController.Current;
-            if (current == null) return;
-            current.HideStealthBody(__instance.m_enemyAgent);
-            current.EnemyVisuals(__instance.m_enemyAgent, true);
+            LoadSheddingController.Current?.EnemyDied(__instance.m_enemyAgent);
         }
     }
     [HarmonyPatch(typeof(ES_Dead._DecayDelayed_d__20), nameof(ES_Dead._DecayDelayed_d__20.MoveNext))]

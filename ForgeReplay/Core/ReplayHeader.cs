@@ -12,7 +12,9 @@ internal readonly record struct PluginEntry(string Guid, string Version, string 
 /// <summary>The fingerprint of one installed package's <c>forge</c> folder (ForgeCore <c>InstalledPlugins.ContentPrints</c>).</summary>
 internal readonly record struct ContentEntry(string Package, string Hash);
 
-/// <summary>A player of the level. <paramref name="Loadout"/> is the gear JSON of the standard, special, melee and tool slots, one per line (an empty line for an empty slot).</summary>
+/// <summary>A player of the level. <paramref name="Loadout"/> is the gear JSON of the standard, special, melee and tool slots, one per line (an empty line for an empty slot),
+/// then the outfit line (vanity item IDs of the helmet, torso, legs, backpack and palette, 0 for the character's default; without it the default outfit),
+/// then the look line (the ForgeCore player look provider's id and its description in base64, space separated; empty or missing: the game's own body).</summary>
 internal readonly record struct PlayerEntry(int Slot, string Name, string Loadout = "");
 
 internal readonly record struct NamedHash(string Name, string Hash);
@@ -23,7 +25,7 @@ internal sealed class ReplayHeader
 {
     /// <summary>The recording format version: bumped when the layout of the header or of any chunk changes, or what a recorded hash is taken over.
     /// A file that does not read in this layout is refused (it shows among the unreadable files); nothing reads an older shape.</summary>
-    internal const uint FormatVersion = 9;
+    internal const uint FormatVersion = 12;
 
     internal string ReplayVersion { get; set; } = "";
     internal int GameRevision { get; set; }
@@ -97,9 +99,9 @@ internal sealed class ReplayHeader
         internal void Var(ulong v) { Room(Compact.MaxVarBytes); Compact.WriteVar(_buffer, ref _position, v); }
         internal void Int(int v) { Room(Compact.MaxVarBytes); Compact.WriteVarSigned(_buffer, ref _position, v); }
         internal void Count(int v) => Var((ulong)v);
-        internal void Text(string s)
+        internal void Text(string s) => Bytes(Encoding.UTF8.GetBytes(s));
+        internal void Bytes(byte[] bytes)
         {
-            var bytes = Encoding.UTF8.GetBytes(s);
             Count(bytes.Length);
             Room(bytes.Length);
             Array.Copy(bytes, 0, _buffer, _position, bytes.Length);
@@ -121,13 +123,15 @@ internal sealed class ReplayHeader
             var v = Var();
             return v <= MaxItems ? (int)v : throw new FormatException("A header list claims " + v + " items.");
         }
-        internal string Text()
+        internal string Text() => Encoding.UTF8.GetString(Bytes());
+        internal byte[] Bytes()
         {
             var length = Count();
-            if (_position + length > _data.Length) throw new FormatException("A header text runs past the end.");
-            var s = Encoding.UTF8.GetString(_data, _position, length);
+            if (_position + length > _data.Length) throw new FormatException("A header field runs past the end.");
+            var bytes = new byte[length];
+            Array.Copy(_data, _position, bytes, 0, length);
             _position += length;
-            return s;
+            return bytes;
         }
         internal void End() { if (_position != _data.Length) throw new FormatException("The header has " + (_data.Length - _position) + " unread bytes."); }
     }

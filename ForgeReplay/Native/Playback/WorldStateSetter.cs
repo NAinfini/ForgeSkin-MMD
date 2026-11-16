@@ -92,7 +92,7 @@ internal sealed class WorldStateSetter
         _asleep.Clear();
         ForgetLists(); _stationStatus.Clear(); _requeryAt = 0f;
         _itemByKey.Clear(); _home.Clear(); _kept.Clear(); _matched.Clear(); _spawned.Clear(); _tried.Clear(); _visible.Clear();
-        Done = Refused = 0;
+        Done = Refused = 0; _censusReread = false;
         if (_musicHeld && DramaManager.Current != null) DramaManager.Current.enabled = true;
         if (_musicHeld && MusicManager.Current != null) MusicManager.Current.enabled = true;
         _musicHeld = false;
@@ -174,7 +174,7 @@ internal sealed class WorldStateSetter
                     for (var slot = 0; slot < 4; slot++)
                     {
                         if ((extra >> (8 + slot) & 1) == 0) continue;
-                        var agent = Puppeteer.PlayerOf(slot)?.Agent ?? Players.Local;
+                        var agent = Players.Local;
                         if (agent != null) inside.Add(agent);
                     }
                     WorldStates.Scan(scan, (eBioscanStatus)state, (extra & 0xFF) / 100f, inside, (int)(extra >> 12 & 0xF), instant);
@@ -419,6 +419,14 @@ internal sealed class WorldStateSetter
         return text.ToString();
     }
 
+    /// <summary>How many recorded pickup keys have a replay pickup, how many items were spawned for the recording, how many pickups the level list holds.</summary>
+    internal string InspectPickups()
+    {
+        var spawned = 0;
+        foreach (var made in _spawned) if (made != null && !made.WasCollected) spawned++;
+        return "keyed " + _itemByKey.Count + ", spawned " + spawned + ", listed " + (_items?.Count ?? 0);
+    }
+
     /// <summary>A pickup that is no recorded item (a copy shown in a player's hands): no key is matched to it.</summary>
     internal void NotRecorded(LG_PickupItem_Sync pickup) => _matched.Add(pickup.Pointer);
 
@@ -472,6 +480,8 @@ internal sealed class WorldStateSetter
             if (i >= _spawned.Count) { _spawned.Add(null); _tried.Add(false); _visible.Add(true); }
             if (i < count && !_tried[i])
             {
+                // An item the level held at the opening is the replay level's own when that level has the same one there.
+                if (spawns[i].AtOpen && Bind(spawns[i])) { _tried[i] = true; continue; }
                 var outcome = Spawn(spawns[i], out var made);
                 _tried[i] = outcome != SpawnOutcome.Retry;
                 _spawned[i] = made;
@@ -519,9 +529,42 @@ internal sealed class WorldStateSetter
         }
         made = item.gameObject;
         var pickup = item.GetComponentInChildren<LG_PickupItem_Sync>();
-        if (pickup != null) Pickups().Add(pickup);
+        if (pickup != null)
+        {
+            Pickups().Add(pickup);
+            if (spawn.Key != 0) Keep(spawn.Key, pickup);
+        }
         return SpawnOutcome.Done;
     }
+
+    private void Keep(ulong key, LG_PickupItem_Sync pickup) { _itemByKey[key] = pickup; _matched.Add(pickup.Pointer); }
+
+    // The replay level's nearest pickup of the same item around where the census saw it, not yet any key's: kept for the census key. The list read
+    // before the level finished placing its items is read again once before an item is spawned in its place.
+    private bool Bind(ItemSpawned spawn)
+    {
+        if (spawn.Key == 0 || Known(spawn.Key) != null) return spawn.Key != 0;
+        var at = new Vector3(spawn.X, spawn.Y, spawn.Z);
+        for (var pass = 0; pass < 2; pass++)
+        {
+            LG_PickupItem_Sync? best = null; var distance = Reach;
+            foreach (var candidate in Pickups())
+            {
+                if (candidate == null || candidate.WasCollected || _matched.Contains(candidate.Pointer)) continue;
+                var d = Vector3.Distance(candidate.transform.position, at);
+                if (d > distance) continue;
+                var item = candidate.item;
+                if (item == null || item.WasCollected || item.pItemData.itemID_gearCRC != spawn.ItemId) continue;
+                best = candidate; distance = d;
+            }
+            if (best != null) { Keep(spawn.Key, best); return true; }
+            if (_censusReread) return false;
+            _censusReread = true; _items = null;
+        }
+        return false;
+    }
+
+    private bool _censusReread;
 
     // Recorded (kind, key) -> the object of the replay level it was matched to, for every kind found by place: the search runs once for a key and
     // a later event of it goes straight to the object (the place search reads the transform of every candidate, once per event).

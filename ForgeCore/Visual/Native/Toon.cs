@@ -49,7 +49,7 @@ public static class Toon
         var normal = lit.HasProperty(BumpMap) ? lit.GetTexture(BumpMap) : null;
         if (normal != null) { toon.SetTexture(BumpMap, normal); toon.SetFloat(UseNormalMap, 1f); }
         Glow.Preserve(lit, toon);
-        if (lit.IsKeywordEnabled(Player.PlayerBackpackManager.ENABLE_FPS_RENDERING)) toon.EnableKeyword(Player.PlayerBackpackManager.ENABLE_FPS_RENDERING);
+        if (LitMaterial.IsFirstPerson(lit)) LitMaterial.SetFirstPerson(toon, true);
         // A cut-out (LitMaterial's cut-out shader) stays cut out at the same threshold.
         if (lit.HasProperty(Cutoff))
         {

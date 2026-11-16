@@ -3,6 +3,9 @@ using ForgeCore;
 
 namespace ForgeReplay;
 
+// AgeMs in the records below means two things by side: a record the host builds to send carries its offset from the packet's start (HostSync.Offset), and
+// HostLink.Read hands the receiver the age, how long before the packet's last record it happened (the largest offset minus its own).
+
 /// <summary>What a hit the host settled looks like on the wire and in a client's recording (PLAN 5.7 host records). <see cref="Key"/> is the enemy's
 /// replicated id (<c>EnemyAgent.GlobalID</c>, the same number on every machine), not a recording entity number: the receiver puts it to its own entity.</summary>
 internal readonly record struct HostHit(ushort Key, int Kind, int Slot, int Limb, bool Lethal, bool Behind, uint TakenTenths, uint Gear, uint DistanceCm, uint AgeMs);

@@ -12,7 +12,7 @@ internal sealed partial class DecorationShedding
     internal void BeginLevel()
     {
         Array.Clear(_classes, 0, _classes.Length); _classified.Clear(); _decalRisks.Clear();
-        _shadowSeen = _shadowChanged = _shadowRestored = _shadowCalls = 0;
+        _shadowSeen = _shadowChanged = _shadowRestored = _shadowCalls = _shadowPlanHits = _shadowPlanMisses = 0;
         _cullSeen = _cullChanged = _cullRestored = _cullCalls = 0;
         _cullReleased = 0;
         _nativeShown = null;

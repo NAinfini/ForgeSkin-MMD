@@ -106,6 +106,8 @@ internal static class Scene
         Now = ForgeCore.Frame.GameTime;
         Delta = Time.deltaTime;
         ReadEye();
+        // Held items a pose copy carried to a model's hand go back where the game keeps them before its animation and IK run.
+        try { PoseCopy.RestoreHeld(); } catch (Exception error) { StepFailed("held items", error); }
         // One step failing must not stop the ones after it every frame: each runs alone and a failure is logged once per step. Direct calls, not
         // delegates, so the hot-path getter walk sees into them.
         try { Ambient.Tick(Delta); } catch (Exception error) { StepFailed("ambient", error); }

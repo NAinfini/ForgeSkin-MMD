@@ -22,6 +22,8 @@ internal sealed class RemoteWeapon : IDisposable
     private SpecialWeapons? _special;
     private int _preparedModes;
     private PlayerAgent? _chargeOwner;
+    // The gun in the charging shooter's hands, read at each charge packet: reading it every frame makes new interop wrappers each time.
+    private BulletWeapon? _chargeWeapon;
     private EnergyGear? _chargeGear;
     /// <summary>The charge point as the shooter reported it, in the shooter's yaw frame, so it turns with the shooter.</summary>
     private Vector3 _chargeLocal;
@@ -134,6 +136,7 @@ internal sealed class RemoteWeapon : IDisposable
             (_authoritative && (packet.Position - owner.Position).sqrMagnitude > EnergyProtocol.MaximumMuzzleDistance * EnergyProtocol.MaximumMuzzleDistance)) return false;
         _chargeLocal = GunPose.ToYawFrame(packet.Position - owner.Position, owner.TargetLookDir);
         _chargeUntil = now + EnergyProtocol.ChargeExpirySeconds;
+        _chargeWeapon = owner.Inventory?.WieldedItem?.TryCast<BulletWeapon>();
         // The shooter repeating a charge this machine is drawing only keeps it alive.
         if (_charging && _chargeGear == gear && _chargeOwner == owner) return true;
         _effects?.StopCharge();
@@ -142,7 +145,7 @@ internal sealed class RemoteWeapon : IDisposable
         _chargeGear = gear;
         PreparePresentation(gear);
         UseLook(gear);
-        SetModel(owner, owner.Inventory?.WieldedItem?.TryCast<BulletWeapon>(), gear);
+        SetModel(owner, _chargeWeapon, gear);
         _chargeStartedAt = now - packet.Held;
         _charging = true; _chargedFull = false;
         return true;
@@ -282,9 +285,8 @@ internal sealed class RemoteWeapon : IDisposable
             Special().Visuals.Flame(ShownPoint(_streamOwner, _streamWeapon, _streamGear!, _streamLocal), _streamDirection, _streamReach);
         if (_charging && _chargeOwner != null)
         {
-            var position = ShownPoint(_chargeOwner, _chargeOwner.Inventory?.WieldedItem?.TryCast<BulletWeapon>(), _chargeGear!, _chargeLocal);
-            var power = (float)Math.Clamp((now - _chargeStartedAt - _chargeGear!.Numbers.MinimumCharge) /
-                (_chargeGear!.Numbers.FullCharge - _chargeGear!.Numbers.MinimumCharge), 0d, 1d);
+            var position = ShownPoint(_chargeOwner, _chargeWeapon, _chargeGear!, _chargeLocal);
+            var power = _chargeGear!.Numbers.ChargePower(now - _chargeStartedAt);
             Effects().Charge(power, position);
             var orbs = Plasma().Visuals;
             orbs.ChargingOrb(EnergyProjectiles.Capacity, position,

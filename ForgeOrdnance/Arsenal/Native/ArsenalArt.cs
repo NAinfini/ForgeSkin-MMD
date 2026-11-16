@@ -8,8 +8,9 @@ namespace ForgeOrdnance.Arsenal;
 
 /// <summary>Arsenal/forge-ordnance-arsenal.bundle next to the plugin (built by tools/Arsenal/build_assets.ps1), registered with
 /// ForgeVisual as the pack <c>Arsenal</c>: the strike, heavy weapon and turret models (every one is <c>Arsenal:name</c> to any mod) and the
-/// strike effect textures, registered as ForgeVisual sprite sheets (<see cref="ArsenalSheets"/>). The pack is registered when the plugin loads (the models' handles
-/// and the turret looks need it then); the effect textures are taken after the first level is built, when the game's gear shader exists.
+/// strike effect textures, registered as ForgeVisual sprite sheets (<see cref="ArsenalSheets"/>). The pack is registered when the plugin loads, reading only its
+/// names (the models' handles and the turret looks need them then); the models, the effect textures and the sheets are loaded while a level
+/// that can call one of Arsenal's call-ins in is built (<see cref="Load"/>), or at their first use.
 /// Sounds are separate loose Ogg files, the part's sound set (<see cref="PartSounds.Arsenal"/>). Without this bundle every strike and
 /// weapon still works; the models and effect looks are missing and the log says why once.</summary>
 internal static class ArsenalArt
@@ -27,14 +28,26 @@ internal static class ArsenalArt
 
     private static bool _tried;
     private static BundleHandle? _pack;
+    private static ArsenalSheets? _sheets;
 
     /// <summary>Set once <see cref="Load"/> has taken the effect textures; null before, and when the bundle is unusable.</summary>
     internal static BundleHandle? Bundle { get; private set; }
     internal static ModelHandle? Shell, ShellPrecision, ShellHunter, ShellIncendiary, Bomblet, Canister, Emitter, Rocket, Grenade;
     /// <summary>The heavy weapon models the accepted payloads name (<see cref="CheckWeaponModel"/>), by model id.</summary>
     private static readonly Dictionary<string, ModelHandle> Weapons = new(StringComparer.Ordinal);
-    /// <summary>The sprite sheets of the blast, trail, burn and cloud effects; null before <see cref="Load"/>, and when the bundle is unusable.</summary>
-    internal static ArsenalSheets? Sheets { get; private set; }
+    /// <summary>The sprite sheets of the blast, trail, burn and cloud effects, taken from the bundle the first time they are asked for (in a
+    /// level: the sheets need the game's shader); null when the bundle is unusable.</summary>
+    internal static ArsenalSheets? Sheets
+    {
+        get
+        {
+            if (!_tried) { _tried = true; TakeSheets(); }
+            return _sheets;
+        }
+    }
+
+    /// <summary>The shell looks a strike draws (<see cref="Look"/>).</summary>
+    internal static ModelHandle?[] ShellLooks => new[] { Shell, ShellPrecision, ShellHunter, ShellIncendiary, Bomblet, Canister, Emitter };
     internal static string Failure { get; private set; } = "the level has not been built yet";
 
     /// <summary>Plugin load: registers the pack with ForgeVisual, takes the model handles and registers the turret looks (definition files
@@ -64,12 +77,13 @@ internal static class ArsenalArt
         }
     }
 
-    /// <summary>After every level build: the first time takes the effect textures (they need the game's shader); every level then builds
-    /// the strike effects ahead of the first strike.</summary>
-    internal static void Load()
+    /// <summary>While a level that can call one of Arsenal's call-ins in is built: makes <paramref name="models"/> ready to spawn (the models
+    /// its call-ins draw), takes the effect textures the first time and, once per level (<paramref name="firstThisLevel"/>), builds the strike
+    /// effects ahead of the first strike.</summary>
+    internal static void Load(IEnumerable<ModelHandle?> models, bool firstThisLevel)
     {
-        if (!_tried) { _tried = true; TakeSheets(); }
-        if (Sheets == null) return;
+        foreach (var model in models) _ = model?.Ready;
+        if (Sheets == null || !firstThisLevel) return;
         try { StrikeBursts.Prepare(); }
         catch (Exception error) { Plugin.Logger.ErrorOnce("Building the strike effects at level load failed; they are built at the first strike instead: " + error); }
     }
@@ -87,7 +101,7 @@ internal static class ArsenalArt
                     ?? throw new InvalidDataException("ForgeVisual refused the sprite sheet " + Pack + ":" + item + " (see its error above).");
             }
             // Smoke and explosions blend by alpha; fire, flashes, glows, sparks and shockwaves add light.
-            Sheets = new ArsenalSheets
+            _sheets = new ArsenalSheets
             {
                 Smoke = Sheet("smoke", "vfx-smoke", 5, 3, FxBlend.Alpha, sheddable: true),
                 Fireball = Sheet("fireball", "vfx-fireball", 8, 8, FxBlend.Additive),
@@ -103,7 +117,7 @@ internal static class ArsenalArt
         }
         catch (Exception error)
         {
-            Sheets = null;
+            _sheets = null;
             Failure = error.ToString();
             Plugin.Logger.ErrorOnce("Arsenal art could not be loaded; strikes and heavy weapons work without their models and effect looks: " + error);
         }

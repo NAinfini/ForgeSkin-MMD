@@ -5,9 +5,9 @@ Run from the repository root after the Release build (the build copies the model
     python Mods/ForgeWeapon_EnergyLab/tools/package_release.py
 
 The zip holds the plugin DLL, the ForgeEnergyLab folder (energylab.forge, its lang files, the eight model bundles it names, the shared
-bundle they depend on and Unity's manifest ForgeEnergyLab/ForgeEnergyLab)
-and the audio folder (cues.forge and the Ogg files it names) at its root beside manifest.json, icon.png, README.md, CHANGELOG.md and LICENSE (r2modman installs them into
-BepInEx/plugins/<package>/). The effect bundles are embedded in the DLL. Fixed timestamps: the same inputs give the same bytes.
+bundle they depend on and Unity's text manifest ForgeEnergyLab/ForgeEnergyLab.manifest),
+the audio folder (cues.forge and the Ogg files it names), the effect library and the blast gun's own copy of the heavy blast (HeavyBlast/) at its root beside manifest.json, icon.png, README.md, CHANGELOG.md and LICENSE (r2modman installs them into
+BepInEx/plugins/<package>/). The disc's bundle is embedded in the DLL. Fixed timestamps: the same inputs give the same bytes.
 """
 import argparse
 from pathlib import Path
@@ -61,13 +61,14 @@ def main():
     files = {name: os.path.join(PACKAGE, name) for name in METADATA}
     files["ForgeWeaponEnergyLab.dll"] = os.path.join(BUILD, "ForgeWeaponEnergyLab.dll")
     # The gun bundles, the shared bundle they depend on and Unity's manifest of the set (named after the folder, where ForgeCore reads it).
-    for name in ["forge-energy-model-" + model + ".bundle" for model in MODEL_BUNDLES] + ["forge-energy-model-shared.bundle", CONTENT]:
+    for name in ["forge-energy-model-" + model + ".bundle" for model in MODEL_BUNDLES] + ["forge-energy-model-shared.bundle", CONTENT + ".manifest"]:
         files[CONTENT + "/" + name] = os.path.join(BUILD, CONTENT, name)
     content = os.path.join(PACKAGE, CONTENT)
     files[CONTENT + "/energylab.forge"] = os.path.join(content, "energylab.forge")
     files.update(audio_files())
     files.update(vfx_files("ForgeWeapon_EnergyLab", "energylab", REPO))
     try:
+        files.update({entry: str(path) for entry, path in package_common.heavy_blast_files("ForgeWeapon_EnergyLab", "Assets/Vfx/HeavyBlast", Path(REPO)).items()})
         files.update({entry: str(path) for entry, path in package_common.lang_files(Path(content), CONTENT + "/lang").items()})
         files.update({entry: str(path) for entry, path in package_common.lang_files(Path(PACKAGE)).items()})
         package_common.package_files(Path(PACKAGE), "ForgeWeapon_EnergyLab", files, Path(OUT))

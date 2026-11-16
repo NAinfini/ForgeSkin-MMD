@@ -4,8 +4,8 @@
     "bundles": [
         {
             "bundle": "forge-energy-model-beam.bundle",
-            "sha256": "7ba25f486bea94de86a7c87c2ab17b34de8aa37ccf26f4725fe6747cabd658f9",
-            "bytes": 8728707,
+            "sha256": "1ee5ccb7f4a4905a974c404c19a58207b21a01beb438dff8c9e02e18078958c4",
+            "bytes": 8731092,
             "dependencies": [],
             "weapon": {
                 "mode": "beam",
@@ -225,8 +225,8 @@
         },
         {
             "bundle": "forge-energy-model-arc.bundle",
-            "sha256": "eed2d38e770b8b00ae6e07bc96f0c8dc1412b27dbc62dcee023fa92ce1ec40e1",
-            "bytes": 10404417,
+            "sha256": "5d31d6e9db54e97ba68ac14e18819cd8280b1ff8411b36cdcb2ecd3832df5c27",
+            "bytes": 10408992,
             "dependencies": [
                 "forge-energy-model-shared.bundle"
             ],
@@ -434,8 +434,8 @@
         },
         {
             "bundle": "forge-energy-model-plasma-blast.bundle",
-            "sha256": "596d16f9251491eef5d51c1c31b7b24a6c0102afdfd3561d8774cda17d9f6c22",
-            "bytes": 8545506,
+            "sha256": "0c480b029d348cd0210715eab62f08119bea54664b1616a22286829a2cd0e918",
+            "bytes": 8546206,
             "dependencies": [
                 "forge-energy-model-shared.bundle"
             ],
@@ -643,8 +643,8 @@
         },
         {
             "bundle": "forge-energy-model-plasma-arc.bundle",
-            "sha256": "6be4ef14bc06204ea30476c036e9601d2015bf1e3f6302c1595b1de7c9a36f08",
-            "bytes": 8687052,
+            "sha256": "76151af60844d5be0658760ddf30157b738c2d4ba7d4ec74b859c08a456667ac",
+            "bytes": 8699997,
             "dependencies": [],
             "weapon": {
                 "mode": "plasma-arc",
@@ -857,8 +857,8 @@
         },
         {
             "bundle": "forge-energy-model-blast.bundle",
-            "sha256": "bfc352f61507171f839797999e19ebe825cf3d2d0f7263ae31fde2800ad821e9",
-            "bytes": 7721292,
+            "sha256": "198f3d98c394734017b3002eb223fbfbd745d810d8fa166ac04d78cfbfad1bd6",
+            "bytes": 7700114,
             "dependencies": [
                 "forge-energy-model-shared.bundle"
             ],
@@ -1059,8 +1059,8 @@
         },
         {
             "bundle": "forge-energy-model-disc.bundle",
-            "sha256": "cb9cf74818c68a6bdf17bc9d20f3c353d9451c2e784d569f7222140ee90365c6",
-            "bytes": 7830500,
+            "sha256": "c32ea2def2bfd337ef78a34aa1915ee1bfd02e894cfa66a96b8b82f87778535f",
+            "bytes": 7834211,
             "dependencies": [
                 "forge-energy-model-shared.bundle"
             ],
@@ -1268,8 +1268,8 @@
         },
         {
             "bundle": "forge-energy-model-flame.bundle",
-            "sha256": "bf00d607bbf8df4700591937ddde724c2dddf8430d0545d639f68ea43ec9f8b6",
-            "bytes": 7841808,
+            "sha256": "8dfdd99f30b89c0501c9e0eb20f553346f1219e39c7cf0d442e7c5dc0a6f8afe",
+            "bytes": 7843009,
             "dependencies": [],
             "weapon": {
                 "mode": "flame",
@@ -1482,8 +1482,8 @@
         },
         {
             "bundle": "forge-energy-model-hole.bundle",
-            "sha256": "aa325b569f48411e71d0b9ce74d53cb8df58535a6e8abc8ba4d708d2a23792ef",
-            "bytes": 7794630,
+            "sha256": "e214b8b6d93d7901e401ed02163afcea2d493a686b9a655eb6edc9d95f9afef1",
+            "bytes": 7788311,
             "dependencies": [
                 "forge-energy-model-shared.bundle"
             ],
@@ -1692,8 +1692,8 @@
     ],
     "shared": {
         "bundle": "forge-energy-model-shared.bundle",
-        "sha256": "f7ae503d61575610eba73829489b029a33b2f8d977e51fe607dc8fb86dbb48e8",
-        "bytes": 200263,
+        "sha256": "b6601d6833366a9ca9ab68d9b25a6322cf29ae6c4c785c0f8ee124e218735b5a",
+        "bytes": 200674,
         "textures": [
             {
                 "asset": "rail-picatinny-17-albedo",
@@ -1712,8 +1712,8 @@
         ]
     },
     "unityManifest": {
-        "file": "forge-energy-unity-manifest.bundle",
-        "sha256": "81a8a7a457505bee5458e5a4419555e596586220ad298d366d7e4de5f132a93b",
-        "bytes": 1870
+        "file": "forge-energy-unity.manifest",
+        "sha256": "cbdad1b365dca02115eece6e4262a0167c747acbefe9e1b75084a96fc1fb11cd",
+        "bytes": 1058
     }
 }

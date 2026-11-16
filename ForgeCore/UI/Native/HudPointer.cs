@@ -102,9 +102,45 @@ public static class HudPointer
         return HudScreen.FromViewport(0f, 0f, out left, out bottom) && HudScreen.FromViewport(1f, 1f, out right, out top) && right > left && top > bottom;
     }
 
-    /// <summary>The pointer is inside the box centred on (<paramref name="x"/>, <paramref name="y"/>).</summary>
+    /// <summary>The pointer is inside the box centred on (<paramref name="x"/>, <paramref name="y"/>), and no open popup
+    /// (<see cref="Popup"/>) that is not this test's own lies over it.</summary>
     public static bool Over(HudElement hud, float x, float y, float width, float height)
-        => Position(hud, out var px, out var py) && Math.Abs(px - x) <= width / 2f && Math.Abs(py - y) <= height / 2f;
+        => Position(hud, out var px, out var py) && Math.Abs(px - x) <= width / 2f && Math.Abs(py - y) <= height / 2f && !Covered();
+
+    // The boxes popups claimed this frame and the one before, in the pointer's space. A HUD draws and tests in one pass, so what lies
+    // under a popup is often tested before the popup is drawn: last frame's claim covers it then.
+    private static readonly List<(float Left, float Bottom, float Right, float Top)> CoversNow = new(), CoversBefore = new();
+    private static int _inPopup;
+
+    /// <summary>Opens a popup (a menu, a dropdown, a dialog) over the box centred on (<paramref name="x"/>, <paramref name="y"/>) in
+    /// <paramref name="hud"/>'s units, until the scope is disposed: the pointer on it belongs to the popup alone. Every hover, press
+    /// and click test outside the scope, of any element, is false while the pointer is on the box, so what lies under a popup is
+    /// neither lit nor clicked through it; the tests inside the scope (the popup's own lines) see the pointer as usual.</summary>
+    public static PopupScope Popup(HudElement hud, float x, float y, float width, float height)
+    {
+        if (hud != null)
+        {
+            float cx = x + hud.Entry.RootX, cy = y + hud.Entry.RootY;
+            CoversNow.Add((cx - width / 2f, cy - height / 2f, cx + width / 2f, cy + height / 2f));
+        }
+        _inPopup++;
+        return new PopupScope(true);
+    }
+
+    internal static void LeavePopup() { if (_inPopup > 0) _inPopup--; }
+
+    // The pointer is on a popup's box and the test is not that popup's own.
+    private static bool Covered()
+    {
+        if (_inPopup > 0) return false;
+        return On(CoversNow) || On(CoversBefore);
+        static bool On(List<(float Left, float Bottom, float Right, float Top)> covers)
+        {
+            foreach (var box in covers)
+                if (_x >= box.Left && _x <= box.Right && _y >= box.Bottom && _y <= box.Top) return true;
+            return false;
+        }
+    }
 
     // Where the pointer was when the press that is going on began (a click is a press and a release on the same box).
     private static float _downX, _downY;
@@ -120,7 +156,7 @@ public static class HudPointer
 
     /// <summary>The left button is down and went down over the box (the pressed look of a button; it stays pressed while the pointer is off it, and does not click there).</summary>
     public static bool PressedOn(HudElement hud, float x, float y, float width, float height)
-        => Held && _pressing && hud != null && Within(_downX, _downY, hud, x, y, width, height);
+        => Held && _pressing && hud != null && Within(_downX, _downY, hud, x, y, width, height) && !Covered();
 
     /// <summary>What a button makes known with a sound: the pointer coming onto it, a click on it, a click on one that is not available.</summary>
     public enum ButtonSoundKind { Hover, Click, Denied }
@@ -161,6 +197,9 @@ public static class HudPointer
 
     internal static void Update()
     {
+        // The popups of the frame that ended cover the next one until they are drawn again (or not, once closed).
+        CoversBefore.Clear(); CoversBefore.AddRange(CoversNow); CoversNow.Clear();
+        _inPopup = 0;
         if (Toggles.Count == 0 && Holds.Count == 0 && !_shown) return;
         if (Toggles.Count > 0)
         {
@@ -258,6 +297,14 @@ public static class HudPointer
             _canvas.End();
         }
     }
+}
+
+/// <summary>An open popup's scope (<see cref="HudPointer.Popup"/>); dispose it once the popup's own lines are drawn and tested.</summary>
+public readonly struct PopupScope : IDisposable
+{
+    private readonly bool _open;
+    internal PopupScope(bool open) => _open = open;
+    public void Dispose() { if (_open) HudPointer.LeavePopup(); }
 }
 
 /// <summary>One mod's hold on the HUD pointer (<see cref="HudPointer.Hold"/>).</summary>

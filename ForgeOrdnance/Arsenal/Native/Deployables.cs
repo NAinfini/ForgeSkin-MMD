@@ -22,7 +22,7 @@ internal sealed class DeployablePayload : IOrdnancePayload
         var spec = DeployableSpec.Parse(payload);
         if (Models.Get(spec.Head) is not { } head)
             throw new PayloadParameterException("Head", "no ForgeVisual model " + spec.Head + " is registered (its pack must be registered in its plugin's Load).");
-        if (spec.Kind == DeployableKind.Dispenser && Dispenser.MissingPart(head.Prefab) is { } part)
+        if (spec.Kind == DeployableKind.Dispenser && Dispenser.MissingPart(head) is { } part)
             throw new PayloadParameterException("Head", "the model " + spec.Head + " has no part named " + part + " (a dispenser needs column, plate1..., mount1...).");
         if (spec.Munition.Length > 0 && Models.Get(spec.Munition) == null)
             throw new PayloadParameterException("Munition", "no ForgeVisual model " + spec.Munition + " is registered (its pack must be registered in its plugin's Load).");

@@ -39,7 +39,8 @@ Check(back.Content.Count == 2 && back.Content[1] == new ContentEntry("Team-Skins
     "header: content fingerprints survive, an empty list stays empty, and a missing or changed package is named");
 // byte lock: a minimal header
 var minimal = new ReplayHeader { ReplayVersion = "1", GameRevision = 1, RundownId = 1, Tier = 1, Index = 0, GenerationHash = "g", RecorderName = "n" };
-Check(Convert.ToHexString(minimal.Encode()) == "0131" + "02" + "00" + "01" + "02" + "00" + "00" + "00" + "00" + "0167" + "00" + "016E" + "01" + "00" + "00" + "00" + "00" + "00",
+const string minimalBytes = "0131" + "02" + "00" + "01" + "02" + "00" + "00" + "00" + "00" + "0167" + "00" + "016E" + "01" + "00" + "00" + "00" + "00" + "00";
+Check(Convert.ToHexString(minimal.Encode()) == minimalBytes,
     "header: byte lock of a minimal header (got " + Convert.ToHexString(minimal.Encode()) + ")");
 var threw = 0;
 for (var cut = 0; cut < bytes.Length; cut += Math.Max(1, bytes.Length / 40))

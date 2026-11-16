@@ -77,8 +77,8 @@ internal static class BodyConvert
 /// (holding, aiming, swinging, reloading, throwing, walking). Nothing animates or offsets anything frame by frame: every worn model bone
 /// is parented once onto its game bone with a fixed rotation (both rest poses matched, see <see cref="WearBone"/>), its joint on the
 /// game's joint and scaled to the game's lengths, so in every pose the game plays the model's joints coincide with the game's. A copy of
-/// the model's mesh keeps only the triangles skinned to the worn bones. The model sits beside the game's own first-person arm models, on
-/// their layer, shadowed as they are and with the game's first-person rendering setup (<c>PlayerBackpackManager.SetFPSRendering</c>,
+/// the model's mesh keeps only the triangles skinned to the worn bones. The model hangs on the first-person body (not in the clothing the
+/// game rebuilds), on its arm models' layer, shadowed as they are and with the game's first-person rendering setup (<c>PlayerBackpackManager.SetFPSRendering</c>,
 /// which keeps it out of walls, and the item camera's projection by <c>FPS_Content</c>), and shows exactly while the game shows its arms.
 /// Worn on the arms (<see cref="BodyParts.Arms"/> hidden, <c>HumanRig.ArmWear</c>), the model's hands are the game's hands: on the grip
 /// of whatever the player holds, whatever the model's proportions.
@@ -113,7 +113,13 @@ public sealed class FirstPersonWear
         _renderer = renderer;
         _mesh = mesh;
         _hide = hide;
-        foreach (var material in renderer.materials) _materials.Add(material);
+        // SetFPSRendering (Bind) switches only slot 0 of a renderer, and only a material whose shader declares _SupportsFPSRendering (the toon
+        // shaders do not): every slot of the wear's own instances takes the first-person drawing, or that part stays in the world's projection.
+        foreach (var material in renderer.materials)
+        {
+            LitMaterial.SetFirstPerson(material, true);
+            _materials.Add(material);
+        }
         ReadParts();
     }
 
@@ -256,20 +262,14 @@ public sealed class FirstPersonWear
         renderer.sharedMesh = mesh;
         renderer.updateWhenOffscreen = true;
 
-        // Beside the game's own arm models, on their layer, set up for first-person rendering the way the game sets up that body, and
-        // shadowed as they are.
-        var arms = new List<GameObject>();
+        // On the game arms' layer, set up for first-person rendering the way the game sets up that body, and shadowed as they are. Hung
+        // on the body itself, never beside the arm models: those belong to the clothing the game builds again (PlayerFPSBody.UpdateModel
+        // equips the vanity items anew and reads its parts again), which would destroy the model with them. Follow reads new arms.
         Renderer? sample = null;
         if (body.m_gfxArms != null)
             foreach (var go in body.m_gfxArms)
-            {
-                if (go == null) continue;
-                arms.Add(go);
-                sample ??= go.GetComponentInChildren<Renderer>(true);
-            }
-        var parent = arms.Count > 0 && arms[0].transform.parent != null ? arms[0].transform.parent
-            : body.m_modelRoot != null ? body.m_modelRoot.transform : body.transform;
-        root.transform.SetParent(parent, false);
+                if (go != null && (sample = go.GetComponentInChildren<Renderer>(true)) != null) break;
+        root.transform.SetParent(body.transform, false);
         DrawAs(root, renderer, sample, body);
         // Set up while active, as the game sets up its own body. The keyword alone leaves the model in the world's projection while the
         // game's body and item are drawn in the item camera's: the shader blends to it by _FPSWeight, which the FPS_Content on the

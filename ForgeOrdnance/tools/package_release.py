@@ -14,9 +14,10 @@ Run from the repository root after the Release build and the three parts' art, a
     python Mods/ForgeOrdnance/tools/Frames/prepare_audio.py
     python Mods/ForgeOrdnance/tools/package_release.py --artifacts-path artifacts/dotnet --output artifacts/work/ordnance-release
 
-The zip holds ForgeOrdnance.dll, the package metadata and the plugin's words (lang/) at its root, and one folder per part
-(Carrier/, Arsenal/, Frames/) with the part's bundle, the models' attribution (models/LICENSE.forge), its ForgeAudio folder
-(audio/) and its effect library. Arsenal and Frames also carry their definitions with the words and icons in <part>/ForgeOrdnance/
+The zip holds ForgeOrdnance.dll, the package metadata, the plugin's words (lang/) and the one effect library every part draws from
+(Vfx/, with the mod's own copy of the grenade launcher's explosion in Vfx/HeavyBlast/) at its root, and one folder per part
+(Carrier/, Arsenal/, Frames/) with the part's bundle, the models' attribution (models/LICENSE.forge) and its ForgeAudio folder
+(audio/). Arsenal and Frames also carry their definitions with the words and icons in <part>/ForgeOrdnance/
 (the folder name the carrier finds definitions by), and Frames its cockpit art (hud/). r2modman installs it all into
 BepInEx/plugins/NAinfini-ForgeOrdnance/. Fixed timestamps: the same inputs give the same bytes. The manifest is checked against
 Thunderstore's rules and every bundle against its build receipt before packaging.
@@ -65,6 +66,37 @@ def text_sha256(path):
     """A tracked text input's hash as Git stores it (CRLF read as LF): a Windows checkout and the repository give the same script one hash."""
     with open(path, "rb") as source:
         return hashlib.sha256(source.read().replace(b"\r\n", b"\n")).hexdigest()
+
+
+# The receipt tools/Frames/build_assets.ps1 writes beside forge-frames.bundle; any other format is refused and the bundle rebuilt.
+FRAMES_RECEIPT_FORMAT = "1.0.0"
+
+# What tools/Frames/build_assets.ps1 reads from the definitions: which entry is which model, the parts its "open" clip moves and the
+# launcher parts it checks against props.json. The words, stats, codes and icons never reach the bundle, so they are not part of its input.
+FRAMES_BUILD_FIELDS = {
+    "Mods/" + NAME + "/Frames/Definitions/frames.forge":
+        ("Payload.Model", "Payload.Opening.Parts.Node", "Payload.Rockets.Launcher.Pod", "Payload.Rockets.Launcher.Round"),
+}
+
+
+# The repository files that shape forge-frames.bundle: the build (staging, the Unity step and ForgeCore's batch frame it runs in), the Blender model
+# and part builds with the modules they import, the hinge add-on that bakes the cut files, the parts list and the definitions. The icon, cockpit-art,
+# audio, cut-file and preview tools never reach the bundle, so changing them does not make it stale.
+FRAMES_BUILD_FILES = tuple("Mods/" + NAME + "/tools/Frames/" + name for name in (
+    "build_assets.ps1", "FramesBundleBuild.cs", "build_frame.py", "build_prop.py", "glow.py", "interior.py", "wear.py", "props.json")) + (
+    "Mods/ForgeCore/tools/Unity/UnityBatch.ps1", "Mods/ForgeCore/tools/Unity/UnityBatch.cs") + tuple(FRAMES_BUILD_FIELDS)
+
+
+def frames_build_inputs(repo):
+    """FRAMES_BUILD_FILES and the hinge add-on's Python modules (bake.py imports the package)."""
+    return sorted(FRAMES_BUILD_FILES + tuple("Tools/Blender/hinge_tool/" + name for name in os.listdir(repo / "Tools" / "Blender" / "hinge_tool") if name.endswith(".py")))
+
+
+def build_input_sha256(repo, name):
+    """A Frames build input's digest as the receipt records it (tools/Frames/build_assets.ps1 asks for them through --build-inputs):
+    the fields the build reads of a definitions file, any other file as Git stores its text."""
+    fields = FRAMES_BUILD_FIELDS.get(name)
+    return package_common.json_projection_sha256(repo / name, fields) if fields else text_sha256(repo / name)
 
 
 def check_plugin_version(folder):
@@ -123,21 +155,20 @@ def check_frames_bundle(folder, bundle, receipt, definitions):
         raise ValueError("missing bundle receipt (rebuild with tools/Frames/build_assets.ps1)")
     built = json.loads(receipt.read_text(encoding="utf-8"))
     expected = {entry["Payload"]["Model"].split(":", 1)[1] for entry in definitions}
-    if built.get("format") != 3 or set(built.get("models", [])) != expected:
+    if built.get("format") != FRAMES_RECEIPT_FORMAT:
+        raise ValueError("bundle receipt is not format " + FRAMES_RECEIPT_FORMAT + " (rebuild with tools/Frames/build_assets.ps1)")
+    if set(built.get("models", [])) != expected:
         raise ValueError("bundle receipt does not cover the shipped definitions")
     if not bundle.is_file() or built.get("bundleBytes") != bundle.stat().st_size or built.get("bundleSha256") != sha256(bundle):
         raise ValueError("bundle does not match its verified build receipt")
     inputs = built.get("inputs", {})
-    required = {"Mods/" + NAME + "/Frames/Definitions/frames.forge"}
-    required.update("Mods/" + NAME + "/tools/Frames/" + name for name in os.listdir(folder / "tools" / "Frames") if name.endswith((".cs", ".ps1", ".py")))
-    required.update("Tools/Blender/hinge_tool/" + name for name in os.listdir(repo / "Tools" / "Blender" / "hinge_tool") if name.endswith((".ps1", ".py")))
     sources = built.get("sources", {})
     roots = built.get("roots", {})
-    if not required.issubset(inputs) or not any(name.startswith("cut/") for name in sources) or set(roots) != {"cut", "pilot", "props"}:
+    if set(inputs) != set(frames_build_inputs(repo)) or not any(name.startswith("cut/") for name in sources) or set(roots) != {"cut", "pilot", "props"}:
         raise ValueError("bundle receipt lacks source hashes")
     for name, digest in inputs.items():
         path = repo / name
-        if not path.is_file() or text_sha256(path) != digest:
+        if not path.is_file() or build_input_sha256(repo, name) != digest:
             raise ValueError("bundle build input changed: " + name + " (rebuild assets)")
     for name, digest in sources.items():
         root, _, relative = name.partition("/")
@@ -182,7 +213,6 @@ def carrier_files(folder):
     check_build_log(bundle, media(folder, "Carrier", "Models", "unity-build.log"))
     files = {"forge-ordnance.bundle": bundle, "models/LICENSE.forge": folder / "Assets/Carrier/Models/LICENSE.forge"}
     files.update(audio_files(folder, "Carrier"))
-    files.update(package_common.vfx_files(NAME, "ordnance", folder.parents[1], "Assets/Carrier/Vfx"))
     return files
 
 
@@ -191,7 +221,6 @@ def arsenal_files(folder):
     check_prefabs(bundle_profile(bundle, media(folder, "Arsenal", "Models", "forge-ordnance-arsenal.manifest.json")), ARSENAL_PREFABS, "Arsenal")
     files = {"forge-ordnance-arsenal.bundle": bundle, "models/LICENSE.forge": folder / "Assets/Arsenal/Models/LICENSE.forge"}
     files.update(audio_files(folder, "Arsenal"))
-    files.update(package_common.vfx_files(NAME, "arsenal", folder.parents[1], "Assets/Arsenal/Vfx"))
     files.update(definition_files(folder, "Arsenal", "arsenal.forge")[0])
     return files
 
@@ -200,7 +229,6 @@ def frames_files(folder):
     bundle = media(folder, "Frames", "Models", "forge-frames.bundle")
     files = {"forge-frames.bundle": bundle, "models/LICENSE.forge": folder / "Assets/Frames/Models/LICENSE.forge"}
     files.update(audio_files(folder, "Frames"))
-    files.update(package_common.vfx_files(NAME, "frames", folder.parents[1], "Assets/Frames/Vfx"))
     definitions, entries = definition_files(folder, "Frames", "frames.forge")
     check_frames_bundle(folder, bundle, media(folder, "Frames", "Models", "forge-frames.receipt.json"), entries)
     files.update(definitions)
@@ -219,13 +247,19 @@ def frames_files(folder):
 
 
 def extra(folder, built):
-    """Everything beyond the DLL and the metadata: the plugin's words, then each part's own entries under <part>/."""
+    """Everything beyond the DLL and the metadata: the plugin's words and the effect library, then each part's own entries under <part>/."""
     check_plugin_version(folder)
     files = dict(package_common.lang_files(folder))
+    files.update({"Vfx/" + entry: path for entry, path in package_common.vfx_files(NAME, "ordnance", folder.parents[1]).items()})
+    files.update({"Vfx/" + entry: path for entry, path in package_common.heavy_blast_files(NAME, "Assets/Vfx/HeavyBlast", folder.parents[1]).items()})
     for part, table in (("Carrier", carrier_files(folder)), ("Arsenal", arsenal_files(folder)), ("Frames", frames_files(folder))):
         files.update({part + "/" + entry: path for entry, path in table.items()})
     return files
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--build-inputs"]:
+        # tools/Frames/build_assets.ps1: the receipt's digests of the build inputs (paths relative to the repository root, the current folder).
+        print(json.dumps({name: build_input_sha256(Path.cwd(), name) for name in frames_build_inputs(Path.cwd())}))
+        raise SystemExit(0)
     raise SystemExit(package_common.main(NAME, (NAME + ".dll",), extra, METADATA))

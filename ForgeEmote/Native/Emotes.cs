@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Security.Cryptography;
 using ForgeAudio;
 using ForgeCore;
@@ -48,12 +47,13 @@ public static class Emotes
     private const float SoundJoinSeconds = 0.5f;
     private static readonly List<Entry> All = new();
     private static readonly Dictionary<uint, Entry> ByNet = new();
+    private static readonly Dictionary<string, Entry> ById = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, AudioLibrary> Libraries = new();
     private static bool _closed;
 
     internal static IReadOnlyList<Entry> Entries => All;
     internal static Entry? Find(uint netId) => ByNet.TryGetValue(netId, out var entry) ? entry : null;
-    internal static Entry? Find(string id) => All.FirstOrDefault(entry => entry.Definition.Id == id);
+    internal static Entry? Find(string? id) => id != null && ById.TryGetValue(id, out var entry) ? entry : null;
 
     internal static event Action? Changed;
 
@@ -95,6 +95,7 @@ public static class Emotes
             };
             All.Add(entry);
             ByNet.Add(netId, entry);
+            ById.Add(definition.Id, entry);
             Changed?.Invoke();
             return true;
         }

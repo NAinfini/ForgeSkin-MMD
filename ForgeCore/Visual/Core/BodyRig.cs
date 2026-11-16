@@ -125,8 +125,8 @@ public static class HumanRig
     private static readonly int[] Toward = { 7, 2, 3, -1, 5, 6, -1, 8, 18, 18, 11, 12, 13, -1, 15, 16, 17, -1, 19, -1 };
     private static readonly bool[] Optional = { false, false, false, false, false, false, false, false, false, true, true, false, false, false, true, false, false, false, false, false };
 
-    /// <summary>Both arms bend so each hand lands where the body's does (on the grip), carried over from the chest.</summary>
-    public static readonly PoseReach[] ArmReach = { new(11, 12, 13, 8), new(15, 16, 17, 8) };
+    /// <summary>Both arms bend as the body's do, each hand placed from its own shoulder at the arm's own proportions.</summary>
+    public static readonly PoseReach[] ArmReach = { new(11, 12, 13), new(15, 16, 17) };
 
     /// <summary>The links for <paramref name="bones"/> (the model bone of each <see cref="ClipRig"/> joint, null for none). Throws
     /// <see cref="ArgumentException"/> naming a required joint without a bone.</summary>
@@ -184,24 +184,23 @@ public static class HumanRig
 /// A limb of a pose copy whose end must land where the body's does (<c>Models.CopyPose</c>): links <see cref="Upper"/>,
 /// <see cref="Lower"/> and <see cref="End"/> (an upper arm, its forearm, its hand; the lower a descendant of the upper, the end of the
 /// lower). Copying turns alone puts a model limb of other proportions somewhere else; with a reach, after the turns the two upper
-/// bones bend (in the body limb's own bend plane) so the end joint sits at the body's end joint carried over from link
-/// <see cref="Anchor"/> (the body's offset from its anchor bone, turned and scaled, from the model's anchor bone), and the end keeps
-/// its copied turn. A hand on a grip stays on the grip. Out of reach, the limb stretches toward it.
+/// bones bend (in the body limb's own bend plane) so the end joint sits where the body's does seen from the limb's own upper joint,
+/// scaled by the limb's length over the body limb's (both at rest): the limb keeps the body's bend whatever its proportions, and the
+/// end keeps its copied turn. A body holding an item in its hand socket (a player's <c>PlayerSyncModelData.ItemAlign</c>) has the
+/// item carried to the model's hand, and the other hand on the item where the body's is (<c>PoseCopy</c>).
 /// </summary>
 public readonly struct PoseReach
 {
-    public PoseReach(int upper, int lower, int end, int anchor)
+    public PoseReach(int upper, int lower, int end)
     {
         Upper = upper;
         Lower = lower;
         End = end;
-        Anchor = anchor;
     }
 
     public int Upper { get; }
     public int Lower { get; }
     public int End { get; }
-    public int Anchor { get; }
 }
 
 /// <summary>A bone's rest pose (from a skinned mesh's bind pose): position, rotation and uniform scale in its skeleton's frame.</summary>
@@ -477,6 +476,15 @@ internal static class PoseSolver
         return null;
     }
 
+    /// <summary>A limb's length on the model over its length on the body (upper joint to middle joint to end, each at rest in its own
+    /// skeleton's units); <paramref name="fallback"/> when either limb has no length.</summary>
+    internal static float LimbScale(Vector3 modelUpper, Vector3 modelLower, Vector3 modelEnd, Vector3 bodyUpper, Vector3 bodyLower, Vector3 bodyEnd, float fallback)
+    {
+        var body = (bodyLower - bodyUpper).Length() + (bodyEnd - bodyLower).Length();
+        var model = (modelLower - modelUpper).Length() + (modelEnd - modelLower).Length();
+        return body < 1e-4f || model < 1e-4f ? fallback : model / body;
+    }
+
     /// <summary>Null when <paramref name="reaches"/> fit <paramref name="count"/> links; otherwise why not (a link out of range, or
     /// the upper, lower and end not three different links).</summary>
     internal static string? ValidateReach(IReadOnlyList<PoseReach> reaches, int count)
@@ -484,7 +492,7 @@ internal static class PoseSolver
         for (var i = 0; i < reaches.Count; i++)
         {
             var r = reaches[i];
-            if (r.Upper < 0 || r.Lower < 0 || r.End < 0 || r.Anchor < 0 || r.Upper >= count || r.Lower >= count || r.End >= count || r.Anchor >= count)
+            if (r.Upper < 0 || r.Lower < 0 || r.End < 0 || r.Upper >= count || r.Lower >= count || r.End >= count)
                 return "reach " + i + " points outside the " + count + " links";
             if (r.Upper == r.Lower || r.Lower == r.End || r.Upper == r.End) return "reach " + i + " needs three different links";
         }

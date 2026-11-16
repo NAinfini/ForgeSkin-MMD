@@ -1,7 +1,5 @@
 using System;
-using System.IO;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Text;
 
 namespace ForgePerformance.LoadShedding;
@@ -18,8 +16,7 @@ internal static class NativeModuleFingerprint
         if (module == IntPtr.Zero) { note = name + "_not_loaded"; return IntPtr.Zero; }
         var path = new StringBuilder(1024);
         if (GetModuleFileName(module, path, path.Capacity) == 0) { note = "module_path_unavailable"; return IntPtr.Zero; }
-        using var file = File.OpenRead(path.ToString()); using var hash = SHA256.Create();
-        var actual = Convert.ToHexString(hash.ComputeHash(file));
+        var actual = FileHashCache.Sha256(path.ToString());
         if (actual != expected) { note = "unsupported_" + name + "_sha256:" + actual; return IntPtr.Zero; }
         return module;
     }

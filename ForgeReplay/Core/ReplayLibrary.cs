@@ -75,30 +75,36 @@ internal static class ReplayLibrary
         File.Delete(path);
         var stats = StatsExport.PathOf(path);
         if (File.Exists(stats)) File.Delete(stats);
-        Known.Remove(path);
+        lock (Known) Known.Remove(path);
     }
 
     // Each file as last read, kept while its length and write time stay the same: the list is built again at every click, and reading
-    // every header each time made a click stall.
+    // every header each time made a click stall. Locked: a closed recording is pruned and read on a worker thread.
     private static readonly Dictionary<string, (long Length, DateTime Written, ReplayEntry Entry)> Known = new(StringComparer.OrdinalIgnoreCase);
 
     private static IEnumerable<ReplayEntry> Scan(string folder, bool starred)
     {
         if (!Directory.Exists(folder)) yield break;
-        foreach (var path in Directory.GetFiles(folder, "*.frpl")) yield return One(path, starred);
+        foreach (var path in Directory.GetFiles(folder, "*.frpl"))
+        {
+            ReplayEntry entry;
+            try { entry = One(path, starred); }
+            catch (FileNotFoundException) { continue; } // pruned on the worker thread after the folder was listed
+            yield return entry;
+        }
     }
 
     /// <summary>The recording at <paramref name="path"/> as the list shows it (read again only when the file changed).</summary>
     internal static ReplayEntry One(string path, bool starred)
     {
         var info = new FileInfo(path);
-        if (Known.TryGetValue(path, out var known) && known.Length == info.Length && known.Written == info.LastWriteTimeUtc) return known.Entry;
+        lock (Known) if (Known.TryGetValue(path, out var known) && known.Length == info.Length && known.Written == info.LastWriteTimeUtc) return known.Entry;
         var name = System.IO.Path.GetFileNameWithoutExtension(path);
         var split = name.IndexOf('_');
         var level = split < 0 ? name : name.Substring(split + 1);
         DateTime.TryParseExact(split < 0 ? name : name.Substring(0, split), "yyyyMMdd-HHmmss", CultureInfo.InvariantCulture, DateTimeStyles.None, out var start);
         var entry = Read(path, starred, start, level);
-        Known[path] = (info.Length, info.LastWriteTimeUtc, entry);
+        lock (Known) Known[path] = (info.Length, info.LastWriteTimeUtc, entry);
         return entry;
     }
 
@@ -120,7 +126,7 @@ internal static class ReplayLibrary
             if (header == null) return new ReplayEntry(path, starred, start, level, duration, outcome, reader.IsComplete, null, "The recording has no header.");
             return new ReplayEntry(path, starred, start, level, duration, outcome, reader.IsComplete, header, null, summary);
         }
-        catch (Exception error) when (error is IOException or FormatException or OverflowException or InvalidDataException or ChunkLogFormatException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or FormatException or OverflowException or InvalidDataException or ChunkLogFormatException)
         {
             return new ReplayEntry(path, starred, start, level, 0, Outcome.Unknown, false, null, "The recording cannot be read: " + error.Message);
         }

@@ -57,8 +57,24 @@ public static class Models
         if (options.HideNative) HideRenderers(t, renderer => !IsMesh(renderer) || renderer.transform.IsChildOf(instance.transform), hidden);
         if (measured) scale = FitTo(instance, t, nativeBounds, options.MaxScale);
         if (options.Layer) SetLayer(instance.transform, native.layer);
+        // On a first-person item the model is drawn as the game draws that item (an item instance keeps its view: the game makes a separate
+        // instance for each view); a mount that changes view itself shows its own HeldSurfaces again.
+        if (OnFirstPersonItem(t)) HeldSurfaces.Of(instance.transform).Show(true);
         return new Dressed(native, instance, hidden, scale);
     }
+
+    /// <summary>Whether <paramref name="t"/> hangs on a first-person item (<c>ItemEquippable.IsFirstPerson</c> of the nearest item above it,
+    /// inactive ones included): drawn only in this peer's own first-person view.</summary>
+    public static bool OnFirstPersonItem(Transform? t)
+    {
+        if (t == null) return false;
+        var items = t.GetComponentsInParent<ItemEquippable>(true);
+        return items.Length > 0 && items[0].IsFirstPerson;
+    }
+
+    /// <summary>Whether <paramref name="t"/> hangs on a game item (any <c>Item</c> above it, inactive ones included): a held item, a pickup, a
+    /// thrown or placed one.</summary>
+    public static bool OnGameItem(Transform? t) => t != null && t.GetComponentsInParent<Item>(true).Length > 0;
 
     /// <summary>
     /// Wears <paramref name="look"/> on the local player's first-person body (<paramref name="agent"/>'s): see <see cref="FirstPersonWear"/>.
@@ -96,6 +112,29 @@ public static class Models
         return PoseTarget.Read(root, skin, links, label);
     }
 
+    /// <summary>The model side of a pose copy for an instance of a body model (<see cref="ModelHandle.FollowsBodies"/>): its first skinned
+    /// renderer and the declared links; the copy takes the declared reach (<see cref="CopyPose(Animator, PoseTarget, string)"/>). Null (logged
+    /// once) when <paramref name="model"/> is not a body model or the instance does not fit its links.</summary>
+    public static PoseTarget? ReadPoseTarget(GameObject instance, ModelHandle model, string label)
+    {
+        if (instance == null || instance.WasCollected) throw new ArgumentNullException(nameof(instance));
+        if (model == null) throw new ArgumentNullException(nameof(model));
+        if (model.BodyLinks is not { } links) { PoseTarget.Error(label, model.Name + " is not declared a body model (ModelHandle.FollowsBodies)"); return null; }
+        var skin = instance.GetComponentInChildren<SkinnedMeshRenderer>(true);
+        if (skin == null) { PoseTarget.Error(label, "the model has no skinned renderer"); return null; }
+        var target = PoseTarget.Read(instance.transform, skin, links, label, model.BodyReach);
+        if (target != null) target.HoldsIn = model.BodyHolds;
+        return target;
+    }
+
+    /// <summary><see cref="CopyPose(Animator, PoseTarget, IReadOnlyList{PoseReach}, string)"/> with the reach the target was read with (a body
+    /// model's declared reach; none for a target read from links alone).</summary>
+    public static PoseCopy? CopyPose(Animator body, PoseTarget target, string label)
+    {
+        if (target == null) throw new ArgumentNullException(nameof(target));
+        return PoseCopy.Bind(body, target, target.Reach, label);
+    }
+
     /// <summary>Copies the humanoid pose of the body animated by <paramref name="body"/> (for a player, <c>PlayerAgent.AnimatorBody</c>)
     /// onto <paramref name="target"/>: see <see cref="PoseCopy"/>. Bind once per body; call <see cref="PoseCopy.Apply"/> every frame after
     /// the game animated the body (after its limb IK) and <see cref="PoseCopy.Release"/> when done. Each of <paramref name="reach"/>
@@ -125,7 +164,7 @@ public static class Models
     public static HeldMirror MirrorHeld(PlayerAgent agent, int layer, string label)
     {
         if (agent == null || agent.WasCollected) throw new ArgumentNullException(nameof(agent));
-        return new HeldMirror(agent, layer, label);
+        return new HeldMirror(agent, null, layer, label);
     }
 
     /// <summary>A rig for body clips (<see cref="BodyClipRig"/>): <paramref name="animated"/> (under <paramref name="root"/>) is a hidden
@@ -488,11 +527,14 @@ public sealed class ModelHandle
     }
 
     /// <summary>A new instance at the given world pose under <paramref name="parent"/> (or none), or null (logged once) when the
-    /// materials cannot be prepared yet.</summary>
+    /// materials cannot be prepared yet. Reported to <see cref="ForgeCore.Recording"/> as world state unless it hangs on a game item
+    /// (<see cref="Models.OnGameItem"/>): every item is made by the game's item spawn (<c>ItemSpawnManager.SpawnItem</c>, the entry
+    /// <c>GameHooks.ItemSpawned</c> brackets), a replay makes each item it shows the same way, and the model is that item's dressing, made
+    /// again there; a first-person item belongs to its owner's view alone.</summary>
     public GameObject? Spawn(Vector3 position, Quaternion rotation, Transform? parent = null)
     {
         var instance = Make(position, rotation, parent);
-        if (instance != null && ForgeCore.Recording.Watched) ForgeCore.Recording.Model(new ForgeCore.ShownModel(ForgeCore.ShownModelKind.Spawned, Seen, instance, parent, null));
+        if (instance != null && ForgeCore.Recording.Watched && !Models.OnGameItem(parent)) ForgeCore.Recording.Model(new ForgeCore.ShownModel(ForgeCore.ShownModelKind.Spawned, Seen, instance, parent, null));
         return instance;
     }
 
@@ -506,6 +548,31 @@ public sealed class ModelHandle
 
     /// <summary>The name's number for reports to <see cref="ForgeCore.Recording"/>.</summary>
     internal readonly int Seen;
+
+    /// <summary>Declares the model a body model: an instance follows a humanoid body's pose through <paramref name="links"/> and bends its
+    /// limbs by <paramref name="reach"/> (<see cref="Models.ReadPoseTarget(GameObject, ModelHandle, string)"/>, then
+    /// <see cref="Models.CopyPose(Animator, PoseTarget, string)"/>). A recording notes which player's body a spawned instance follows, and a
+    /// replay makes the same copy on that player's stand-in from this declaration, knowing nothing of the mod. Reads nothing of the bundle;
+    /// declare it where the mod admits the model. <paramref name="holdsIn"/> (a link, -1 none) is the model bone that holds a copy of what the
+    /// body holds (<see cref="PoseCopy.Held"/>): placed by the copy itself, so a replay's stand-in in the model holds what it holds there too.
+    /// Throws <see cref="ArgumentException"/> when the links, the reach or the holding link are wrong.</summary>
+    public void FollowsBodies(IReadOnlyList<PoseLink> links, IReadOnlyList<PoseReach> reach, int holdsIn = -1)
+    {
+        if (links == null || reach == null) throw new ArgumentNullException(links == null ? nameof(links) : nameof(reach));
+        if (PoseSolver.Validate(links) is { } bad) throw new ArgumentException("The pose links of " + Name + " are wrong: " + bad, nameof(links));
+        if (PoseSolver.ValidateReach(reach, links.Count) is { } badReach) throw new ArgumentException("The reach of " + Name + " is wrong: " + badReach, nameof(reach));
+        if (holdsIn < -1 || holdsIn >= links.Count) throw new ArgumentException("The holding link of " + Name + " is not one of its " + links.Count + " links", nameof(holdsIn));
+        BodyLinks = links;
+        BodyReach = reach;
+        BodyHolds = holdsIn;
+    }
+
+    internal int BodyHolds { get; private set; } = -1;
+
+    /// <summary>The body model declaration (<see cref="FollowsBodies"/>); null links: not a body model.</summary>
+    internal IReadOnlyList<PoseLink>? BodyLinks { get; private set; }
+
+    internal IReadOnlyList<PoseReach> BodyReach { get; private set; } = Array.Empty<PoseReach>();
 }
 
 /// <summary>How <see cref="Models.Dress"/> puts a model on a game object.</summary>

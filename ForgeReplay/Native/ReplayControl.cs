@@ -77,11 +77,13 @@ public static class ReplayControl
     /// <summary>Watches a recorded player, as a card's click does.</summary>
     public static string Watch(int slot) { ReplayCamera.Select(slot); return State(); }
 
-    /// <summary>What stands in the scene: bodies (players and enemies), hands, doors or boxes.</summary>
+    /// <summary>What stands in the scene: bodies (players and enemies), hands, doors, boxes, tracked (declared objects and states set) or pickups.</summary>
     public static string Inspect(string what = "bodies") => what switch
     {
         "hands" => Carried.Inspect(),
         "doors" or "boxes" => EventPresenter.Setter?.Inspect(what) ?? "no setter",
+        "tracked" => ShownPlayback.InspectTracked(),
+        "pickups" => EventPresenter.Setter?.InspectPickups() ?? "no setter",
         _ => Puppeteer.Inspect(),
     };
 

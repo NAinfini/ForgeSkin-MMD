@@ -40,22 +40,11 @@ function Export([string]$prefab, [string]$require, [string[]]$extra = @()) {
 Export 'beacon' '' @('--glow', 'beacon=1.6,0.9,0.18')
 Export 'drop-pod' 'body,cradle,door_1,door_2,door_3,door_4,interior,shelf_1,shelf_2,weapon_anchor_1,weapon_anchor_2,pickup_anchor_1,pickup_anchor_2,pickup_anchor_3,pickup_anchor_4'
 Export 'turret-shell' 'body,well,lid_a,lid_b'
-$project = Join-Path $Build 'unity'
-if (!(Test-Path -LiteralPath (Join-Path $project 'ProjectSettings'))) {
-    $createLog = Join-Path $Build 'unity-create.log'
-    $proc = Start-Process -FilePath $Unity -WindowStyle Hidden -PassThru -ArgumentList @('-batchmode', '-nographics', '-quit', '-createProject', "`"$project`"", '-logFile', "`"$createLog`"")
-    $proc.WaitForExit()
-    if ($proc.ExitCode -ne 0) { throw "Unity could not create the project; see $createLog" }
-}
-New-Item -ItemType Directory -Force (Join-Path $project 'Assets/Editor') | Out-Null
-Copy-Item -LiteralPath "$tools/OrdnanceBundleBuild.cs" -Destination (Join-Path $project 'Assets/Editor/OrdnanceBundleBuild.cs') -Force
-
+. (Join-Path $PSScriptRoot '../../../ForgeCore/tools/Unity/UnityBatch.ps1')
 $env:FORGE_ORDNANCE_STAGE = $stage
 $env:FORGE_ORDNANCE_OUT = $out
 $env:FORGE_ORDNANCE_BUNDLE = 'forge-ordnance.bundle'
-$proc = Start-Process -FilePath $Unity -WindowStyle Hidden -PassThru -ArgumentList @('-batchmode', '-nographics', '-quit', '-projectPath', "`"$project`"", '-executeMethod', 'OrdnanceBundleBuild.Build', '-logFile', "`"$log`"")
-$proc.WaitForExit()
-if ($proc.ExitCode -ne 0) { throw "Unity build failed; see $log" }
+if ((Invoke-UnityBatch $Unity (Join-Path $Build 'unity') @("$tools/OrdnanceBundleBuild.cs") 'OrdnanceBundleBuild.Build' $log (Join-Path $Build 'unity-create.log')) -ne 0) { throw "Unity build failed; see $log" }
 # Unity can exit 0 without running the method (licence, compile errors): require this run's receipt.
 $bundle = Join-Path $out 'forge-ordnance.bundle'
 $length = (Get-Item -LiteralPath $bundle).Length

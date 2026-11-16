@@ -1,3 +1,4 @@
+# reason: 7 detection ability of a gate. Audio staging must refuse unknown rules, duplicate cues and unknown buses, and hold the true-peak ceiling.
 import array
 import importlib.util
 from pathlib import Path

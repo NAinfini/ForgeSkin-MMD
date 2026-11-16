@@ -36,6 +36,9 @@ internal static class ShownPlayback
     private static readonly Dictionary<ulong, AudioHandle> Loops = new();
     private static readonly Dictionary<ulong, GameObject> Spawned = new();
     private static readonly Dictionary<ulong, List<Renderer>> Hidden = new();
+    // A player's whole person the recording hid (a suit worn over it): held on the stand-in through ForgeCore's Persons, the rule the game had, so
+    // the look worn on the stand-in and what it is given later stay hidden with it.
+    private static readonly Dictionary<ulong, PersonHide> HiddenPeople = new();
     // A model or a hidden-renderers state (event 99) whose anchor is not there yet (a puppet or a replayed sentry that is still being made): tried again each frame.
     private static readonly Dictionary<ulong, (ShownModelRecord Record, WorldState State, float GiveUpAt)> Waiting = new();
     private static readonly List<ulong> WaitingDone = new();
@@ -56,7 +59,95 @@ internal static class ShownPlayback
             case EventKind.ShownLoop: Sound(read, state, tier == SoundTier.All); break;
             case EventKind.ShownModelState: ModelState(ShownCodec.ReadModel(read), state); break;
             case EventKind.ShownPose: ShownPoses.Present(read, state, timeMs); break;
+            case EventKind.TrackedObject: Place(ShownCodec.ReadTracked(read), state); break;
+            case EventKind.TrackedState: Stated(ShownCodec.ReadTrackedState(read), state); break;
         }
+    }
+
+    // ---- declared world objects (events 114 and 115) --------------------------------------------------------------------------------
+
+    // A declared object this replay has set, found once by its key (ForgeCore Recording.Find: the owner built it in this level too, or finds it), with
+    // how the level had it before the first recorded state: a jump puts every one back to that first and then sets the states of its moment.
+    private sealed class SetObject
+    {
+        internal string Key = "";
+        internal GameObject Body = null!;
+        internal Transform Place = null!;
+        internal Vector3 P, S;
+        internal Quaternion Q;
+        internal bool Shown;
+    }
+
+    private static readonly Dictionary<int, SetObject> SetObjects = new();
+    // Keys whose owner state this replay handed over: a jump hands each back its own state (null) first.
+    private static readonly Dictionary<int, string> StatedKeys = new();
+    private const string ObjectMissing = "a recorded world object is not in the replay level", StateRefused = "a recorded object state has no owner in this install";
+
+    private static void Place(in TrackedRecord t, WorldState state)
+    {
+        var set = Declared(t.Name, state);
+        if (set == null) return;
+        set.Place.SetPositionAndRotation(new Vector3(t.X, t.Y, t.Z), new Quaternion(t.Qx, t.Qy, t.Qz, t.Qw));
+        set.Place.localScale = new Vector3(t.Sx, t.Sy, t.Sz);
+        set.Body.SetActive(t.Shown);
+        Recording.Placed(set.Key);
+    }
+
+    private static SetObject? Declared(int name, WorldState state)
+    {
+        if (SetObjects.TryGetValue(name, out var known) && known.Body != null && !known.Body.WasCollected) return known;
+        var key = Name(state, name);
+        if (key == null) return null;
+        var body = Recording.Find(key);
+        if (body == null) { Skipped.Note(ObjectMissing, key); return null; }
+        Skipped.Resolve(ObjectMissing, key);
+        var set = Remember(body);
+        set.Key = key;
+        return SetObjects[name] = set;
+    }
+
+    // How the level has the object before the replay first sets it: read once per object.
+    private static SetObject Remember(GameObject body)
+    {
+        var place = body.transform;
+        return new SetObject { Body = body, Place = place, P = place.position, Q = place.rotation, S = place.localScale, Shown = body.activeSelf };
+    }
+
+    private static void Stated(in TrackedStateRecord s, WorldState state)
+    {
+        var key = Name(state, s.Name);
+        if (key == null) return;
+        if (Recording.Apply(key, s.Value)) { StatedKeys[s.Name] = key; Skipped.Resolve(StateRefused, key); }
+        else Skipped.Note(StateRefused, key);
+    }
+
+    /// <summary>The declared objects this replay has set and the owner states it handed over, for ReplayControl.Inspect.</summary>
+    internal static string InspectTracked()
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (var set in SetObjects.Values)
+        {
+            text.Append(set.Key);
+            if (set.Body == null || set.Body.WasCollected) text.Append(" gone\n");
+            else text.Append(" at ").Append(set.Place.position).Append(" scale ").Append(set.Place.localScale).Append(" shown ").Append(set.Body.activeSelf).Append('\n');
+        }
+        foreach (var key in StatedKeys.Values) text.Append("state ").Append(key).Append('\n');
+        return text.ToString();
+    }
+
+    // Every declared object back to how the level had it, every owner state back to the owner's own.
+    private static void PutDeclaredBack()
+    {
+        foreach (var set in SetObjects.Values)
+        {
+            if (set.Body == null || set.Body.WasCollected) continue;
+            set.Place.SetPositionAndRotation(set.P, set.Q);
+            set.Place.localScale = set.S;
+            set.Body.SetActive(set.Shown);
+            Recording.Placed(set.Key);
+        }
+        foreach (var key in StatedKeys.Values) Recording.Apply(key, null);
+        StatedKeys.Clear();
     }
 
     /// <summary>Per frame: tells every held effect and beam again, as its owner did while it was held.</summary>
@@ -70,6 +161,12 @@ internal static class ShownPlayback
             Restoring.Clear();
             foreach (var ((kind, _), payload) in state.Extras) if (kind == EventKind.ShownModelState) Restoring.Add(payload);
             foreach (var payload in Restoring) ModelState(ShownCodec.ReadModel(new PayloadReader(payload)), state);
+            // The declared objects and owner states the recording had changed by that moment (the rest stand as the level built them).
+            foreach (var ((kind, _), payload) in state.Extras)
+            {
+                if (kind == EventKind.TrackedObject) Place(ShownCodec.ReadTracked(new PayloadReader(payload)), state);
+                else if (kind == EventKind.TrackedState) Stated(ShownCodec.ReadTrackedState(new PayloadReader(payload)), state);
+            }
             // The held effects, beams, trails and looping sounds the recording had running at that moment start again from their kept state.
             Restoring.Clear();
             foreach (var ((kind, _), payload) in state.Extras) if (kind == EventKind.ShownHeld) Restoring.Add(payload);
@@ -111,11 +208,16 @@ internal static class ShownPlayback
         Held.Clear();
         foreach (var loop in Loops.Values) loop.Stop();
         Loops.Clear();
+        foreach (var follower in Followers.Values) Unfollow(follower);
+        Followers.Clear();
         foreach (var model in Spawned.Values) if (model != null && !model.WasCollected) Object.Destroy(model);
         Spawned.Clear();
         foreach (var list in Hidden.Values) Models.ShowRenderers(list);
         Hidden.Clear();
+        foreach (var hold in HiddenPeople.Values) hold.Release();
+        HiddenPeople.Clear();
         Waiting.Clear();
+        PutDeclaredBack();
         _restore = null;
     }
 
@@ -124,7 +226,7 @@ internal static class ShownPlayback
     {
         ShownPoses.Reset();
         EndAll();
-        Names.Clear(); Handles.Clear(); BeamStyles.Clear(); TrailStyles.Clear();
+        Names.Clear(); Handles.Clear(); BeamStyles.Clear(); TrailStyles.Clear(); SetObjects.Clear();
     }
 
     private static void Stop(HeldFx held)
@@ -258,18 +360,26 @@ internal static class ShownPlayback
         switch (m.Phase)
         {
             case ShownCodec.ModelEnded:
+                if (Followers.Remove(m.Key, out var follower)) Unfollow(follower);
                 if (Spawned.Remove(m.Key, out var gone) && gone != null && !gone.WasCollected) Object.Destroy(gone);
                 if (Hidden.Remove(m.Key, out var shown)) Models.ShowRenderers(shown);
+                if (HiddenPeople.Remove(m.Key, out var person)) person.Release();
                 return true;
             case ShownCodec.ModelHidden:
                 {
-                    if (Hidden.ContainsKey(m.Key)) return true;
+                    if (Hidden.ContainsKey(m.Key) || HiddenPeople.ContainsKey(m.Key)) return true;
+                    if (m.Anchor == 1 && m.Path.Length == 0)
+                    {
+                        if (Puppeteer.StandInOf(m.Id)?.Animator is not { } body || body.WasCollected) return false;
+                        HiddenPeople[m.Key] = ForgeVisual.Persons.Hide(body, "replay hidden person");
+                        return true;
+                    }
                     var list = new List<Renderer>();
                     var hidden = 0;
                     if (m.Anchor == ShownCodec.WorldRoot)
                     {
-                        // Not a player or an enemy: a sentry the game placed, whose look a mod covered, or a pickup a mod hid (Ordnance's
-                        // supplies inside a shut pod). The replay's own sentry or item at that place is covered the same way.
+                        // Not a player or an enemy: a sentry the game placed, whose look a mod covered, or a pickup a mod hid. The replay's
+                        // own sentry or item at that place is covered the same way.
                         var at = new Vector3(m.X, m.Y, m.Z);
                         var sentry = Deployables.SentryNear(at);
                         if (sentry != null) hidden = Models.HideSentryBody(sentry, list);
@@ -290,15 +400,15 @@ internal static class ShownPlayback
                     var anchored = m.Anchor is 1 or 2;
                     var at = new Vector3(m.X, m.Y, m.Z);
                     var rotation = new Quaternion(m.Qx, m.Qy, m.Qz, m.Qw);
+                    var name = Name(state, m.Name);
                     if (Spawned.TryGetValue(m.Key, out var live) && live != null && !live.WasCollected)
                     {
                         var node = live.transform;
                         if (anchored) { node.localPosition = at; node.localRotation = rotation; }
                         else node.SetPositionAndRotation(at, rotation);
                         node.localScale = new Vector3(m.Sx, m.Sy, m.Sz);
-                        return true;
+                        return name == null || Follow(m.Key, live, name, m.Follows);
                     }
-                    var name = Name(state, m.Name);
                     if (name == null) return true;
                     var parent = anchored ? Anchor(m.Anchor, m.Id, m.Path) : null;
                     if (anchored && parent == null) return false;
@@ -309,9 +419,57 @@ internal static class ShownPlayback
                     if (parent != null) { made.transform.localPosition = at; made.transform.localRotation = rotation; }
                     made.transform.localScale = new Vector3(m.Sx, m.Sy, m.Sz);
                     Spawned[m.Key] = made;
-                    return true;
+                    return Follow(m.Key, made, name, m.Follows);
                 }
         }
+    }
+
+    // A model the recording had follow a player's body: its target, read once from the model's body model declaration (ForgeVisual
+    // ModelHandle.FollowsBodies; null when this install does not declare it), and the copy from the stand-in it follows now.
+    private sealed class Follower
+    {
+        internal PoseTarget? Target;
+        internal PoseCopy? Copy;
+        internal Animator? Body;
+    }
+
+    private static readonly Dictionary<ulong, Follower> Followers = new();
+
+    // The model follows the pose of player `slot`'s stand-in (-1: none, it rests), the same copy the recorded model made, through ForgeVisual
+    // Models.CopyPose. False while that stand-in is not there yet.
+    private static bool Follow(ulong key, GameObject model, string name, int slot)
+    {
+        Followers.TryGetValue(key, out var follower);
+        if (slot < 0 && follower == null) return true;
+        var body = slot >= 0 ? Puppeteer.StandInOf(slot)?.Animator : null;
+        if (body != null && body.WasCollected) body = null;
+        if (follower?.Copy != null)
+        {
+            if (body != null && follower.Body != null && !follower.Body.WasCollected && follower.Body.Pointer == body.Pointer) return true;
+            Unfollow(follower);
+        }
+        if (slot < 0) return true;
+        if (body == null) return false;
+        if (follower == null)
+        {
+            var label = "replay " + name;
+            follower = Followers[key] = new Follower { Target = Models.Get(name) is { } handle ? Models.ReadPoseTarget(model, handle, label) : null };
+            if (follower.Target == null) Skipped.Note("a model that followed a body but is not a body model in this install", name);
+        }
+        if (follower.Target == null) return true;
+        follower.Copy = Models.CopyPose(body, follower.Target, "replay " + name);
+        if (follower.Copy == null) return true;
+        follower.Body = body;
+        follower.Copy.Follow();
+        return true;
+    }
+
+    private static void Unfollow(Follower follower)
+    {
+        follower.Copy?.Release();
+        follower.Copy = null;
+        follower.Body = null;
+        follower.Target?.Rest();
     }
 
     // The node the recording named (kind 0 nothing, 1 player slot, 2 enemy entity; then a name path), found on the puppet of the same player or enemy.
@@ -321,8 +479,8 @@ internal static class ShownPlayback
         Transform? node;
         if (kind == 1 && path.StartsWith("~"))
         {
-            // The player's animated body: a player puppet's, or the fourth player's body copy when it has no bot slot.
-            node = Puppeteer.PlayerOf(id)?.Agent.AnimatorBody?.transform ?? Puppeteer.CosmeticOf(id)?.Animator.transform;
+            // The player's animated body: its stand-in's.
+            node = Puppeteer.StandInOf(id)?.Animator.transform;
             path = path.Substring(1);
         }
         else node = kind == 1 ? Puppeteer.BodyOf(id)?.transform : Puppeteer.EnemyRoot(id);

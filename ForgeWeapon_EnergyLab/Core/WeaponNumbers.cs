@@ -21,6 +21,8 @@ internal readonly record struct WeaponNumbers
     internal float HopDelay { get; init; }
     internal double MinimumCharge { get; init; }
     internal double FullCharge { get; init; }
+    /// <summary>The charge after holding <paramref name="heldSeconds"/>: 0 up to the minimum charge, 1 from the full charge on. The shooter and every other machine use this one curve.</summary>
+    internal float ChargePower(double heldSeconds) => (float)System.Math.Clamp((heldSeconds - MinimumCharge) / (FullCharge - MinimumCharge), 0d, 1d);
     internal float BotChargePower { get; init; }
     internal float Speed { get; init; }
     internal float FullSpeed { get; init; }

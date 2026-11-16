@@ -32,15 +32,17 @@ internal static class ProceduralChecks
                      ("a default outside its range", Broken("\"default\": 12", "\"default\": 99")),
                      ("a program listed twice", Broken("\"name\": \"scanlines\"", "\"name\": \"flowLines\"")),
                      ("a colour that is no hex", Broken("\"#55E0FFFF\"", "\"cyan\"")),
+                     ("another version", Broken("\"version\": \"1.0.0\"", "\"version\": 1")),
                  })
             check(Refused(text), "procedural: a catalogue with " + label + " is refused");
 
-        // The shipped bundle matches its sources (ShaderBuild.cs hashes the shaders, then the toon include, the programs and the catalogue).
+        // The shipped bundle matches its sources (ForgeVisualShaderBuild.cs hashes the shaders, then the toon include, the programs and the
+        // catalogue's program names in order: what reaches the shaders, so the catalogue's version, labels and defaults never call for a rebuild).
         var all = new StringBuilder();
         foreach (var name in new[] { "ForgeVisualParticle.shader", "ForgeVisualMarker.shader", "ForgeVisualOutline.shader", "ForgeVisualProcedural.shader",
                      "ForgeVisualToonForward.shader", "ForgeVisualToonDeferred.shader", "ForgeVisualToonOverlay.shader", "ForgeVisualLitCutout.shader", "ForgeToon.hlsl" })
             all.Append(File.ReadAllText(Path.Combine(shaders, name)).Replace("\r\n", "\n"));
-        all.Append(programs.Replace("\r\n", "\n")).Append(json.Replace("\r\n", "\n"));
+        all.Append(programs.Replace("\r\n", "\n")).Append(string.Join("\n", catalog.Programs.Select(p => p.Name)));
         var sha = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(all.ToString()))).ToLowerInvariant();
         var generated = File.ReadAllText(Path.Combine(visual, "Native", "ShaderBundle.Generated.cs"));
         check(generated.Contains("\"" + sha + "\"", StringComparison.Ordinal), "procedural: the shader bundle is built from the sources in Git (rerun build_shaders.ps1)");

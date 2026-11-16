@@ -9,8 +9,7 @@ namespace ForgeReplay;
 /// recording says, and the sound events posted over a stretch of playback. It changes nothing in the replay and runs nothing until called (no switch, no per-frame code). Main thread only.</summary>
 public static class ReplayProbe
 {
-    /// <summary>One JSON object per recorded slot: the recorded wield state now, what the body was asked to show, what it holds (the game's wielded slot and item for a puppet,
-    /// the shown weapon for a body copy) and whether each agrees; <c>itemOk</c> compares the held item's data block with the one the gear line names.</summary>
+    /// <summary>One JSON object per recorded slot: the recorded wield state now, what the body was asked to show, what its stand-in holds (the weapon shown in its hands) and whether each agrees; <c>itemOk</c> compares the held item's data block with the one the gear line names.</summary>
     public static string Held()
     {
         var state = Replayer.Track?.State;
@@ -22,23 +21,13 @@ public static class ReplayProbe
             var recorded = -1;
             if (state.PlayerStatus[slot] is { } status) { var read = new PayloadReader(status); read.U(); read.U(); recorded = (int)read.U(); }
             var asked = Puppeteer.WieldedOf(slot);
-            var gearLine = Puppeteer.GearLineOf(Puppeteer.LoadoutOf(slot), asked);
+            var gearLine = Recorded.GearLineOf(Recorded.LoadoutOf(slot), asked);
             var expected = gearLine.Length > 0 ? new GearIDRange(gearLine).GetCompID(eGearComponent.BaseItem) : 0u;
-            var puppet = Puppeteer.PlayerOf(slot);
-            var cosmetic = Puppeteer.CosmeticOf(slot);
+            var standIn = Puppeteer.StandInOf(slot);
             string body, item = "";
             int heldSlot = -1;
             uint heldId = 0;
-            if (puppet != null)
-            {
-                body = "puppet";
-                var inventory = puppet.Agent.Inventory;
-                heldSlot = (int)inventory.WieldedSlot;
-                var held = inventory.WieldedItem;
-                heldId = held?.ItemDataBlock?.persistentID ?? 0;
-                item = held == null ? "" : held.ItemDataBlock?.name + "/" + held.name;
-            }
-            else if (cosmetic != null) { body = "cosmetic"; heldSlot = cosmetic.HeldSlot; item = cosmetic.HeldName; heldId = cosmetic.HeldId; }
+            if (standIn != null) { body = standIn.Visible ? "stand-in" : "stand-in hidden"; heldSlot = standIn.HeldSlot; item = standIn.HeldName; heldId = standIn.HeldId; }
             else body = "none";
             var agrees = recorded < 0 || asked == recorded || recorded is not (1 or 2 or 3 or 10);
             rows.Add("{\"slot\":" + slot + ",\"body\":\"" + body + "\",\"recordedWield\":" + recorded + ",\"asked\":" + asked + ",\"heldSlot\":" + heldSlot

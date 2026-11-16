@@ -5,7 +5,6 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 
 namespace ForgeWeaponEnergyLab;
 
@@ -185,7 +184,7 @@ internal static class EnergyConfiguration
     internal static void ValidateDefinition(WeaponDefinition definition)
     {
         if (definition == null) throw new ArgumentNullException(nameof(definition));
-        if (definition.Id == null || definition.Id.Length > 128 || !Regex.IsMatch(definition.Id, "^[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*){2,}$")) Fail(definition.Id + ".id", "expected a lowercase namespaced id such as author.mod.weapon (at most 128 characters)");
+        if (definition.Id == null || definition.Id.Length > 128 || !ForgeCore.StrictJson.NamespacedId(definition.Id, 3, strict: true)) Fail(definition.Id + ".id", "expected a lowercase namespaced id such as author.mod.weapon (at most 128 characters)");
         if (string.IsNullOrWhiteSpace(definition.Name) || definition.Name.Length > 128) Fail(definition.Id + ".name", "expected a nonempty name of at most 128 characters");
         if (definition.Description is { } text && (string.IsNullOrWhiteSpace(text) || text.Length > 512)) Fail(definition.Id + ".description", "expected null or a nonempty text of at most 512 characters");
         if (definition.Slot is not (WeaponSlot.Main or WeaponSlot.Special)) Fail(definition.Id + ".slot", "expected Main or Special");

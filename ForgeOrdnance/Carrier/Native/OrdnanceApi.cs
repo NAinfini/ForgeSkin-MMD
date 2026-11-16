@@ -58,8 +58,8 @@ public interface IOrdnancePayload : IOrdnancePayloadParser
 
     /// <summary>Host: called for each kept <see cref="OrdnanceApi.SendState(string, ulong, uint, byte, byte[])"/> state when a player joins; returns the bytes the host
     /// keeps from then on. A state that holds times relative to when it was sent (seconds left) must be rebuilt from the payload's
-    /// current record here, or the late joiner starts those clocks over. Bytes that differ from the kept ones reach every peer's
-    /// <see cref="IOrdnancePayload.OnData"/> as the state's new value. The default keeps <paramref name="data"/>.</summary>
+    /// current record here, or the late joiner starts those clocks over. The returned bytes reach only the player who joined (its
+    /// <see cref="IOrdnancePayload.OnData"/>); the other peers keep the state they hold. The default keeps <paramref name="data"/>.</summary>
     byte[] RefreshState(ulong summonerLookup, uint throwId, byte tag, byte[] data) => data;
 }
 
@@ -458,6 +458,9 @@ public static class OrdnanceApi
     internal static bool TryGetType(string name, out RegisteredPayload type) => Types.TryGetValue(ForgeCore.Fnv.Hash32(name), out type!) && type.Name == name;
 
     internal static bool TryGetType(uint key, out RegisteredPayload type) => Types.TryGetValue(key, out type!);
+
+    /// <summary>The name of every registered payload type.</summary>
+    internal static IEnumerable<string> TypeNames { get { foreach (var type in Types.Values) yield return type.Name; } }
 
     internal static bool TryGetPayload(string type, out IOrdnancePayload payload)
     {

@@ -25,7 +25,7 @@ internal static class ShownPoses
     private static readonly Dictionary<int, JointClip?> Clips = new();
     private static readonly List<ulong> Done = new();
     private static WorldState? _restore;
-    // A pose whose body is not there yet (its enemy or player puppet spawns a frame later, or comes into range later): tried again every frame while the recording still has it playing.
+    // A pose whose body is not there yet (its enemy's puppet or player's stand-in is made a frame later, or comes into range later): tried again every frame while the recording still has it playing.
     private static readonly Dictionary<ulong, ShownPoseRecord> Waiting = new();
     private static readonly List<ulong> Retrying = new();
 
@@ -148,14 +148,8 @@ internal static class ShownPoses
         animator = null;
         if (anchor == 1)
         {
-            var agent = Puppeteer.PlayerOf(id)?.Agent;
-            if (agent != null && !agent.WasCollected && agent.AnimatorBody != null)
-            {
-                animator = agent.AnimatorBody;
-                return Bound(agent.Pointer, () => Models.BindJoints(agent));
-            }
-            // The player with no slot of its own is a copy of a body: its animator is bound the same way, with no agent behind it.
-            if (Puppeteer.CosmeticOf(id)?.Animator is not { } copy || copy.WasCollected) return null;
+            // A recorded player is a stand-in, a copy of a body with no agent behind it: its animator is bound as an agent's is.
+            if (Puppeteer.StandInOf(id)?.Animator is not { } copy || copy.WasCollected) return null;
             animator = copy;
             return Bound(copy.Pointer, () => Models.BindJoints(copy, "player copy " + id, out _));
         }

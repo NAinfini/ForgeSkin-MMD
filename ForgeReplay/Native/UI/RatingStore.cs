@@ -5,7 +5,7 @@ using System.Linq;
 namespace ForgeReplay;
 
 /// <summary>The member rating's files and state (PLAN 6): <c>rating.forge</c> beside the plugin (the fixed anchors and grade cuts) and the cache of
-/// every recording's member numbers in the replay folder (<see cref="RatingCache"/>), from which the list rates a recording without reading it. The
+/// every recording's member numbers in <c>BepInEx/cache/ForgeReplay</c> (<see cref="RatingCache"/>), from which the list rates a recording without reading it. The
 /// list's background read (<see cref="ReplayList"/>) feeds the cache; nothing here reads a recording.</summary>
 internal static class RatingStore
 {
@@ -30,7 +30,7 @@ internal static class RatingStore
         }
     }
 
-    private static string CachePath => Path.Combine(Plugin.ReplayFolder, CacheFile);
+    private static string CachePath => Path.Combine(BepInEx.Paths.CachePath, "ForgeReplay", CacheFile);
 
     private static RatingCache Cache
     {

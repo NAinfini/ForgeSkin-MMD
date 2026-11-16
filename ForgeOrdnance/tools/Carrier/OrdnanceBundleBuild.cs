@@ -30,21 +30,16 @@ public static class OrdnanceBundleBuild
     const string Stage = "Assets/OrdnanceStage";
     const string Generated = "Assets/OrdnanceGenerated";
 
-    public static void Build()
-    {
-        try { Run(); EditorApplication.Exit(0); }
-        catch (Exception e) { Debug.LogException(e); EditorApplication.Exit(1); }
-    }
+    public static void Build() => UnityBatch.Run(Run);
 
     static void Run()
     {
-        if (Application.unityVersion != "2019.4.21f1") throw new InvalidOperationException("Use the game's Unity 2019.4.21f1.");
-        var input = Required("FORGE_ORDNANCE_STAGE");
-        var output = Required("FORGE_ORDNANCE_OUT");
+        var input = Path.GetFullPath(UnityBatch.Env("FORGE_ORDNANCE_STAGE"));
+        var output = Path.GetFullPath(UnityBatch.Env("FORGE_ORDNANCE_OUT"));
         BundleName = Environment.GetEnvironmentVariable("FORGE_ORDNANCE_BUNDLE") ?? "";
         if (!BundleName.EndsWith(".bundle", StringComparison.Ordinal) || BundleName.Length == ".bundle".Length || BundleName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
             throw new InvalidDataException("Set FORGE_ORDNANCE_BUNDLE to the bundle's file name, ending in .bundle.");
-        var project = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        var project = UnityBatch.Project;
         foreach (var folder in new[] { Stage, Generated })
         {
             var full = Path.Combine(project, folder);
@@ -174,12 +169,6 @@ public static class OrdnanceBundleBuild
     static string PathOf(StageObject o, StageModel model)
         => string.IsNullOrEmpty(o.parent) ? o.name : PathOf(model.objects.First(p => p.name == o.parent), model) + "/" + o.name;
 
-    static string Required(string variable)
-    {
-        var value = Environment.GetEnvironmentVariable(variable);
-        if (string.IsNullOrWhiteSpace(value)) throw new InvalidDataException("Set " + variable + ".");
-        return Path.GetFullPath(value);
-    }
 
     static void Copy(string from, string to)
     {

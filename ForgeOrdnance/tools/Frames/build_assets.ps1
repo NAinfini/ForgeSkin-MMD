@@ -109,23 +109,12 @@ foreach ($part in $propList) {
     & $Blender --background --factory-startup --disable-autoexec --python-exit-code 1 --python "$tools/build_prop.py" -- "$tools/props.json" $part $Props $target
     if ($LASTEXITCODE -ne 0) { throw "Staging the part $part failed." }
 }
-$project = Join-Path $Build 'unity'
-if (!(Test-Path -LiteralPath (Join-Path $project 'ProjectSettings'))) {
-    $log = Join-Path $Build 'unity-create.log'
-    $proc = Start-Process -FilePath $Unity -WindowStyle Hidden -PassThru -ArgumentList @('-batchmode', '-nographics', '-quit', '-createProject', "`"$project`"", '-logFile', "`"$log`"")
-    $proc.WaitForExit()
-    if ($proc.ExitCode -ne 0) { throw "Unity could not create the project; see $log" }
-}
-New-Item -ItemType Directory -Force (Join-Path $project 'Assets/Editor') | Out-Null
-Copy-Item -LiteralPath "$tools/FramesBundleBuild.cs" -Destination (Join-Path $project 'Assets/Editor/FramesBundleBuild.cs') -Force
-
+. (Join-Path $tools '../../../ForgeCore/tools/Unity/UnityBatch.ps1')
 $env:FORGE_FRAMES_STAGE = $stage
 $env:FORGE_FRAMES_OUT = $out
 $log = Join-Path $Build 'unity-build.log'
 if (Test-Path -LiteralPath $log) { Remove-Item -LiteralPath $log }
-$proc = Start-Process -FilePath $Unity -WindowStyle Hidden -PassThru -ArgumentList @('-batchmode', '-nographics', '-quit', '-projectPath', "`"$project`"", '-executeMethod', 'FramesBundleBuild.Build', '-logFile', "`"$log`"")
-$proc.WaitForExit()
-if ($proc.ExitCode -ne 0) { throw "Unity build failed; see $log" }
+if ((Invoke-UnityBatch $Unity (Join-Path $Build 'unity') @("$tools/FramesBundleBuild.cs") 'FramesBundleBuild.Build' $log (Join-Path $Build 'unity-create.log')) -ne 0) { throw "Unity build failed; see $log" }
 # Unity can exit 0 without running the method (licence, compile errors): require this run's receipt.
 $bundle = Join-Path $out 'forge-frames.bundle'
 $length = (Get-Item -LiteralPath $bundle).Length
@@ -143,22 +132,13 @@ if ($rigSkipped) {
     Write-Warning '-SkipRig reused earlier rigged models: no receipt written, the package is not updated. Run without -SkipRig before packaging.'
     return
 }
-# The receipt pins only inputs that outlive the build: this repository's tools (and Tools/Blender/hinge_tool), definitions and props.json (keys relative to the
-# repository), and the model sources under -Cut, -Pilot and -Props (keys "cut/", "pilot/", "props/" under the recorded roots).
-# The stage folder and the per-model outputs are rebuilt by every run, so they are never pinned. The packaging step (tools/package_release.py) is not an input
-# either: it only reads the finished bundle and its receipt, so changing how the zip is made must not make the models stale.
-$inputs = @{}
-$trackedInputs = @(Get-ChildItem -LiteralPath $tools -File -Recurse | Where-Object { $_.Extension -in '.cs', '.ps1', '.py' })
-$trackedInputs += Get-Item -LiteralPath "$repo/Mods/ForgeOrdnance/Frames/Definitions/frames.forge"
-$trackedInputs += Get-Item -LiteralPath "$tools/props.json"
-# bake.py and the add-on modules it imports (Tools/Blender/hinge_tool) shape the models too.
-$trackedInputs += Get-ChildItem -LiteralPath "$repo/Tools/Blender/hinge_tool" -File | Where-Object { $_.Extension -in '.py', '.ps1' }
-foreach ($inputFile in $trackedInputs) {
-    $relative = [IO.Path]::GetRelativePath($repo, $inputFile.FullName).Replace('\', '/')
-    # Hashed as Git stores the file (CRLF read as LF, package_release.py text_sha256): a Windows checkout and the repository give one hash.
-    $text = [Text.Encoding]::Latin1.GetBytes([Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($inputFile.FullName)).Replace("`r`n", "`n"))
-    $inputs[$relative] = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($text)).ToLowerInvariant()
-}
+# The receipt pins only inputs that outlive the build and shape the bundle: the repository files package_release.py lists (FRAMES_BUILD_INPUTS: this
+# build's scripts, ForgeCore's UnityBatch, the hinge add-on, props.json and the fields of the definitions the build reads), and the model sources under
+# -Cut, -Pilot and -Props (keys "cut/", "pilot/", "props/" under the recorded roots). The stage folder and the per-model outputs are rebuilt by every run,
+# so they are never pinned; the icon, cockpit-art, audio and preview tools and the packaging step never reach the bundle, so they are not inputs either.
+# The digests come from package_release.py, the one function the packaging check compares them with.
+$inputs = python (Join-Path $tools '../package_release.py') --build-inputs | ConvertFrom-Json -AsHashtable
+if ($LASTEXITCODE -ne 0) { throw 'Hashing the build inputs failed.' }
 $sources = @{}
 $sourceFiles = @()
 foreach ($m in $Models) {
@@ -174,7 +154,7 @@ foreach ($source in $sourceFiles) {
     $key = $source[0] + '/' + [IO.Path]::GetRelativePath($source[1], $source[2]).Replace('\', '/')
     $sources[$key] = (Get-FileHash -LiteralPath $source[2] -Algorithm SHA256).Hash.ToLowerInvariant()
 }
-@{ format = 3; bundleBytes = $length; bundleSha256 = $hash; models = @($Models | ForEach-Object { $prefabs[$_] } | Sort-Object); props = @($propList | Sort-Object)
+@{ format = '1.0.0'; bundleBytes = $length; bundleSha256 = $hash; models = @($Models | ForEach-Object { $prefabs[$_] } | Sort-Object); props = @($propList | Sort-Object)
    roots = @{ cut = $Cut; pilot = $Pilot; props = $Props }; inputs = $inputs; sources = $sources } |
     ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receipt -Encoding utf8NoBOM
 # The package keeps the verified bundle and its receipt in its own Assets/Frames/Models, where package_release.py reads them (the build folder is disposable).

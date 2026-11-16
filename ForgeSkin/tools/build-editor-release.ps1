@@ -1,22 +1,25 @@
 #Requires -Version 7.0
 # Builds one ForgeSkin release from the current source and lists what to upload; never uploads:
-#   pwsh Mods/ForgeSkin/tools/build-editor-release.ps1 [-BepInEx <profile>/BepInEx] [-Output <dir>] [-Character <model.vrm>] [-SkipMake | -PluginOnly]
-# 1. the plugin (Release; builds ForgeCore with it), 2. the ForgeCore and ForgeSkin Thunderstore zips, checked by
-# Mods/Build/verify_release.py, 3. Backend/vanilla-textures.json from the installed game (the game's own textures of its
+#   pwsh Mods/ForgeSkin/tools/build-editor-release.ps1 -ForgeCore <NAinfini-ForgeCore zip> [-BepInEx <profile>/BepInEx] [-Output <dir>] [-Character <model.vrm>] [-SkipMake | -PluginOnly]
+# -ForgeCore is the ForgeCore zip of the release set (Mods/Release/build-all.ps1 or build-release-set.ps1, <release>/packages/):
+# the editor carries that very package, never a second build of it.
+# 1. the plugin (Release; builds ForgeCore with it), 2. the ForgeSkin Thunderstore zip, checked together with the given ForgeCore
+# zip by Mods/Build/verify_release.py against this build, 3. Backend/vanilla-textures.json from the installed game (the game's own textures of its
 # revision, which tell the editor when another mod rewrote the game files: run on a Steam-verified install; commit the file
 # when it changed) and the self-contained single-file backend, 4. the plugin the installer carries:
-# publish/plugin/ForgeSkin/ (ForgeSkin.Plugin.dll and its lang/) and publish/plugin/ForgeCore/ (the unpacked ForgeCore zip),
+# publish/plugin/ForgeSkin/ (ForgeSkin.Plugin.dll and its lang/) and publish/plugin/ForgeCore/ (the zip's plugins/ForgeCore/, the folder a mod manager installs),
 # 5. the character preview's motion clips (Tools/Models/stage-skin-motions.ts), the tutorial's pictures when any is missing
 # (Editor/scripts/docs-shots.mjs; the character pictures are taken on the humanoid model -Character names, the release's
 # AvatarSample_D_Darkness, and a release with any picture still missing stops), the weapon gallery's images of every item
 # from the installed game (Editor/scripts/gallery-thumbs.mjs) and `pnpm make` (Squirrel: ForgeSkin-<version> Setup.exe, ForgeSkin-<version>-full.nupkg, RELEASES; and the portable
 # ForgeSkin-<version>-portable.zip, whose contents are checked), 6. <Output>/upload with every file to upload and
-# upload.sha256. -SkipMake stops before step 5. -PluginOnly runs steps 1, 2 and 4 only (no backend, no installer): what the
-# development editor runs by itself when publish/plugin is missing. The default Output is the folder the backend of a checkout
+# upload.sha256. -SkipMake stops before step 5. -PluginOnly runs steps 1, 2 and 4 only (no backend, no installer): the
+# development editor's plugin. The default Output is the folder the backend of a checkout
 # reads its plugin from (Install.PluginSource), so a run also refreshes the development plugin. -BepInEx defaults to
 # $env:GTFO_BEPINEX_PATH, else the Forge-Multiplayer r2modman profile.
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory)][string]$ForgeCore,
     [string]$BepInEx,
     [string]$Output,
     [string]$Character,
@@ -27,6 +30,7 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
 Set-Location $root
 if (-not $BepInEx) { $BepInEx = if ($env:GTFO_BEPINEX_PATH) { $env:GTFO_BEPINEX_PATH } else { Join-Path $env:APPDATA 'r2modmanPlus-local/GTFO/profiles/Forge-Multiplayer/BepInEx' } }
+$ForgeCore = (Resolve-Path $ForgeCore).Path
 $out = [System.IO.Path]::GetFullPath($(if ($Output) { $Output } else { Join-Path $root 'artifacts/forge-skin-release' }))
 $skin = Join-Path $root 'Mods/ForgeSkin'
 $editor = Join-Path $skin 'Editor'
@@ -51,12 +55,10 @@ Check 'plugin build'
 
 Step 'Thunderstore zips'
 foreach ($dir in $zips, $upload) { if (Test-Path $dir) { Remove-Item -Recurse -Force $dir } }
-foreach ($package in 'ForgeCore', 'ForgeSkin') {
-    $packager = "Mods/$package/tools/package_release.py"
-    if (-not (Test-Path $packager)) { throw "$packager is missing" }
-    python -E -X utf8 -B $packager --artifacts-path $dotnet --output $zips
-    Check "$package package"
-}
+New-Item -ItemType Directory -Force $zips | Out-Null
+Copy-Item $ForgeCore $zips
+python -E -X utf8 -B Mods/ForgeSkin/tools/package_release.py --artifacts-path $dotnet --output $zips
+Check 'ForgeSkin package'
 python -E -X utf8 -B Mods/Build/verify_release.py --packages $zips --artifacts-path $dotnet
 Check 'verify_release'
 
@@ -79,16 +81,12 @@ if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
 $pluginDir = New-Item -ItemType Directory -Force (Join-Path $staging 'ForgeSkin')
 Copy-Item (Join-Path $dotnet 'bin/ForgeSkin/release/ForgeSkin.Plugin.dll') $pluginDir
 Copy-Item -Recurse (Join-Path $dotnet 'bin/ForgeSkin/release/lang') $pluginDir
-$core = @(Get-ChildItem $zips -Filter 'NAinfini-ForgeCore-*.zip')
-if ($core.Count -ne 1) { throw "expected one ForgeCore zip in $zips" }
-# The ForgeCore folder as a mod manager would fill BepInEx/plugins/NAinfini-ForgeCore/ minus the plugins/ForgeCore/ level: the zip's root
-# files and the contents of its plugins/ForgeCore/ (ForgeCore.dll with its lang/ and fonts/ beside it).
+# The zip's plugins/ForgeCore/ (ForgeCore.dll with its lang/ and fonts/ beside it): the folder a mod manager installs as
+# BepInEx/plugins/NAinfini-ForgeCore/ForgeCore/, which the editor compares file by file. The root files are the mod manager's own.
 $unpacked = Join-Path $out 'forgecore.unpacked'
 if (Test-Path $unpacked) { Remove-Item -Recurse -Force $unpacked }
-Expand-Archive $core[0].FullName $unpacked
-New-Item -ItemType Directory -Force (Join-Path $staging 'ForgeCore') | Out-Null
-Get-ChildItem $unpacked -File | Copy-Item -Destination (Join-Path $staging 'ForgeCore')
-Copy-Item -Recurse (Join-Path $unpacked 'plugins/ForgeCore/*') (Join-Path $staging 'ForgeCore')
+Expand-Archive $ForgeCore $unpacked
+Move-Item (Join-Path $unpacked 'plugins/ForgeCore') (Join-Path $staging 'ForgeCore')
 Remove-Item -Recurse -Force $unpacked
 foreach ($need in 'ForgeSkin/ForgeSkin.Plugin.dll', 'ForgeCore/ForgeCore.dll') {
     if (-not (Test-Path (Join-Path $staging $need))) { throw "staged plugin lacks $need" }
@@ -97,7 +95,7 @@ New-Item -ItemType Directory -Force $publish | Out-Null
 $final = Join-Path $publish 'plugin'
 if (Test-Path $final) { Remove-Item -Recurse -Force $final }
 Move-Item $staging $final
-Write-Host "  publish/plugin: ForgeSkin.Plugin.dll and lang/ + $($core[0].Name) unpacked"
+Write-Host "  publish/plugin: ForgeSkin.Plugin.dll and lang/ + plugins/ForgeCore/ of $(Split-Path $ForgeCore -Leaf)"
 if ($PluginOnly) { return }
 
 $files = @(Get-ChildItem $zips -Filter 'NAinfini-ForgeSkin-*.zip')

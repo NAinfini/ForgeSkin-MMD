@@ -168,8 +168,9 @@ internal static class ReplayFeed
         var empty = false;
         for (var i = 0; i < LoadoutLines; i++) if (i >= lines.Length || lines[i].Trim().Length == 0) empty = true;
         if (!empty) return loadout;
-        var filled = new string[LoadoutLines];
-        for (var i = 0; i < LoadoutLines; i++) filled[i] = i < lines.Length ? lines[i] : "";
+        // The lines after the gear (the outfit) are kept as they are.
+        var filled = new string[Math.Max(LoadoutLines, lines.Length)];
+        for (var i = 0; i < filled.Length; i++) filled[i] = i < lines.Length ? lines[i] : "";
         foreach (var line in presence)
         {
             if (line.Slot != slot || !line.Joined || line.Loadout == null) continue;

@@ -23,7 +23,9 @@ internal readonly record struct NoteLine(uint TimeMs, string ModId, string Kind,
 internal readonly record struct GameLine(uint TimeMs, string Text);
 
 /// <summary>A line on a terminal's screen, or what is typed at it so far (<see cref="Typed"/>).</summary>
-internal readonly record struct TerminalText(uint TimeMs, ulong Terminal, string Text, bool Typed);
+/// <summary>A row of a terminal's screen; <paramref name="Column"/>, when not null, is the left column of a prefixed line (a command's name;
+/// empty on the rows the text runs on to), the row's text standing in the column after it.</summary>
+internal readonly record struct TerminalText(uint TimeMs, ulong Terminal, string Text, bool Typed, string? Column = null);
 
 /// <summary>A player (0 to 3) started using a terminal (the TerminalState event naming them).</summary>
 internal readonly record struct TerminalUse(uint TimeMs, int Slot, ulong Terminal);
@@ -179,7 +181,7 @@ internal sealed class Analysis
         }
         if (into != null && first >= 0)
             for (var i = first; i < TerminalPrints.Count && TerminalPrints[i].TimeMs <= nowMs; i++)
-                if (TerminalPrints[i].Line.Key == terminal) into.Add(TerminalPrints[i].Line.Text);
+                if (TerminalPrints[i].Line.Key == terminal) into.Add(ScreenLine(TerminalPrints[i].Line));
         return count;
     }
 
@@ -215,10 +217,10 @@ internal sealed class Analysis
     /// <summary>The recorder's player slot, -1 when it is not known; its own numbers are exact in any recording.</summary>
     internal int RecorderSlot { get; init; } = -1;
 
-    /// <summary>Every kill of the recording in time order, for the kill feed.</summary>
+    /// <summary>Every kill of the recording in time order (highlights).</summary>
     internal List<KillLine> Kills { get; } = new();
 
-    /// <summary>Every wake-up of the recording in time order, for the blame feed: the host's Wake events with the cause the game names; on
+    /// <summary>Every wake-up of the recording in time order, the blame lines of the events page: the host's Wake events with the cause the game names; on
     /// a client (or where no Wake came) the game's own wake-up animation (WakeUp) or the locomotion state turning to waking, cause unknown.
     /// A wake-up the game passed on from a known enemy is counted on that enemy's line.</summary>
     internal List<WakeLine> Wakes { get; } = new();
@@ -994,7 +996,12 @@ internal sealed class Analysis
                 {
                     var printed = ReplayExtras.Printed(payload!);
                     TerminalPrints.Add((timeMs, printed));
-                    foreach (var line in TerminalColumns(printed.Text).Split('\n')) TerminalTexts.Add(new TerminalText(timeMs, printed.Key, line.TrimEnd(), false));
+                    if (Prefixed(printed, out var column, out var said))
+                    {
+                        var rows = said.Split('\n');
+                        for (var i = 0; i < rows.Length; i++) TerminalTexts.Add(new TerminalText(timeMs, printed.Key, rows[i].TrimEnd(), false, i == 0 ? column : ""));
+                    }
+                    else foreach (var line in TerminalColumns(printed.Text).Split('\n')) TerminalTexts.Add(new TerminalText(timeMs, printed.Key, line.TrimEnd(), false));
                     break;
                 }
             case EventKind.TerminalInput:
@@ -1256,6 +1263,25 @@ internal sealed class Analysis
     internal static string Untagged(string text) => System.Text.RegularExpressions.Regex.Replace(text, "<[^>]*>", "").Trim();
 
     private const int TerminalWidth = 60;
+
+    /// <summary>A prefixed line (types 254 and 253: the prefix, a tab, the text the game indents under it): the prefix without its tags and the
+    /// text with its written line breaks (<c>\n</c> in the game's text) made real, its columns as <see cref="TerminalColumns"/> makes them.</summary>
+    internal static bool Prefixed(TerminalPrint line, out string column, out string text)
+    {
+        var tab = line.Type is 253 or 254 ? line.Text.IndexOf('\t') : -1;
+        column = tab < 0 ? "" : Untagged(line.Text.Substring(0, tab));
+        text = tab < 0 ? "" : TerminalColumns(line.Text.Substring(tab + 1).Replace("\\n", "\n"));
+        return tab >= 0;
+    }
+
+    /// <summary>A recorded line as a terminal screen shows it: a prefixed one with its text two characters past the prefix, at least at the
+    /// sixteenth, and the rows it runs on to under the same column.</summary>
+    internal static string ScreenLine(TerminalPrint line)
+    {
+        if (!Prefixed(line, out var column, out var text)) return line.Text;
+        var at = Math.Max(16, column.Length + 2);
+        return column.PadRight(at) + text.Replace("\n", "\n" + new string(' ', at));
+    }
     private static readonly System.Text.RegularExpressions.Regex Spacing = new(@"<(pos|indent|space)=([0-9.]+)(%|px|em)?>|\t", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>A line of a terminal's printout without its colour and size tags, its column tags (<c>&lt;pos&gt;</c>, <c>&lt;indent&gt;</c>,

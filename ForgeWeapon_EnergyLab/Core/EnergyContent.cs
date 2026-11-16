@@ -143,7 +143,7 @@ internal static class EnergyContent
     private static string Bundle(string folder, string bundle)
     {
         const string Field = "Model.Bundle";
-        if (string.IsNullOrWhiteSpace(bundle) || Path.IsPathRooted(bundle) || bundle.Split('/', '\\').Contains(".."))
+        if (!ForgeCore.PosixPath.IsRelativeFile(ForgeCore.PosixPath.ToPosix(bundle)))
             throw new ForgeCore.StrictJsonException(Field, "must be a file path inside the definition's folder (not absolute, no '..').");
         try { return Path.GetFullPath(Path.Combine(folder, bundle)); }
         catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException)

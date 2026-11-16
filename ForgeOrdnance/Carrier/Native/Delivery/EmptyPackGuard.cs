@@ -7,9 +7,7 @@ namespace ForgeOrdnance;
 /// a player's drop or swap, a recalled checkpoint): a full pack is never empty, so the state that emptied it is in the line.</summary>
 internal static class EmptyPackGuard
 {
-    internal static void Subscribe() => ForgeCore.GameHooks.PickupItemState.After((call, _) => Changed(call.Item, call.New, call.Old, call.Recall));
-
-    private static void Changed(LG_PickupItem_Sync item, pPickupItemState state, pPickupItemState before, bool recall)
+    internal static void Changed(LG_PickupItem_Sync item, pPickupItemState state, pPickupItemState before, bool recall)
     {
         try
         {

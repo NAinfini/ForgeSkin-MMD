@@ -29,7 +29,7 @@ internal sealed class OrdnanceLoadout : PickerSource
     internal static void Register()
     {
         LobbyRules.Changed += Instance.RulesChanged;
-        UIKit.Mod(Plugin.Id).AddLobbyButton("Loadout", UIText.Key("lobby.button"), bar => Instance.Toggle(bar), Note,
+        UIKit.Mod(Plugin.Id).AddLobbyButton("Loadout", LobbyArea.Below, LobbyWidth.Half, UIText.Key("lobby.button"), bar => Instance.Toggle(bar), Note,
             bar => bar.m_player != null && bar.m_player.IsLocal && !PickerOff);
     }
 
@@ -177,17 +177,15 @@ internal sealed class OrdnanceLoadout : PickerSource
             Stats = definition.Stats.Select(s => new PickerStat(s.Name.ToUpperInvariant(), s.Value, s.Max)).ToList(),
             Readouts = new[]
             {
-                new PickerReadout(OrdnanceText.T("picker.cooldown"), Number(cooldown), seconds, Share(cooldown, longestCooldown)),
+                new PickerReadout(OrdnanceText.T("picker.cooldown"), DescriptionText.Number(cooldown), seconds, Share(cooldown, longestCooldown)),
                 uses,
-                new PickerReadout(OrdnanceText.T("picker.arrives"), Number(definition.CallInDelay), seconds, Share(definition.CallInDelay, longestDelay))
+                new PickerReadout(OrdnanceText.T("picker.arrives"), DescriptionText.Number(definition.CallInDelay), seconds, Share(definition.CallInDelay, longestDelay))
             }
         };
     }
 
     /// <summary>A value against the largest of its kind among the call-ins offered (the readout's bar).</summary>
     private static float Share(double value, double largest) => largest <= 0.0 ? 0f : (float)Math.Clamp(value / largest, 0.0, 1.0);
-
-    private static string Number(double value) => value.ToString("0.#", CultureInfo.InvariantCulture);
 
     public override string? Pick(int slot, int tab, int entry)
     {

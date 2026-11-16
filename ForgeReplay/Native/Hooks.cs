@@ -22,14 +22,10 @@ internal static partial class Hooks
     {
         typeof(ShotHeavy), typeof(Melee),
         typeof(SecurityDoor), typeof(Scan), typeof(WaveStart), typeof(ChatMessage),
-        typeof(Interact), typeof(Throw), typeof(Sentry), typeof(Mine), typeof(Tongue), typeof(Projectiles), typeof(Scout), typeof(Noise), typeof(Ping),
+        typeof(Interact), typeof(Throw), typeof(Sentry), typeof(Mine), typeof(Tongue), typeof(Projectiles), typeof(Scout), typeof(Noise), typeof(Ping), typeof(Wake),
         typeof(Environment), typeof(Presence), typeof(OwnDamage), typeof(ReviveBy), typeof(Supply), typeof(Disinfection),
         typeof(Say), typeof(TerminalOutput), typeof(TerminalUse), typeof(LockHook), typeof(BulkheadHook), typeof(HsuHook), typeof(PortalHook), typeof(ClusterHook), typeof(TurbineHook), typeof(PuzzleClusterHook), typeof(LaidHook), typeof(ScanMovedHook), typeof(HeldHook), typeof(RemoteChargeHook), typeof(HeartbeatHook), typeof(MeleeHitHook),
     };
-
-    // Read-only watchers of methods another package owns (ForgeEnemy patches the same sleep and wake-up methods): put on as observers
-    // through ForgeCore, which lets them sit beside the owner.
-    private static readonly Type[] Watchers = { typeof(Wake), typeof(WakeAnim), typeof(SleepSense) };
 
     internal static void Install()
     {
@@ -37,9 +33,6 @@ internal static partial class Hooks
         foreach (var feature in Features)
             try { harmony.CreateClassProcessor(feature).Patch(); }
             catch (Exception error) { Plugin.Logger.Error("The " + feature.Name + " recording hook could not be put on, so that part is not recorded: " + error.Message); }
-        foreach (var watcher in Watchers)
-            try { ForgeCore.Hooks.ObserveClass(Plugin.Id, watcher); }
-            catch (Exception error) { Plugin.Logger.Error("The " + watcher.Name + " recording hook could not be put on, so that part is not recorded: " + error.Message); }
         InstallBrackets();
         InstallMoreBrackets();
         InstallWorldBrackets();
@@ -51,7 +44,9 @@ internal static partial class Hooks
             try
             {
                 var p = data.position;
-                Rec.Begin().U(data.itemData.itemID_gearCRC).Pos(p.x, p.y, p.z).U((ulong)data.mode);
+                ItemReplicator? made = replicator;
+                var pickup = data.mode == ItemMode.Pickup ? made?.Item?.GetComponentInChildren<LG_PickupItem_Sync>() : null;
+                Rec.Begin().U(data.itemData.itemID_gearCRC).Pos(p.x, p.y, p.z).U((ulong)data.mode).U(pickup == null ? 0UL : Rec.Key(pickup)).U(0);
                 Rec.Emit(EventKind.ItemSpawn);
                 NoteSpawned(data, replicator);
             }
@@ -59,6 +54,26 @@ internal static partial class Hooks
         };
         // A reload puts the whole field back: the first block once the game has settled is a keyframe (PlayerRecorder.Tick).
         ForgeCore.GameEvents.CheckpointReloaded += () => { if (Rec.On) { Rec.Begin().U(1); Rec.Emit(EventKind.Checkpoint); PlayerRecorder.Unsettled(); } };
+    }
+
+    /// <summary>The opening census: every pickup lying in the level when the recording opens (built with the level, by the game or by any mod) is
+    /// written as an ItemSpawn with its key, so the replay binds the recorded key to the replay level's matching pickup, or spawns the item when
+    /// that level has none: the replay needs no knowledge of who placed it. Items already picked up are left to their own states.</summary>
+    internal static void ItemCensus()
+    {
+        if (!Rec.On) return;
+        try
+        {
+            foreach (var pickup in LevelFind.All<LG_PickupItem_Sync>())
+            {
+                var item = pickup.item;
+                if (item == null || item.WasCollected || pickup.GetCurrentState().status != ePickupItemStatus.PlacedInLevel) continue;
+                var p = pickup.transform.position;
+                Rec.Begin().U(item.pItemData.itemID_gearCRC).Pos(p.x, p.y, p.z).U((ulong)ItemMode.Pickup).U(Rec.Key(pickup)).U(1);
+                Rec.Emit(EventKind.ItemSpawn);
+            }
+        }
+        catch (Exception e) { Rec.Fail("item-census", e); }
     }
 
     // One subscription to a ForgeCore bracket, made on its own like a Harmony class, so one that cannot be hung costs that feature only.
@@ -159,7 +174,8 @@ internal static partial class Hooks
             ForgeCore.PlayerReceiveKind.Explosion => 2UL,
             ForgeCore.PlayerReceiveKind.TentacleAttack => 3UL,
             ForgeCore.PlayerReceiveKind.ShooterProjectile => 4UL,
-            _ => 5UL,
+            ForgeCore.PlayerReceiveKind.Fall => 5UL,
+            _ => OtherHurt,
         });
     }
 
@@ -382,10 +398,12 @@ internal static partial class Hooks
                 var player = source?.TryCast<PlayerAgent>();
                 var damage = limb.m_base;
                 if (player == null || !player.IsLocallyOwned || damage == null) return;
-                var behind = directional && limb.ApplyDamageFromBehindBonus(1f, position, direction, 1f) > 1.001f;
+                // The bonus scales the damage, so the bonus on 1 is both the in-the-back test and, without a swing's back multiplier, the factor.
+                var bonus = directional ? limb.ApplyDamageFromBehindBonus(1f, position, direction, 1f) : 1f;
+                var behind = bonus > 1.001f;
                 // The game's order: the limb, the bonus from behind with the swing's back multiplier, a sleeper's multiplier.
                 var reading = limb.TestDamageModifiers(amount, precision);
-                if (directional) reading = limb.ApplyDamageFromBehindBonus(reading, position, direction, backstabber);
+                if (directional) reading = backstabber == 1f ? reading * bonus : limb.ApplyDamageFromBehindBonus(reading, position, direction, backstabber);
                 if (sleeper != 1f && damage.Owner?.Locomotion?.CurrentStateEnum == Enemies.ES_StateEnum.Hibernate) reading *= sleeper;
                 EnemyDamage(damage, kind, reading, (ulong)player.PlayerSlotIndex, limb.m_limbID, false, 0f, false, 0f,
                     behind, gear, Vector3.Distance(player.transform.position, position));

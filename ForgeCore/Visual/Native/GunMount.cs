@@ -2,11 +2,9 @@ using System;
 using System.Collections.Generic;
 using GameData;
 using Gear;
-using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Player;
 using RootMotion.FinalIK;
 using UnityEngine;
-using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
 
 namespace ForgeVisual;
@@ -124,7 +122,7 @@ public sealed class GunMount
     private readonly int _worldLayer;
     private readonly List<Renderer> _hidden = new();
     private readonly List<(Animator Animator, AnimatorCullingMode Mode)> _animators = new();
-    private (Renderer Renderer, Il2CppReferenceArray<Material> World, Il2CppReferenceArray<Material> FirstPerson)[]? _surfaces;
+    private HeldSurfaces? _surfaces;
     private ItemEquippable? _owner;
     private Bindings _native = null!;
     private Transform _donorGrip, _donorLeft;
@@ -594,38 +592,8 @@ public sealed class GunMount
 
     private void ApplySurfaces(bool firstPerson)
     {
-        _surfaces ??= ReadSurfaces();
-        foreach (var (renderer, world, first) in _surfaces)
-        {
-            if (renderer == null || renderer.WasCollected) continue;
-            renderer.sharedMaterials = firstPerson ? first : world;
-            var shadows = !firstPerson;
-            renderer.shadowCastingMode = shadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
-            renderer.receiveShadows = shadows;
-        }
-    }
-
-    private (Renderer, Il2CppReferenceArray<Material>, Il2CppReferenceArray<Material>)[] ReadSurfaces()
-    {
-        var read = new List<(Renderer, Il2CppReferenceArray<Material>, Il2CppReferenceArray<Material>)>();
-        void Add(Transform root)
-        {
-            foreach (var renderer in root.GetComponentsInChildren<Renderer>(true))
-            {
-                if (!Models.IsMesh(renderer)) continue;
-                var world = renderer.sharedMaterials;
-                var first = new Il2CppReferenceArray<Material>(world.Length);
-                for (var i = 0; i < world.Length; i++) first[i] = LitMaterial.FirstPerson(world[i])!;
-                read.Add((renderer, world, first));
-            }
-        }
-        if (_options.ApplyView != null) Add(_sightPart!);
-        else
-        {
-            Add(_model);
-            if (_magazine != null) Add(_magazine);
-        }
-        return read.ToArray();
+        _surfaces ??= _options.ApplyView != null ? HeldSurfaces.Of(_sightPart) : HeldSurfaces.Of(_model, _magazine);
+        _surfaces.Show(firstPerson);
     }
 
     private void Bind()

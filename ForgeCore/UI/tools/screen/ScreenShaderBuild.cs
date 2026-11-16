@@ -2,6 +2,7 @@
 using System;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 using UnityEditor;
 using UnityEngine;
 
@@ -41,7 +42,8 @@ public static class ScreenShaderBuild
             if (result == null) throw new InvalidOperationException("The bundle build of " + name + " failed.");
             var bytes = File.ReadAllBytes(Path.Combine(output, bundleName));
             string sha;
-            using (var hash = SHA256.Create()) sha = BitConverter.ToString(hash.ComputeHash(File.ReadAllBytes(source))).Replace("-", "").ToLowerInvariant();
+            // The source as Git stores its text (CRLF read as LF), so every checkout gives one hash.
+            using (var hash = SHA256.Create()) sha = BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(File.ReadAllText(source).Replace("\r\n", "\n")))).Replace("-", "").ToLowerInvariant();
             File.WriteAllBytes(Path.Combine(shaders, embedded + ".shaderbundle"), bytes);
             File.WriteAllText(Path.Combine(native, file),
                 "// Generated from tools/screen/" + name + ".shader with Unity 2019.4.21f1 by tools/screen/build_screen_shaders.ps1; do not edit.\nnamespace ForgeUI;\n\ninternal static class " + cls + "\n{\n    internal const string SourceSha256 = \"" + sha + "\";\n    internal const string AssetName = \"" + asset + "\";\n    internal static byte[] Read() => ForgeCore.Assets.Embedded(\"ForgeCore.Shaders." + embedded + ".shaderbundle\");\n}\n");

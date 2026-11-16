@@ -1,0 +1,16 @@
+Forge effect library effects
+=================================================
+
+forge-ordnance-fx.bundle (when installed) holds the effects of the carrier, Arsenal and the exosuits, rebuilt from Unity Asset Store packs under
+the Standard Unity Asset Store EULA, which allows shipping them inside a built product. They are shipped only inside that built bundle; the packs'
+source files are not redistributed and are not in this repository. fx-licences.forge next to the bundle lists every pack used, its recorded
+licence and the effects taken from it; forge-ordnance-fx.manifest.json is its build receipt.
+The shaders that draw them (Tools/Vfx/ForgeVfx/Assets/ForgeVfx/Shaders) are the project's own, MIT.
+
+HeavyBlast/forge-visual-fx.bundle
+---------------------------------
+The heavy grenade launcher's explosion. Built with Unity 2019.4.21f1 by the effect library (Tools/Vfx/FxLibrary/fx_slots.py); it holds
+effects rebuilt from Unity Asset Store packs under the Standard Unity Asset Store EULA, which allows shipping them inside a built product.
+They are shipped only inside that built bundle; the packs' source files are not redistributed and are not in this repository.
+HeavyBlast/fx-licences.forge next to the bundle lists every pack used, its recorded licence and the effects taken from it;
+HeavyBlast/forge-visual-fx.manifest.json is its build receipt. ForgeWeapon_EnergyLab ships its own copy of the same bundle.

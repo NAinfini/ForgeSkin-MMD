@@ -10,7 +10,6 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <!-- Line numbers in error logs without the builder's local paths. -->
     <DebugType>embedded</DebugType>
-    <PathMap>$(MSBuildProjectDirectory)=/ForgeEmote</PathMap>
     <GTFOBepInExPath Condition="'$(GTFOBepInExPath)' == ''">$(GTFO_BEPINEX_PATH)</GTFOBepInExPath>
   </PropertyGroup>
   <Target Name="RequireLocalMedia" BeforeTargets="ResolveReferences">

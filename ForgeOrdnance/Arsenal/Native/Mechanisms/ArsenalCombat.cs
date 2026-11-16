@@ -25,7 +25,7 @@ internal static class ArsenalCombat
         foreach (var found in ForgeCore.Enemies.Near(centre, radius))
         {
             var enemy = found!;
-            if (enemy.CourseNode != room) continue;
+            if (!ForgeCore.NativeObjects.Same(enemy.CourseNode, room)) continue;
             var seen = ForgeCore.Level.HasSight(centre, ForgeCore.Enemies.AimPoint(enemy));
             var health = enemy.Damage.HealthMax;
             var distance = Vec.SqrLength(enemy.Position - centre);

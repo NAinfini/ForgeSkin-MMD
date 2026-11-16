@@ -25,9 +25,14 @@ internal sealed record HomingSpec(float Angle, float Range)
 
 /// <summary>Validated parameters of payload type <see cref="TypeName"/>: a game gear block lent into the special weapon slot,
 /// shown with a ForgeVisual model, taken from the drop pod's rack.</summary>
-internal sealed class HeavyWeaponSpec
+internal sealed class HeavyWeaponSpec : IOrdnanceDescribed
 {
     public const string TypeName = "arsenal.HeavyWeapon";
+
+    /// <summary>A description's numbers (DEVELOPERS.md, "Description numbers"): {0} Count, {1} Grenade.Damage, {2} Grenade.Radius,
+    /// {3} Grenade.EdgeShare in per cent, {4} Homing.Range. A part the weapon does not have reads 0.</summary>
+    public IReadOnlyList<double> DescriptionValues =>
+        new double[] { Count, Grenade?.Damage ?? 0, Grenade?.Radius ?? 0, (Grenade?.EdgeShare ?? 0) * 100.0, Homing?.Range ?? 0 };
 
     /// <summary>The ForgeVisual model, <c>Pack:item</c>.</summary>
     public string Model { get; private set; } = "";
@@ -118,11 +123,13 @@ internal sealed class HeavyWeaponSpec
 
     internal const double MagazineMin = 1, MagazineMax = 1000;
 
-    /// <summary>A copy with the ammunition a placement sets (null keeps the definition's): the reserve share, the rounds loaded and the reserve one shot spends.</summary>
-    public HeavyWeaponSpec WithAmmo(float? ammoRatio, float? magazine, float? ammoCost)
+    /// <summary>A copy with what a placement sets (null keeps the definition's): the reserve share, the rounds loaded, the reserve one shot
+    /// spends, and how many racks lie there at once.</summary>
+    public HeavyWeaponSpec Placed(float? ammoRatio, float? magazine, float? ammoCost, int? count = null)
     {
         var copy = (HeavyWeaponSpec)MemberwiseClone();
         if (ammoRatio is { } ratio) copy.AmmoRatio = ratio;
+        if (count is { } racks) copy.Count = racks;
         copy.Tuning = Tuning.With(magazine, ammoCost);
         return copy;
     }

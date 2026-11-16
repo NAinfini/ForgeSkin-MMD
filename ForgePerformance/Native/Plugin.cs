@@ -8,7 +8,7 @@ namespace ForgePerformance;
 
 /// <summary>Speed-ups only. The plugin installs a piece when its setting is on and nothing otherwise: with every setting off it
 /// registers no hook, no component and no quit callback, so it costs nothing. Measuring frames is ForgeDevelopment's job.</summary>
-[BepInPlugin("NAinfini.ForgePerformance", "Forge Performance", "1.0.0")] // package-version: NAinfini-ForgePerformance
+[BepInPlugin("NAinfini.ForgePerformance", "Forge Performance", "1.0.1")] // package-version: NAinfini-ForgePerformance
 [BepInDependency("dev.gtfomodding.gtfo-api", ">=0.6.1")]
 public sealed class Plugin : BasePlugin
 {
@@ -20,6 +20,7 @@ public sealed class Plugin : BasePlugin
     public override void Load()
     {
         Quitting = false;
+        LoadShedding.FileHashCache.Store = System.IO.Path.Combine(Paths.CachePath, "ForgePerformance", "file-sha256.txt");
         var settings = LoadShedding.SheddingConfiguration.Read(Config, line => Log.LogInfo(line));
         if (settings.WindCapacityProtection || settings.WindNearest)
         {

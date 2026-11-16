@@ -56,7 +56,15 @@ internal static class EmoteWheel
     {
         if (!EmoteRules.Remember(Recent, id)) return;
         _unsaved = true;
-        Fill();
+        Stale();
+    }
+
+    // The favourites page follows the stars and the recent actions: an open wheel is filled again at once, a closed one as it opens.
+    private static bool _stale;
+
+    private static void Stale()
+    {
+        if (IsOpen) Fill(); else _stale = true;
     }
 
     /// <summary>Stars or unstars an action (the wheel's second button and <see cref="EmoteControl"/>); false when a page of stars is full.</summary>
@@ -64,7 +72,7 @@ internal static class EmoteWheel
     {
         if (!EmoteRules.Toggle(Favourites, id, Installed)) { Plugin.Logger.ErrorOnce("ForgeEmote: the favourites page holds " + EmoteRules.SlotsPerPage + " actions; take one off first."); return false; }
         _unsaved = true;
-        Fill();
+        Stale();
         return true;
     }
 
@@ -86,7 +94,13 @@ internal static class EmoteWheel
         _wheel.Secondary += item => Toggle(item.Id);
         LoadMemory();
         ReadPlayerFile();
-        _wheel.CanOpen = static () => Players.Local is { Alive: true };
+        // Asked when the key would open the wheel (before it opens on that press) and every frame while it is open.
+        _wheel.CanOpen = static () =>
+        {
+            if (Players.Local is not { Alive: true }) return false;
+            if (_stale && _wheel!.Key.Pressed) Fill();
+            return true;
+        };
         Emotes.Changed += Fill;
         UIKit.LanguageChanged += Fill;
         Fill();
@@ -124,6 +138,7 @@ internal static class EmoteWheel
     private static void Fill()
     {
         if (_wheel == null) return;
+        _stale = false;
         var problems = new List<string>();
         if (_playerProblem != null) problems.Add(_playerProblem);
         // The favourites page appears and goes, shifting the others: the wheel keeps the page it was on, not its number.

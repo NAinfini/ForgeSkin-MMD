@@ -158,7 +158,7 @@ if (Environment.GetEnvironmentVariable("REPLAY_FILE") is { Length: > 0 } file)
         else if (r.EventType == EventKind.Noise) noises++;
     });
     // The spawn mode of every recorded ItemSpawn (the game's ItemMode number; only 2, a pickup, is put on the ground in playback).
-    Console.WriteLine($"item spawns: {timeline.State.ItemSpawns.Count}, by mode: {string.Join(", ", timeline.State.ItemSpawns.GroupBy(s => s.Mode).OrderBy(g => g.Key).Select(g => g.Key + " x" + g.Count()))}");
+    Console.WriteLine($"item spawns: {timeline.State.ItemSpawns.Count} ({timeline.State.ItemSpawns.Count(s => s.AtOpen)} lying in the level at the opening), by mode: {string.Join(", ", timeline.State.ItemSpawns.GroupBy(s => s.Mode).OrderBy(g => g.Key).Select(g => g.Key + " x" + g.Count()))}");
     Console.WriteLine($"inference: rebuilt noise actions {inferred.Actions.Count} ({string.Join(", ", inferred.Actions.GroupBy(a => a.Action).Select(g => g.Key + " " + g.Count()))}); hearing distances {(hearingOf == null ? "not at hand offline (only recorded noises and running are tried)" : "set")}");
     var known = hostWakers.Where(w => w.Slot >= 0).ToList();
     var agree = known.Count(w => inferred.Wakes.Any(i => i.Entity == w.Entity && Math.Abs((long)i.TimeMs - w.TimeMs) <= 500 && i.NoiseSlot == w.Slot));

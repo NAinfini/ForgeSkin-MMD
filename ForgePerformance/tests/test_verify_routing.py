@@ -51,7 +51,7 @@ class VerifyRoutingTests(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0)
 
             argv = [str(ROOT / "Mods/verify.py"), *selectors, "--work-dir", str(work), "--bepinex", str(bep),
-                    "--collector-baseline", str(work)]  # given explicitly: verify.py does not rebuild it from Git
+                    "--collector-baseline", str(work)]  # holds no baseline sources, so its hash never matches the record
             if code_only:
                 argv += ["--code-only"]
             if native:
@@ -85,13 +85,19 @@ class VerifyRoutingTests(unittest.TestCase):
 
     def test_missing_resource_root_reports_plan_consumers_not_run_and_names_them(self):
         # Detection: without the published-data root the compiled-plan consumers must be NOT_RUN with the missing input listed,
-        # and the failing Prepare must not run at all (a failed Prepare used to hide every later step).
-        code, calls, summary = self.verify(["ForgeEngine:Framework"], missing_resources=("Web/public/data/maps/game/catalog.json",))
+        # and the failing Prepare must not run at all (a failed Prepare used to hide every later step). A collector baseline
+        # whose hash differs from the recorded one must likewise be NOT_RUN with the mismatch named, never built.
+        code, calls, summary = self.verify(["ForgeEngine:Framework", "ForgeDevelopment:tool CollectorBudget"],
+                                           missing_resources=("Web/public/data/maps/game/catalog.json",))
         self.assertEqual(code, 2)
         self.assertFalse(any(argv[:1] == ["node"] and "--prepare" in argv for argv, _ in calls))
         rows = {row["step"]: row for row in summary}
         self.assertEqual(rows["Framework"]["exit"], "NOT_RUN")
         self.assertIn("Web/public/data/maps/game/catalog.json", rows["Framework"]["tail"][0])
+        self.assertEqual(rows["tool CollectorBudget"]["exit"], "NOT_RUN")
+        self.assertIn("--collector-baseline", rows["tool CollectorBudget"]["tail"][0])
+        self.assertIn("sha256", rows["tool CollectorBudget"]["tail"][0])
+        self.assertFalse(any("BaselineSourceDirectory" in arg for argv, _ in calls for arg in argv))
     def test_failed_preparation_prevents_consumer_execution_and_fails_verification(self):
         code, calls, summary = self.verify(["ForgeEngine:Framework"], preparation_exit=17)
         self.assertEqual(code, 1)

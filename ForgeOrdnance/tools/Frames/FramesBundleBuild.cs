@@ -19,7 +19,7 @@ using UnityEngine;
 /// Animation holding the two clips, the leaving hop keyed onto its "root" bone, and an "eye" point.
 /// stage/props/&lt;prefab&gt;/ holds a part shown with a suit (<see cref="Prop"/>: the rocket launcher, the rocket). The
 /// "ordnance-profile" TextAsset uses ForgeOrdnance's bundle profile format 1, so ForgeVisual's Bundles.Register reads it.
-/// Environment: FORGE_FRAMES_STAGE (input) and FORGE_FRAMES_OUT (output folder).</summary>
+/// Run through ForgeCore's UnityBatch with FORGE_FRAMES_STAGE (input) and FORGE_FRAMES_OUT (output folder).</summary>
 public static class FramesBundleBuild
 {
     [Serializable] public sealed class FrameStage { public string prefab; public float height; public string[] opening, intoBody; public float[] slotRays; public int[] liningTriangles; }
@@ -60,18 +60,13 @@ public static class FramesBundleBuild
         { "pelvis", "spine" }, { "spine", "chest" }, { "chest", "head" },
     };
 
-    public static void Build()
-    {
-        try { Run(); EditorApplication.Exit(0); }
-        catch (Exception e) { Debug.LogException(e); EditorApplication.Exit(1); }
-    }
+    public static void Build() => UnityBatch.Run(Run);
 
     static void Run()
     {
-        if (Application.unityVersion != "2019.4.21f1") throw new InvalidOperationException("Use the game's Unity 2019.4.21f1.");
-        var input = Environment.GetEnvironmentVariable("FORGE_FRAMES_STAGE") ?? throw new InvalidOperationException("FORGE_FRAMES_STAGE is not set.");
-        var output = Environment.GetEnvironmentVariable("FORGE_FRAMES_OUT") ?? throw new InvalidOperationException("FORGE_FRAMES_OUT is not set.");
-        var project = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        var input = UnityBatch.Env("FORGE_FRAMES_STAGE");
+        var output = UnityBatch.Env("FORGE_FRAMES_OUT");
+        var project = UnityBatch.Project;
         foreach (var folder in new[] { Stage, Generated })
         {
             var full = Path.Combine(project, folder);

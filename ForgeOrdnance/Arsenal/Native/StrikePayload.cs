@@ -349,7 +349,7 @@ internal static class Strikes
         var spec = h.Call.Spec;
         var target = h.Target;
         // It reaches only the room it landed in: a target that walks out is dropped like a dead one.
-        if (target != null && (target.WasCollected || !target.Alive || target.CourseNode != h.Call.Room))
+        if (target != null && (target.WasCollected || !target.Alive || !ForgeCore.NativeObjects.Same(target.CourseNode, h.Call.Room)))
         {
             target = h.Target = null;
             h.NextScan = 0f;
@@ -413,7 +413,7 @@ internal static class Strikes
             case StrikeKind.Hunter:
                 var target = s.Target;
                 // The direct hit stays in the room too: during the shell's fall the target may have stepped through a door.
-                if (target != null && !target.WasCollected && target.Alive && (target.CourseNode == s.Call.Room || ForgeCore.Level.HasSight(s.Impact, ForgeCore.Enemies.AimPoint(target))))
+                if (target != null && !target.WasCollected && target.Alive && (ForgeCore.NativeObjects.Same(target.CourseNode, s.Call.Room) || ForgeCore.Level.HasSight(s.Impact, ForgeCore.Enemies.AimPoint(target))))
                     ForgeCore.Combat.ExplosionDamage(target.Damage, spec.Damage, s.Impact, Vec.Up * spec.Force);
                 ForgeCore.Combat.AreaDamage(s.Impact, spec.BlastRadius, spec.TickDamage, 0.5f, spec.Force, ForgeCore.BlastLine.FromFloor, s.Call.Room);
                 break;
@@ -446,7 +446,7 @@ internal static class Strikes
         public readonly bool Reaches(int index)
         {
             var enemy = Candidates[index]!;
-            if (ReferenceEquals(enemy, Beam.Blocked) && Now < Beam.BlockedUntil) return false;
+            if (ForgeCore.NativeObjects.Same(enemy, Beam.Blocked) && Now < Beam.BlockedUntil) return false;
             if (!TryRoute(Here, enemy, Beam.Call.Spec.Spread, Beam.Route)) return false;
             if (ForgeCore.Level.HasSight(Here, ForgeCore.Enemies.AimPoint(enemy))) return true;
             Beam.Route.Begin();

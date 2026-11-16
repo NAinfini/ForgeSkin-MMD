@@ -298,7 +298,7 @@
       { "Name": "Speed", "Value": 2 },
       { "Name": "Firepower", "Value": 5 }
     ],
-    "Description": "Gun platform with the hardest-hitting heavy machine gun in your secondary slot. Special: siege mode plants the suit; it cannot walk, but hits harder and takes less damage. Press again to pack up. The rocket key launches four shoulder rockets at the point you look at (20 s to reload).",
+    "Description": "Gun platform with the hardest-hitting heavy machine gun in your secondary slot. Special: siege mode plants the suit; it cannot walk, but hits harder and takes less damage. Press again to pack up. The rocket key launches {2} shoulder rockets at the point you look at ({3} s to reload).",
     "Code": [
       "Left",
       "Down",
@@ -468,7 +468,7 @@
       { "Name": "Speed", "Value": 5 },
       { "Name": "Firepower", "Value": 2 }
     ],
-    "Description": "Light, fast armor with an anti-materiel rifle in your secondary slot and the longest sprint. Special: every 5 seconds it marks every awake enemy within 30 m, the way the bio tracker does.",
+    "Description": "Light, fast armor with an anti-materiel rifle in your secondary slot and the longest sprint. Special: every {0} seconds it marks every awake enemy within {1} m, the way the bio tracker does.",
     "Code": [
       "Left",
       "Down",

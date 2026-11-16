@@ -284,12 +284,16 @@ internal static class OrdnanceClaims
         var agent = ForgeCore.Level.PlayerByLookup(player);
         if (agent == null || !agent.Alive || !(Vec.SqrLength(agent.EyePosition - c.Position) <= (ReachMetres + ReachLag) * (ReachMetres + ReachLag))
             || !Book.TryClaim(c.Summoner, c.ThrowId, c.Bay, player, attempt)) return;
-        string? refusal = null;
-        try { refusal = c.Spec.HostCheck?.Invoke(agent); }
-        catch (Exception error) { refusal = "its check failed: " + error; }
-        if (refusal != null)
+        // A refusal is a state the requester can be in (already borrowing one) and writes nothing; a check that throws is written once.
+        bool refused;
+        try { refused = c.Spec.HostCheck?.Invoke(agent) != null; }
+        catch (Exception error)
         {
-            Plugin.Logger.Error("A claim was refused: " + refusal);
+            Plugin.Logger.ErrorOnce("A claim check failed: " + error);
+            refused = true;
+        }
+        if (refused)
+        {
             Cancel(c, player, attempt);
             return;
         }
@@ -412,9 +416,10 @@ internal static class OrdnanceClaims
     {
         var agent = ForgeCore.Players.Local;
         OrdnanceClaimable? aimed = null;
-        if (agent != null && !agent.WasCollected && agent.Alive && FocusStateManager.CurrentState == eFocusState.FPS && All.Count != 0)
+        if (agent != null && !agent.WasCollected && agent.Alive && FocusStateManager.CurrentState == eFocusState.FPS && All.Count != 0
+            && agent.FPSCamera is { WasCollected: false } camera)
         {
-            var eye = agent.FPSCamera.transform;
+            var eye = camera.transform;
             foreach (var c in All)
             {
                 if (c.PendingPlayer != 0 || !c.Ready(now)) continue;
@@ -433,7 +438,8 @@ internal static class OrdnanceClaims
         var prompt = aimed.Spec.Prompt();
         // Reasserted every frame: native prompts can replace ours between frames. Unchanged text is reused.
         Prompt?.Show(prompt.Text, prompt.Key);
-        if (!prompt.Claimable || now - _requestedAt < RequestCooldown || !InputMapper.GetButtonDown.Invoke(InputAction.Use, eFocusState.FPS)) return;
+        var buttonDown = InputMapper.GetButtonDown;
+        if (!prompt.Claimable || now - _requestedAt < RequestCooldown || buttonDown == null || !buttonDown.Invoke(InputAction.Use, eFocusState.FPS)) return;
         _requestedAt = now;
         if (++_nextAttempt == 0) ++_nextAttempt;
         _ours = new ClaimInstall(aimed.Summoner, aimed.ThrowId, _nextAttempt, aimed.Bay);

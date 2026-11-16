@@ -35,7 +35,7 @@ internal sealed class EnergyDischarge
             Sequence = EnergyNetwork.NextSequence(),
             Shooter = owner.Owner.Lookup,
             CategoryId = gear.CategoryId,
-            Mode = (int)gear.Mode,
+            Mode = (byte)gear.Mode,
             Segments = 1,
             X = start.x,
             Y = start.y,
@@ -48,11 +48,11 @@ internal sealed class EnergyDischarge
         };
         // Launches use the native direction and our muzzle trace, but contacts and pulses wait for a later Tick.
         if (EnergyNativeFire.Delayed(gear.Mode)) { visual.Segments = 0; return visual; }
-        if (gear.Mode == EnergyMode.ArcChain) visual.Segments = _chain.Continue(owner, gear.Numbers, tuning, _shots);
+        if (gear.Mode == EnergyMode.ArcChain) visual.Segments = (byte)_chain.Continue(owner, gear.Numbers, tuning, _shots);
         for (var index = 0; index < visual.Segments; index++)
         {
             visual.SetEnd(index, _shots[index].End);
-            if (_shots[index].HasHit) visual.HitMask |= 1 << index;
+            if (_shots[index].HasHit) visual.HitMask |= (byte)(1 << index);
         }
         switch (gear.Mode)
         {

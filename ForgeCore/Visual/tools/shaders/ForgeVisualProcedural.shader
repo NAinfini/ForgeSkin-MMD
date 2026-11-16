@@ -1,5 +1,5 @@
 // ForgeVisual's parametric drawing shader: one pass that runs one of the catalogue's programs (Data/fx-programs.json; the functions are
-// in ForgeFxPrograms.hlsl, the dispatch is generated from the catalogue by ShaderBuild.cs) chosen by the integer _Program, with up to
+// in ForgeFxPrograms.hlsl, the dispatch is generated from the catalogue by ForgeVisualShaderBuild.cs) chosen by the integer _Program, with up to
 // eight parameters (_FxP0, _FxP1), four colours (_FxC0..3) and the layer transform (_FxXf: scale, rotation, spin in radians, intensity).
 // Two uses, chosen by material values, no keyword:
 // - _FxUnwrap 1: the mesh is laid out by its UV into the render target (blend One Zero, no depth, no culling); the fragment gets the

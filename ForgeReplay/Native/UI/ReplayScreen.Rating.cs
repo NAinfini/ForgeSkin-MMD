@@ -112,9 +112,10 @@ internal static partial class ReplayScreen
                     : Cell(!rating!.Dimensions[d].Estimated, Whole((float)(score * 100.0)));
                 if (total && rating != null && rating.Grade < 0) cell = None;
                 var green = known > 1 && scores[i] is { } mine && mine >= best && cell.Quality != StatQuality.Empty;
-                // A value is HUD text, a guess the warning colour and an empty cell dimmed; the best of the row stays green.
+                // A value is HUD text, a guess the warning colour and an empty cell dimmed; the best of the row stays green. Drawn in the
+                // regular weight as the row names are: in the game font's bold the values came out nearly black on the panel (11-15).
                 var shade = cell.Quality switch { StatQuality.Estimate => UIKitColors.Warn, StatQuality.Empty => Fade(UIKitColors.GameText, 0.55f), _ => UIKitColors.GameText };
-                cells[i + 1] = new TableCell(cell.Text, green ? UIKitColors.Good : shade, cell.Quality == StatQuality.Exact || green || total);
+                cells[i + 1] = new TableCell(cell.Text, green ? UIKitColors.Good : shade);
             }
             CompareTable.AddRow(cells);
         }

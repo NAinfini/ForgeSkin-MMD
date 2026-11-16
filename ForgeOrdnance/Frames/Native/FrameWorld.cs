@@ -27,7 +27,7 @@ internal sealed class FrameUnit
         get => _hostPilot;
         set
         {
-            if (ReferenceEquals(_hostPilot, value)) return;
+            if (ForgeCore.NativeObjects.Same(_hostPilot, value)) return;
             _noise?.Dispose();
             _noise = null;
             _hostPilot = value;
@@ -337,12 +337,11 @@ internal static class FrameWorld
         LocalPilot.RocketsLaunched(unit, now);
     }
 
-    /// <summary>Every peer: the pilot fired; play its gun here. Only the suit's own pilot is believed.</summary>
+    /// <summary>Every peer: the pilot fired; play its gun here, on the suit the sender pilots.</summary>
     internal static void OnFire(ulong sender, FrameFireMessage m)
     {
-        if (!ById.TryGetValue((m.Thrower, m.ThrowId), out var unit)) return;
-        if (unit.Record.Pilot != sender || unit.Record.State != FrameState.Piloted) return;
-        unit.Visual?.Shots(m.Shots, new Vector3(m.OriginX, m.OriginY, m.OriginZ), new Vector3(m.TargetX, m.TargetY, m.TargetZ));
+        if (PilotUnit(sender) is not { } unit || unit.Record.State != FrameState.Piloted) return;
+        unit.Visual?.Shot(new Vector3(m.OriginX, m.OriginY, m.OriginZ), new Vector3(m.TargetX, m.TargetY, m.TargetZ));
     }
 
     internal static void OnBump(ulong sender, FrameBumpMessage m)
@@ -625,7 +624,7 @@ internal static class FrameWorld
     private static void Step(string what, Action action)
     {
         try { action(); }
-        catch (Exception error) { Plugin.Logger.ErrorOnce("Exosuit level cleanup step '" + what + "' failed: " + error); }
+        catch (Exception error) { Plugin.Logger.ErrorOnce("Exosuit cleanup step '" + what + "' failed: " + error); }
     }
 
     /// <summary>Host: the suits as they stand at the checkpoint (a worn suit's record already holds its place around its pilot), as
@@ -644,24 +643,25 @@ internal static class FrameWorld
     internal static void CheckpointReloaded()
     {
         var now = Now;
-        FrameRockets.Clear();
+        Step("rockets", FrameRockets.Clear);
         LocalPilot.Release("checkpoint reload");
         MechGun.AfterReload(now);
         var top = _sequenceFloor;
         foreach (var unit in Units) top = Math.Max(top, unit.Record.Sequence);
         // Resolve all saved specifications before replacing anything, so unavailable definitions fail explicitly.
         var restored = FrameCheckpoint.Restore(OrdnanceSession.CheckpointContent, Specs, now, top);
+        // Every step stands alone, as in LevelCleanup: one failure does not leave the restore half done.
         foreach (var unit in Units)
         {
-            ClearHostPilot(unit);
-            unit.Visual?.Destroy();
-            if (ForgeCore.Session.IsHost) OrdnanceApi.ClearState(FramesPayload.Type, unit.Record.Thrower, unit.Record.ThrowId);
+            Step("host pilot", () => ClearHostPilot(unit));
+            if (unit.Visual is { } visual) Step("suit visual", visual.Destroy);
+            if (ForgeCore.Session.IsHost) Step("carrier state", () => OrdnanceApi.ClearState(FramesPayload.Type, unit.Record.Thrower, unit.Record.ThrowId));
         }
         Units.Clear();
         ById.Clear();
         Pending.Clear();
-        FrameRepel.Clear();
-        BarrierProjectiles.Clear();
+        Step("repel", FrameRepel.Clear);
+        Step("barrier-projectiles", BarrierProjectiles.Clear);
         foreach (var record in restored)
         {
             if (!ForgeCore.Session.IsHost) record.Sequence = 0; // Accept the host's first restored state on any callback ordering.

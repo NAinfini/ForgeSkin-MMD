@@ -27,12 +27,14 @@ internal static class Rec
     {
         PlayerRecorder.Pipeline?.Event(PlayerRecorder.Now, kind, Writer.Span);
         PlayerRecorder.Count(kind, Writer.Span);
-        AnimatorStateProbe.Mark(kind, Writer.Span);
+        BodyRecorder.Note(kind, Writer.Span);
     }
 
-    /// <summary>Sends the built payload and keeps it as the latest state of object <paramref name="key"/> of this kind, until a payload that ends the object retires it.</summary>
+    /// <summary>Sends the built payload and keeps it as the latest state of object <paramref name="key"/> of this kind, until a payload that ends the object retires it.
+    /// A payload equal to the state already held is not written again.</summary>
     internal static void EmitState(ushort kind, ulong key)
     {
+        if (States.Holds(kind, key, Writer.Span)) return;
         Emit(kind);
         States.Set(kind, key, Writer.Span);
     }

@@ -28,7 +28,8 @@ internal static partial class Hooks
 
     private static readonly Dictionary<ulong, ulong> TerminalUser = new();
     private static readonly bool[] Charging = new bool[4];
-    private static string? _lastIntel, _lastReactorText;
+    private static string? _lastIntel;
+    private static (bool Visible, string Message, string Prefix, string Suffix)? _lastReactorText;
     private static byte[]? _lastLights;
     private static readonly List<ThrownItem> ThrownItems = new();
     private static readonly Dictionary<ushort, (bool Exploded, bool Glued)> SpitterStates = new();
@@ -135,7 +136,8 @@ internal static partial class Hooks
         catch (Exception e) { Rec.Fail("zone-lights", e); }
     }
 
-    // Terminals: 73 TerminalLine: U key, U line type (TerminalLineType, 255 a plain line), U wait in ms, Text. 74 TerminalState (state): U key, U TERM_State, U slot + 1 of who is at it, Pos.
+    // Terminals: 73 TerminalLine: U key, U line type (TerminalLineType; 255 a plain line; 254 and 253 a prefixed one, the prefix, a tab and the text
+    // the game indents under the prefix's column, with and without the game's spacing), U wait in ms, Text. 74 TerminalState (state): U key, U TERM_State, U slot + 1 of who is at it, Pos.
     // 75 TerminalInput: U key, Text (what a remote player has typed; a line that is sent is Terminal, 24).
     // A terminal prints its start-up text while the level loads; only what happens in play is written.
     private static bool InPlay => GameStateManager.CurrentStateName == eGameStateName.InLevel;
@@ -153,36 +155,64 @@ internal static partial class Hooks
         catch (Exception e) { Rec.Fail("terminal-line", e); }
     }
 
+    // Only the outermost of the output calls is written: one that hands its line on to another (a numbered line to the plain one wrote
+    // "Available Commands:" twice) is one line. Each call counts itself in and its finalizer out, whatever the game's body does.
     [HarmonyPatch]
     private static class TerminalOutput
     {
+        private static int _depth;
+        private static bool Outer => _depth++ == 0;
+
         [HarmonyPatch(typeof(LG_ComputerTerminalCommandInterpreter), nameof(LG_ComputerTerminalCommandInterpreter.AddOutput), new[] { typeof(TerminalLineType), typeof(string), typeof(float), typeof(TerminalSoundType), typeof(TerminalSoundType) })]
         [HarmonyPrefix]
-        private static void Typed(LG_ComputerTerminalCommandInterpreter __instance, TerminalLineType type, string line, float time) => TerminalPrinted(__instance, (ulong)(int)type, time, line);
+        private static void Typed(LG_ComputerTerminalCommandInterpreter __instance, TerminalLineType type, string line, float time) { if (Outer) TerminalPrinted(__instance, (ulong)(int)type, time, line); }
 
-        // The typed one with a number finds its text and comes to Typed; the plain one with a number and the prefixed one print by themselves, below.
+        [HarmonyPatch(typeof(LG_ComputerTerminalCommandInterpreter), nameof(LG_ComputerTerminalCommandInterpreter.AddOutput), new[] { typeof(TerminalLineType), typeof(string), typeof(float), typeof(TerminalSoundType), typeof(TerminalSoundType) })]
+        [HarmonyFinalizer]
+        private static void TypedDone() => _depth--;
+
         [HarmonyPatch(typeof(LG_ComputerTerminalCommandInterpreter), nameof(LG_ComputerTerminalCommandInterpreter.AddOutput), new[] { typeof(string), typeof(bool) })]
         [HarmonyPrefix]
-        private static void Plain(LG_ComputerTerminalCommandInterpreter __instance, string originalLine) => TerminalPrinted(__instance, 255, 0f, originalLine);
+        private static void Plain(LG_ComputerTerminalCommandInterpreter __instance, string originalLine) { if (Outer) TerminalPrinted(__instance, 255, 0f, originalLine); }
+
+        [HarmonyPatch(typeof(LG_ComputerTerminalCommandInterpreter), nameof(LG_ComputerTerminalCommandInterpreter.AddOutput), new[] { typeof(string), typeof(bool) })]
+        [HarmonyFinalizer]
+        private static void PlainDone() => _depth--;
 
         [HarmonyPatch(typeof(LG_ComputerTerminalCommandInterpreter), nameof(LG_ComputerTerminalCommandInterpreter.AddOutput), new[] { typeof(Il2CppSystem.Collections.Generic.List<string>) })]
         [HarmonyPrefix]
         private static void Lines(LG_ComputerTerminalCommandInterpreter __instance, Il2CppSystem.Collections.Generic.List<string> lines)
         {
-            if (lines == null) return;
+            if (!Outer || lines == null) return;
             for (var i = 0; i < lines.Count; i++) TerminalPrinted(__instance, 255, 0f, lines[i]);
         }
+
+        [HarmonyPatch(typeof(LG_ComputerTerminalCommandInterpreter), nameof(LG_ComputerTerminalCommandInterpreter.AddOutput), new[] { typeof(Il2CppSystem.Collections.Generic.List<string>) })]
+        [HarmonyFinalizer]
+        private static void LinesDone() => _depth--;
 
         [HarmonyPatch(typeof(LG_ComputerTerminalCommandInterpreter), nameof(LG_ComputerTerminalCommandInterpreter.AddOutput), new[] { typeof(uint), typeof(bool) })]
         [HarmonyPrefix]
         private static void Numbered(LG_ComputerTerminalCommandInterpreter __instance, uint originalLine)
         {
-            if (Rec.On && InPlay) TerminalPrinted(__instance, 255, 0f, Localization.Text.Get(originalLine));
+            if (Outer && Rec.On && InPlay) TerminalPrinted(__instance, 255, 0f, ForgeUI.GameText.Read(originalLine));
+        }
+
+        [HarmonyPatch(typeof(LG_ComputerTerminalCommandInterpreter), nameof(LG_ComputerTerminalCommandInterpreter.AddOutput), new[] { typeof(uint), typeof(bool) })]
+        [HarmonyFinalizer]
+        private static void NumberedDone() => _depth--;
+
+        // The prefix and the text stay apart (a tab between), so the replay lays them out in the game's two columns: joined they read "LISTDisplay a list".
+        [HarmonyPatch(typeof(LG_ComputerTerminalCommandInterpreter), nameof(LG_ComputerTerminalCommandInterpreter.AddOutputWithPrefixAndTabbedIndentation))]
+        [HarmonyPrefix]
+        private static void Prefixed(LG_ComputerTerminalCommandInterpreter __instance, string prefix, string textToIndent, bool spacing)
+        {
+            if (Outer) TerminalPrinted(__instance, spacing ? 254UL : 253UL, 0f, prefix + "\t" + textToIndent);
         }
 
         [HarmonyPatch(typeof(LG_ComputerTerminalCommandInterpreter), nameof(LG_ComputerTerminalCommandInterpreter.AddOutputWithPrefixAndTabbedIndentation))]
-        [HarmonyPrefix]
-        private static void Prefixed(LG_ComputerTerminalCommandInterpreter __instance, string prefix, string textToIndent) => TerminalPrinted(__instance, 255, 0f, prefix + textToIndent);
+        [HarmonyFinalizer]
+        private static void PrefixedDone() => _depth--;
     }
 
     [HarmonyPatch]
@@ -509,7 +539,13 @@ internal static partial class Hooks
             if (moved || phase != thrown.Phase || extra != thrown.Extra) ThrownWrite(thrown, phase, p, extra);
             return true;
         }
-        catch (Exception e) { Rec.Fail("thrown", e); return false; }
+        catch (Exception e)
+        {
+            Rec.Fail("thrown", e);
+            // No longer followed: it leaves the recording here too, or playback would keep it on the field.
+            try { ThrownWrite(thrown, 2, thrown.Last, thrown.Extra); } catch (Exception again) { Rec.Fail("thrown", again); }
+            return false;
+        }
     }
 
     private static ulong ThrownExtra(Item item)

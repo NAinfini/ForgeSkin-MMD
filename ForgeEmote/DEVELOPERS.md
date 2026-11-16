@@ -1,6 +1,6 @@
 # ForgeEmote for developers
 
-This mod holds content and rules only. Clip playback, the first-person arms and showing your own body are ForgeVisual; the per-player state, motion readout, orbit camera and game communication lines are ForgeCore; the wheel, key binding and timing (this mod only registers `H`, `Hold`) and player marker are ForgeUI; sounds are ForgeAudio. Anything missing belongs in those libraries, not here. `Tools/Forge/validate-dependencies.ts` fails if this package's source contains `HarmonyPatch`, `Harmony.Patch`, `FPSCamera`, `CameraManager`, `Animator` or `NetworkAPI`.
+This mod holds content and rules only. Clip playback, the first-person arms and showing your own body are ForgeVisual; the per-player state, motion readout, orbit camera and game communication lines are ForgeCore; the wheel, key binding and timing (this mod only registers `H`, `Hold`) and player marker are ForgeUI; sounds are ForgeAudio. Anything missing belongs in those libraries, not here. A character model another mod puts on a player (ForgeCore `PlayerLooks`, `Persons.Hide`) needs nothing here: actions play on the game's body, the model copies that body's pose after the clips, and showing your own body draws the model and keeps the hidden person hidden. `Tools/Forge/validate-dependencies.ts` fails if this package's source contains `HarmonyPatch`, `Harmony.Patch`, `FPSCamera`, `CameraManager`, `Animator` or `NetworkAPI`.
 
 ## Build
 

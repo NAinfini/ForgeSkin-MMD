@@ -48,7 +48,7 @@ To reorder the wheel, write `BepInEx/config/ForgeEmote/wheel.forge`; its format 
 
 ## Installation
 
-Install with r2modman or the Thunderstore Mod Manager. It also installs BepInExPack_GTFO, ForgeCore, ForgeUI, ForgeAudio and ForgeVisual.
+Install with r2modman or the Thunderstore Mod Manager. It also installs BepInExPack_GTFO and ForgeCore.
 
 ## For mod authors
 

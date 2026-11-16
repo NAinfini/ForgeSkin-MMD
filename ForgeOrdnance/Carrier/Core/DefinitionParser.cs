@@ -63,24 +63,7 @@ internal static class DefinitionParser
 
     /// <summary>"author.name" or longer: at least two dot-separated segments of ASCII letters, digits, '_' or '-'. The first
     /// segment is the author's namespace, so packs from different authors cannot pick the same Id by accident.</summary>
-    public static bool IsNamespacedId(string id)
-    {
-        var segments = 1;
-        var length = 0;
-        foreach (var c in id)
-        {
-            if (c == '.')
-            {
-                if (length == 0) return false;
-                segments++;
-                length = 0;
-                continue;
-            }
-            if (!(c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_' or '-')) return false;
-            length++;
-        }
-        return length > 0 && segments >= 2;
-    }
+    public static bool IsNamespacedId(string id) => StrictJson.NamespacedId(id, 2, strict: false);
 
     private static OrdnanceDefinition ParseEntry(string fileName, JsonElement entry, PayloadRegistry payloads, CategoryRegistry categories)
     {

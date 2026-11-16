@@ -72,7 +72,7 @@ public sealed class ProceduralProgram
 }
 
 /// <summary>
-/// The catalogue of drawing programs (<c>Data/fx-programs.json</c>, format <c>forge-fx-programs</c> version 1): the one source the shader's
+/// The catalogue of drawing programs (<c>Data/fx-programs.json</c>, format <c>forge-fx-programs</c> version <c>1.0.0</c>): the one source the shader's
 /// dispatch, the runtime, editor panels, the AI guide and package checks read. A program has at most <see cref="MaxParams"/> numbers
 /// and <see cref="MaxColours"/> colours; the transform (scale, rotation, spin, intensity) is shared by every layer. <see cref="Parse"/>
 /// throws <see cref="FormatException"/> naming the first fault.
@@ -80,7 +80,8 @@ public sealed class ProceduralProgram
 public sealed class ProceduralCatalog
 {
     public const string Format = "forge-fx-programs";
-    public const int Version = 1, MaxParams = 8, MaxColours = 4;
+    public const string Version = "1.0.0";
+    public const int MaxParams = 8, MaxColours = 4;
     /// <summary>The transform's numbers, in the order the shader reads them.</summary>
     public static readonly string[] TransformNames = { "scale", "rotation", "spin", "intensity" };
 
@@ -101,8 +102,8 @@ public sealed class ProceduralCatalog
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
         if (Text(root, "format", "catalogue") != Format) throw new FormatException("the catalogue's format is not " + Format);
-        if (!root.TryGetProperty("version", out var version) || version.ValueKind != JsonValueKind.Number || version.GetInt32() != Version)
-            throw new FormatException("the catalogue's version is not " + Version);
+        if (!root.TryGetProperty("version", out var version) || version.ValueKind != JsonValueKind.String || version.GetString() != Version)
+            throw new FormatException("the catalogue's version is not " + Version + "; regenerate it from the current Data/fx-programs.json");
         var limits = Get(root, "limits", "catalogue");
         if (Number(limits, "params", "limits") != MaxParams || Number(limits, "colours", "limits") != MaxColours)
             throw new FormatException("the catalogue's limits are not " + MaxParams + " numbers and " + MaxColours + " colours");

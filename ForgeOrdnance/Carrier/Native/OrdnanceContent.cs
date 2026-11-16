@@ -11,7 +11,8 @@ namespace ForgeOrdnance;
 
 /// <summary>The definitions and level rules. Definitions come from every <c>ForgeOrdnance</c> folder under <c>BepInEx/plugins</c>
 /// (content mods and loose files) and from the active rundown's <c>CustomPath/ForgeOrdnance</c>; the level rules
-/// (<c>Settings.forge</c>) come only from the rundown. A definition folder may hold a <c>lang</c> folder of language files whose
+/// (<c>Settings.forge</c>) come from the rundown's custom folder, and the levels of a rundown package's own <c>ForgeOrdnance/Settings.forge</c>
+/// join them. A definition folder may hold a <c>lang</c> folder of language files whose
 /// <c>&lt;Id&gt;.Name</c> and <c>&lt;Id&gt;.Description</c> texts are shown instead of the file's <c>Name</c> and <c>Description</c>.</summary>
 internal static class OrdnanceContent
 {
@@ -31,9 +32,15 @@ internal static class OrdnanceContent
     internal static string Name(OrdnanceDefinition definition) =>
         _texts.TryGetValue(definition.Key, out var texts) && texts.Files.TryText(texts.NameKey, out var name) ? name : definition.Name;
 
-    /// <summary>The definition's description in the current language: its folder's <c>&lt;Id&gt;.Description</c> text, else the file's.</summary>
-    internal static string Description(OrdnanceDefinition definition) =>
-        _texts.TryGetValue(definition.Key, out var texts) && texts.Files.TryText(texts.DescriptionKey, out var text) ? text : definition.Description;
+    /// <summary>The definition's description in the current language: its folder's <c>&lt;Id&gt;.Description</c> text, else the file's, with
+    /// its <c>{0}</c>, <c>{1}</c>… filled from the definition's own parameters (<see cref="IOrdnanceDescribed"/>), the numbers the call-in plays with.</summary>
+    internal static string Description(OrdnanceDefinition definition)
+    {
+        var text = _texts.TryGetValue(definition.Key, out var texts) && texts.Files.TryText(texts.DescriptionKey, out var translated) ? translated : definition.Description;
+        if (DescriptionText.TryFill(text, DescriptionText.Values(definition), out var filled)) return filled;
+        Plugin.Logger.ErrorOnce(definition.Id + " description: a placeholder has no number from payload " + definition.PayloadType + " (see DEVELOPERS.md, Description numbers); shown unfilled: " + text);
+        return text;
+    }
 
     /// <summary>The definition's category name in the current language.</summary>
     internal static string CategoryName(OrdnanceDefinition definition) =>
@@ -53,6 +60,7 @@ internal static class OrdnanceContent
         var rundownFolder = MTFOPathAPI.HasCustomPath ? Path.GetFullPath(Path.Combine(MTFOPathAPI.CustomPath, FolderName)) : null;
         var folders = new SortedSet<string>(ForgeCore.ContentFolders.Find(FolderName, errors), StringComparer.OrdinalIgnoreCase);
         if (rundownFolder != null && Directory.Exists(rundownFolder)) folders.Add(rundownFolder);
+        var packageSettings = new List<string>();
 
         foreach (var folder in folders)
         {
@@ -66,8 +74,7 @@ internal static class OrdnanceContent
                 var name = Shown(path);
                 if (string.Equals(Path.GetFileName(path), SettingsFile, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (!string.Equals(folder, rundownFolder, StringComparison.OrdinalIgnoreCase))
-                        errors.Add(name + ": ignored; level rules are read only from the rundown's custom folder.");
+                    if (!string.Equals(folder, rundownFolder, StringComparison.OrdinalIgnoreCase)) packageSettings.Add(path);
                     continue;
                 }
                 try
@@ -106,25 +113,35 @@ internal static class OrdnanceContent
         }
 
         var settingsPath = rundownFolder == null ? null : Path.Combine(rundownFolder, SettingsFile);
-        var fileSettings = OrdnanceSettings.Default;
-        if (settingsPath != null && File.Exists(settingsPath))
-        {
-            try
-            {
-                var settingsErrors = new List<string>();
-                var parsed = OrdnanceSettings.Parse(File.ReadAllText(settingsPath), settingsErrors);
-                errors.AddRange(settingsErrors.Select(error => Shown(settingsPath) + ": " + error));
-                if (parsed == null) errors.Add(Shown(settingsPath) + ": ignored; default rules apply.");
-                else fileSettings = parsed;
-            }
-            catch (Exception error) { errors.Add(Shown(settingsPath) + ": could not be read: " + error + "; default rules apply."); }
-        }
+        var fileSettings = settingsPath != null && File.Exists(settingsPath) ? ReadSettings(settingsPath, false, errors) ?? OrdnanceSettings.Default : OrdnanceSettings.Default;
+        // A rundown package that does not take MTFO's custom folder (a Forge website export) ships its own ForgeOrdnance/Settings.forge,
+        // which sets its own levels only; the levels of every such file join the rules.
+        foreach (var path in packageSettings)
+            if (ReadSettings(path, true, errors) is { } package) fileSettings = fileSettings.WithLevelsOf(package, Shown(path), errors);
         // The file's rules and the levels plugins declared become one effective setting, checked the same way.
         Settings = fileSettings.WithDeclared(OrdnanceApi.DeclaredLevels, errors).WithUsable(Set, OrdnanceApi.SupportsDirect, OrdnanceApi.CheckOverrides, errors);
         foreach (var id in Settings.UnknownAllowed(Set)) errors.Add("Level rules Allowed: '" + id + "' is not a loaded definition.");
         foreach (var error in errors) Plugin.Logger.Error(error);
         LobbyRules.Invalidate();
         OrdnanceApi.RaiseDefinitionsReady();
+    }
+
+    /// <summary>One <c>Settings.forge</c>, every problem added to <paramref name="errors"/> under its path; null when it cannot be used at all.</summary>
+    private static OrdnanceSettings? ReadSettings(string path, bool levelsOnly, List<string> errors)
+    {
+        try
+        {
+            var settingsErrors = new List<string>();
+            var parsed = OrdnanceSettings.Parse(File.ReadAllText(path), settingsErrors, levelsOnly);
+            errors.AddRange(settingsErrors.Select(error => Shown(path) + ": " + error));
+            if (parsed == null) errors.Add(Shown(path) + ": ignored" + (levelsOnly ? "." : "; default rules apply."));
+            return parsed;
+        }
+        catch (Exception error)
+        {
+            errors.Add(Shown(path) + ": could not be read: " + error + (levelsOnly ? "." : "; default rules apply."));
+            return null;
+        }
     }
 
     /// <summary>A path as players see it in the log: relative to the BepInEx folder when inside it.</summary>

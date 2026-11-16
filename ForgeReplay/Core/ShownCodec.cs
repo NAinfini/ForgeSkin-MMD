@@ -18,12 +18,44 @@ internal readonly record struct ShownPoseRecord(bool Stopped, byte Anchor, int I
 
 /// <summary>A model a library made, or the renderers it turned off (event 99, <see cref="EventKind.ShownModelState"/>, a state kept per <see cref="Key"/> so a jump can build the model
 /// again): <see cref="Phase"/> 0 model <see cref="Name"/> at its current pose (local to its anchor when <see cref="Anchor"/> is 1 or 2, else the world's), 1 renderers hidden under
-/// the anchor (<see cref="Anchor"/> 3: a thing that is no player or enemy, found again by its world position in <see cref="X"/>, <see cref="Y"/>, <see cref="Z"/>), 2 ended (retires the state).</summary>
-internal readonly record struct ShownModelRecord(ulong Key, byte Phase, int Name, byte Anchor, int Id, string Path, float X, float Y, float Z, float Qx, float Qy, float Qz, float Qw, float Sx, float Sy, float Sz);
+/// the anchor (<see cref="Anchor"/> 3: a thing that is no player or enemy, found again by its world position in <see cref="X"/>, <see cref="Y"/>, <see cref="Z"/>), 2 ended (retires the state).
+/// A model's state also says whose body it follows now (<see cref="Follows"/>: a player slot whose pose the model copies, -1 none: it rests).</summary>
+internal readonly record struct ShownModelRecord(ulong Key, byte Phase, int Name, byte Anchor, int Id, string Path, float X, float Y, float Z, float Qx, float Qy, float Qz, float Qw, float Sx, float Sy, float Sz, int Follows = -1);
 
-/// <summary>The payload layouts of what the libraries showed, written by ShownRecorder and read by ShownPlayback (DEVELOPERS.md, events 94 to 97).</summary>
+/// <summary>A declared world object as it stands now (event 114, <see cref="EventKind.TrackedObject"/>, a state kept per <see cref="Name"/>, the table entry of its key): shown or not, its world pose and its own scale.</summary>
+internal readonly record struct TrackedRecord(int Name, bool Shown, float X, float Y, float Z, float Qx, float Qy, float Qz, float Qw, float Sx, float Sy, float Sz);
+
+/// <summary>The owner's own state of a declared world object (event 115, <see cref="EventKind.TrackedState"/>, a state kept per <see cref="Name"/>); <see cref="Value"/> null is the object's own.</summary>
+internal readonly record struct TrackedStateRecord(int Name, string? Value);
+
+/// <summary>The payload layouts of what the libraries showed, written by ShownRecorder and read by ShownPlayback (DEVELOPERS.md, events 94 to 99, 114 and 115).</summary>
 internal static class ShownCodec
 {
+    /// <summary>The longest owner state kept (UTF-8 bytes); a longer one is cut.</summary>
+    internal const int StateBytes = 2000;
+
+    internal static PayloadWriter Write(PayloadWriter w, in TrackedRecord t) =>
+        w.U((ulong)t.Name).U(t.Shown ? 1UL : 0UL).Pos(t.X, t.Y, t.Z)
+            .S((long)MathF.Round(t.Qx * 10000f)).S((long)MathF.Round(t.Qy * 10000f)).S((long)MathF.Round(t.Qz * 10000f)).S((long)MathF.Round(t.Qw * 10000f))
+            .S((long)MathF.Round(t.Sx * 1000f)).S((long)MathF.Round(t.Sy * 1000f)).S((long)MathF.Round(t.Sz * 1000f));
+
+    internal static TrackedRecord ReadTracked(PayloadReader r)
+    {
+        var name = (int)r.U();
+        var shown = r.U() == 1;
+        var (x, y, z) = r.Pos();
+        return new TrackedRecord(name, shown, x, y, z, r.S() / 10000f, r.S() / 10000f, r.S() / 10000f, r.S() / 10000f, r.S() / 1000f, r.S() / 1000f, r.S() / 1000f);
+    }
+
+    internal static PayloadWriter Write(PayloadWriter w, in TrackedStateRecord s) =>
+        s.Value == null ? w.U((ulong)s.Name).U(0) : w.U((ulong)s.Name).U(1).Text(s.Value, StateBytes);
+
+    internal static TrackedStateRecord ReadTrackedState(PayloadReader r)
+    {
+        var name = (int)r.U();
+        return new TrackedStateRecord(name, r.U() == 1 ? r.Text() : null);
+    }
+
     internal const uint White = 0xFFFFFFFF;
     /// <summary>The kind numbers of ForgeCore's <c>ShownKind</c> the layout branches on.</summary>
     internal const byte Play = 0, Line = 1, Hold = 2, HeldLine = 3, Release = 4, Beam = 5, Trail = 6, Decal = 7;
@@ -89,7 +121,8 @@ internal static class ShownCodec
         w.Pos(m.X, m.Y, m.Z);
         if (m.Phase == ModelPresent)
             w.S((long)MathF.Round(m.Qx * 10000f)).S((long)MathF.Round(m.Qy * 10000f)).S((long)MathF.Round(m.Qz * 10000f)).S((long)MathF.Round(m.Qw * 10000f))
-                .S((long)MathF.Round(m.Sx * 1000f)).S((long)MathF.Round(m.Sy * 1000f)).S((long)MathF.Round(m.Sz * 1000f));
+                .S((long)MathF.Round(m.Sx * 1000f)).S((long)MathF.Round(m.Sy * 1000f)).S((long)MathF.Round(m.Sz * 1000f))
+                .U(m.Follows < 0 ? 0UL : (ulong)m.Follows + 1);
         return w;
     }
 
@@ -107,7 +140,8 @@ internal static class ShownCodec
         if (phase == ModelHidden && anchor != WorldRoot) return new ShownModelRecord(key, phase, 0, anchor, id, path, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1);
         var (x, y, z) = r.Pos();
         if (phase == ModelHidden) return new ShownModelRecord(key, phase, 0, anchor, id, path, x, y, z, 0, 0, 0, 1, 1, 1, 1);
-        return new ShownModelRecord(key, phase, name, anchor, id, path, x, y, z, r.S() / 10000f, r.S() / 10000f, r.S() / 10000f, r.S() / 10000f, r.S() / 1000f, r.S() / 1000f, r.S() / 1000f);
+        return new ShownModelRecord(key, phase, name, anchor, id, path, x, y, z, r.S() / 10000f, r.S() / 10000f, r.S() / 10000f, r.S() / 10000f, r.S() / 1000f, r.S() / 1000f, r.S() / 1000f,
+            (int)r.U() - 1);
     }
 
     internal static PayloadWriter Write(PayloadWriter w, in ShownFxRecord e)

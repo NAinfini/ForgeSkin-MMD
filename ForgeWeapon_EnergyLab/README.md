@@ -71,7 +71,7 @@ Fires a core that opens a gravity field, pulling enemies in and damaging them.
 
 ## Installation
 
-Install with r2modman; it also installs BepInExPack_GTFO, GTFO_API, MTFO and ForgeCore. Names and descriptions are in English and Chinese and follow the `Language` setting in `NAinfini.ForgeUI.cfg` (by default the game's language). MTFO marks the game as modded, which turns off achievements and public matchmaking, so these guns stay out of official play. Everyone in the lobby needs the same version and the same tuning changes.
+Install with r2modman; it also installs BepInExPack_GTFO, GTFO_API, MTFO and ForgeCore. Names and descriptions are in English and Chinese and follow the `Language` setting in `NAinfini.ForgeCore.cfg` (by default the game's language). MTFO marks the game as modded, which turns off achievements and public matchmaking, so these guns stay out of official play. Everyone in the lobby needs the same version and the same tuning changes.
 
 ## Tuning
 
@@ -93,6 +93,6 @@ Other packages can add more energy guns; they appear in the same loadout list an
 
 ## License
 
-[MIT](https://github.com/NAinfini/GTFO-Forge-Mods/blob/main/ForgeWeapon_EnergyLab/LICENSE). The effects ship in this package; their sources and licences are listed in `fx-licences.forge`. The sounds were made with Adobe Firefly (commercial use permitted); the Blast Gun's shot and explosion are the Ordnance grenade launcher's sounds, with their credits in `Assets/Audio/LICENSE.txt`.
+[MIT](https://github.com/NAinfini/GTFO-Forge-Mods/blob/main/ForgeWeapon_EnergyLab/LICENSE). The effects ship in this package; their sources and licences are listed in `fx-licences.forge` (the Blast Gun's explosion in `HeavyBlast/fx-licences.forge`). The sounds were made with Adobe Firefly (commercial use permitted); the Blast Gun's shot and explosion are the Ordnance grenade launcher's sounds, with their credits in `Assets/Audio/LICENSE.txt`.
 
 Modding the guns: see the [developer guide](https://github.com/NAinfini/GTFO-Forge-Mods/blob/main/ForgeWeapon_EnergyLab/DEVELOPERS.md).

@@ -21,6 +21,9 @@ internal sealed record SheddingSettings
     internal int ParticleHz { get; init; }
     internal bool ShellEjection { get; init; }
     internal int ShellLimit { get; init; }
+    internal bool DroppedMagazineCleanup { get; init; }
+    internal float DroppedMagazineSeconds { get; init; }
+    internal bool SpentFogRepellerCleanup { get; init; }
     internal bool DecorationShadows { get; init; }
     internal bool CombatDecals { get; init; }
     internal int DecalLimit { get; init; }
@@ -50,5 +53,4 @@ internal sealed record SheddingSettings
     internal bool ClosedDoorDepthLimit { get; init; }
     internal int ClosedDoorDepth { get; init; }
     internal bool TextureStreamingOff { get; init; }
-    internal bool AnyRenderCut => TextureStreamingOff;
 }

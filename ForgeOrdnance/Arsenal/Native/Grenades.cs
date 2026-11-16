@@ -21,8 +21,8 @@ internal static class Grenades
     private const float MuzzleReach = 2f;
     /// <summary>How fat the round is against an enemy (m): a thin ray passed between a running enemy's limbs.</summary>
     private const float RoundRadius = 0.15f;
-    /// <summary>How long a shooter's predicted round flies without the host's answer (s). The host refuses in silence, and an admitted round waits at most one shot
-    /// interval on the host's timeline, whose gun fired no sooner here; past this the round was refused or lost.</summary>
+    /// <summary>How long a shooter's predicted round flies without the host's answer (s). The host answers a refusal with nothing (its own log says why), and an
+    /// admitted round waits at most one shot interval on the host's timeline unless the shots reached it bunched; past this the round was refused, lost or is late.</summary>
     private const float PredictionWindow = 1.5f;
     private static uint _nextShot;
 
@@ -47,6 +47,8 @@ internal static class Grenades
     private static readonly List<(GrenadeShot Shot, float At)> Pending = new();
     private static readonly Dictionary<(ulong, Guid, uint), float> Settled = new();
     private static readonly List<(ulong, Guid, uint)> Expired = new();
+    /// <summary>Shooter: own shots whose prediction ended before the host's word, by when it ended; an answer that still comes is late, none is silence.</summary>
+    private static readonly Dictionary<(ulong, Guid, uint), float> Unanswered = new();
 
     internal static void BeforeFire(BulletWeapon weapon)
     {
@@ -88,8 +90,12 @@ internal static class Grenades
             predicted.VY = predicted.VY * speed + 1.5f;
             predicted.VZ *= speed;
             predicted.TrueEdge = grenade.TrueDamage ? grenade.EdgeShare : -1f;
+            if (!ArsenalNetwork.Shot.ToHost(shot))
+            {
+                Plugin.Logger.ErrorOnce("arsenal-launcher-not-sent", "a launcher shot was not sent: there is no host, or the host's Forge Ordnance does not match this one (yet); no round is shown.");
+                return;
+            }
             Launch(predicted, Time.time + PredictionWindow);
-            ArsenalNetwork.Shot.ToHost(shot);
         }
     }
 
@@ -110,6 +116,7 @@ internal static class Grenades
     /// <summary>The host admits local and remote shots through the same loan budget; peers fly only host broadcasts.</summary>
     internal static void OnShot(ulong sender, GrenadeShot shot)
     {
+        var now = Time.time;
         if (ForgeCore.Session.IsHost)
         {
             if (!HeavyWeapons.AuthorizeGrenade(sender, ref shot, out var delay, out var reason))
@@ -119,17 +126,29 @@ internal static class Grenades
             }
             if (delay > 0f)
             {
-                Pending.Add((shot, Time.time + delay));
+                if (delay > PredictionWindow)
+                    Plugin.Logger.ErrorOnce("arsenal-launcher-host-queued", "a launcher shot waits on the host's cadence longer than the shooter's " + PredictionWindow + " s prediction (shots arrived bunched); the shooter sees that round late.");
+                Pending.Add((shot, now + delay));
                 return;
             }
             LaunchHost(shot);
             return;
         }
-        else if (!OrdnanceNetwork.Channel.FromHost(sender)) return;
+        if (!FromHost(sender)) return;
         // Replace the shooter's predicted trajectory too: everyone follows the admitted host origin and velocity.
+        if (Unanswered.Remove((shot.Shooter, shot.Loan, shot.Sequence), out var removedAt))
+            Plugin.Logger.ErrorOnce("arsenal-launcher-host-late", "the host answered launcher shot " + shot.Sequence + " " + (now - removedAt + PredictionWindow).ToString("0.0") + " s after it was fired, after its predicted round was removed; the host's round flies from the muzzle now.");
         RemoveFlight(shot.Shooter, shot.Loan, shot.Sequence);
         if (Settled.ContainsKey((shot.Shooter, shot.Loan, shot.Sequence))) return;
         Launch(shot);
+    }
+
+    /// <summary>A launcher message only the host sends: false (logged once) when it came from anyone else, or reached a peer that is the host.</summary>
+    private static bool FromHost(ulong sender)
+    {
+        if (OrdnanceNetwork.Channel.FromHost(sender)) return true;
+        Plugin.Logger.ErrorOnce("arsenal-launcher-not-from-host", "a launcher message only the host sends came from player " + sender + ", who is not the host here (or this peer is the host); it is ignored.");
+        return false;
     }
 
     private static void LaunchHost(GrenadeShot shot)
@@ -209,6 +228,16 @@ internal static class Grenades
         Expired.Clear();
         foreach (var pair in Settled) if (now >= pair.Value) Expired.Add(pair.Key);
         foreach (var key in Expired) Settled.Remove(key);
+        if (Unanswered.Count != 0)
+        {
+            Expired.Clear();
+            foreach (var pair in Unanswered) if (now - pair.Value >= Lifetime) Expired.Add(pair.Key);
+            foreach (var key in Expired)
+            {
+                Unanswered.Remove(key);
+                Plugin.Logger.ErrorOnce("arsenal-launcher-host-silent", "the host never answered launcher shot " + key.Item3 + "; its predicted round was removed.");
+            }
+        }
         if (Flights.Count == 0) return;
         var dt = Time.deltaTime;
         for (var i = Flights.Count - 1; i >= 0; i--)
@@ -223,7 +252,7 @@ internal static class Grenades
                 {
                     Flights.RemoveAt(i);
                     Retire(f);
-                    Plugin.Logger.ErrorOnce("arsenal-launcher-host-silent", "the host did not answer launcher shot " + f.Sequence + " in time; the predicted round is removed.");
+                    Unanswered[(f.Shooter, f.Loan, f.Sequence)] = now;
                     continue;
                 }
                 if (!ForgeCore.Session.IsHost && now >= f.Ends + 2f)
@@ -330,7 +359,7 @@ internal static class Grenades
 
     internal static void OnBurst(ulong sender, GrenadeBurst burst)
     {
-        if (!OrdnanceNetwork.Channel.FromHost(sender)
+        if (!FromHost(sender)
             || burst.Shooter == 0 || burst.Loan == Guid.Empty || burst.Sequence == 0 || burst.Rocket > 1
             || !float.IsFinite(burst.X) || !float.IsFinite(burst.Y) || !float.IsFinite(burst.Z)) return;
         var key = (burst.Shooter, burst.Loan, burst.Sequence);
@@ -362,7 +391,10 @@ internal static class Grenades
     {
         foreach (var f in Flights) Retire(f);
         Flights.Clear();
+        if (Pending.Count != 0)
+            Plugin.Logger.ErrorOnce("arsenal-launcher-pending-dropped", "admitted launcher shots still waiting on the host's cadence were dropped with the level or checkpoint they belonged to.");
         Pending.Clear();
+        Unanswered.Clear();
         Settled.Clear();
         Expired.Clear();
         WithheldBullet.Launcher = false;

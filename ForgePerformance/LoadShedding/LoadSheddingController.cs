@@ -9,6 +9,7 @@ using IRF;
 using UnityEngine;
 using UnityEngine.Rendering;
 using AirParticles = AirParticleSystem.AirParticleSystem;
+using Renderers = Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppArrayBase<UnityEngine.Renderer>;
 
 
 namespace ForgePerformance.LoadShedding;
@@ -130,12 +131,21 @@ internal sealed partial class LoadSheddingController
     // Only an enemy that is really dead (its locomotion is in the Dead state, or the Dead state is being entered) is touched.
     // EnemyAgent.Alive is not usable here: during EnemyAgent.Setup it is not set yet, so every enemy, stealth ones
     // included, looked dead and had its renderers switched off.
-    internal void EnemyVisuals(EnemyAgent enemy, bool entering = false)
+    internal void EnemyVisuals(EnemyAgent enemy, bool entering = false) => EnemyVisuals(enemy, null, entering);
+    // The death entry walks the enemy's renderers once for both the stealth body and the corpse shadows;
+    // neither changes the hierarchy, so the second reads the same renderers the walk would return again.
+    internal void EnemyDied(EnemyAgent enemy)
+    {
+        Renderers? renderers = null;
+        HideStealthBody(enemy, ref renderers);
+        EnemyVisuals(enemy, renderers, true);
+    }
+    private void EnemyVisuals(EnemyAgent enemy, Renderers? renderers, bool entering)
     {
         if (!Active || enemy == null || !Settings.CorpseShadows || IsRefused(SheddingCut.CorpseShadows)) return;
         if (!entering && enemy.Locomotion?.CurrentStateEnum != ES_StateEnum.Dead) return;
         // Allocation only on death, never a frame scan.
-        foreach (var renderer in enemy.GetComponentsInChildren<Renderer>(true))
+        foreach (var renderer in renderers ?? enemy.GetComponentsInChildren<Renderer>(true))
         {
             Shadow(renderer, false, true);
         }
@@ -159,11 +169,11 @@ internal sealed partial class LoadSheddingController
     // off here, so the shadow goes with the death instead of waiting for the native decay or any corpse timer. The enemy,
     // its colliders and the native decay coroutine are untouched; the renderer is switched back on when the enemy is set up
     // again (pooled) or the level ends.
-    internal void HideStealthBody(EnemyAgent enemy)
+    private void HideStealthBody(EnemyAgent enemy, ref Renderers? renderers)
     {
         if (!Active || enemy == null) return;
         var changed = false;
-        foreach (var renderer in enemy.GetComponentsInChildren<Renderer>(true))
+        foreach (var renderer in renderers ??= enemy.GetComponentsInChildren<Renderer>(true))
         {
             if (renderer == null || !renderer.enabled || renderer.shadowCastingMode != ShadowCastingMode.ShadowsOnly) continue;
             // Off as well as disabled: the culler's shadow list draws disabled renderers (see RefreshShadow).
@@ -297,7 +307,7 @@ internal sealed partial class LoadSheddingController
         Work.Run(GameStateManager.CurrentStateName == eGameStateName.InLevel ? LevelWork.LevelSliceMilliseconds : LevelWork.ElevatorSliceMilliseconds);
         if (Settings.FastCorpseHide && !IsRefused(SheddingCut.CorpseTimer)) Corpses.Tick();
         if (Settings.CombatDecals) Decorations.TickDecals();
-        if (Settings.DecayCleanup || Settings.DebrisFreeze) Extras.Tick();
+        if (Settings.DecayCleanup || Settings.DebrisFreeze || Settings.DroppedMagazineCleanup) Extras.Tick();
     }
     internal void CorpseComplete(ES_Dead._DecayDelayed_d__20 iterator) => _corpseIterators.Remove(iterator.Pointer);
     internal void Ragdoll(ES_Dead state, bool enabled, bool wasRagdoll)

@@ -104,16 +104,14 @@ internal struct FrameBumpMessage
     public float X, Y, Z, DirX, DirZ;
 }
 
-/// <summary>Pilot to every peer (<see cref="FrameMessages.FireEvent"/>): shots fired this frame, for the sound and tracer on
-/// other peers. Damage is not in it: the pilot's own game deals it through the game's bullet hit, which the game replicates.</summary>
+/// <summary>Pilot to every peer (<see cref="FrameMessages.FireEvent"/>): the pilot's gun hit something this frame (at most one a
+/// frame), for the flash and tracer on other peers. The suit is the one its sender pilots. Damage is not in it: the pilot's own game
+/// deals it through the game's bullet hit, which the game replicates.</summary>
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 internal struct FrameFireMessage
 {
-    public ulong Thrower;
-    public uint ThrowId;
     public float OriginX, OriginY, OriginZ;
     public float TargetX, TargetY, TargetZ;
-    public byte Shots;
 }
 
 /// <summary>Rockets. Pilot to host, the body of the request <see cref="FrameMessages.RocketRequestEvent"/>: the aimed point

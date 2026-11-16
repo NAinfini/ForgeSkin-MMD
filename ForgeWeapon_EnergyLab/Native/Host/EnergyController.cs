@@ -188,6 +188,7 @@ internal sealed class EnergyController
             // Each stage runs only while it has work; the preload, the preparation and the model queue end by themselves.
             // Tick also picks up a gun whose own sounds finished decoding after the pass became ready.
             PresentationPreload.Tick();
+            EnergyVfx.Tick();
             if (WeaponModels.HasWork) WeaponModels.TickPending();
             if (!_simulationsReady && !_preparationFailed) { PrepareVisuals(); PrepareSimulations(); }
             Tick();
@@ -528,6 +529,14 @@ internal sealed class EnergyController
     private RemotePeerState StateFor(ulong identity)
     {
         if (_remoteStates.TryGetValue(identity, out var state)) return state;
+        // At the budget, a state left by someone no longer in the session (one who left while no remote weapon was kept for them) makes room.
+        if (_remoteStates.Count >= 16)
+        {
+            var gone = 0UL;
+            foreach (var known in _remoteStates.Keys)
+                if (!SNet.TryGetPlayer(known, out var member) || member == null) { gone = known; break; }
+            if (gone != 0UL) _remoteStates.Remove(gone);
+        }
         if (_remoteStates.Count >= 16) throw new InvalidOperationException("Remote session identity budget exhausted.");
         state = new RemotePeerState(); _remoteStates.Add(identity, state); return state;
     }
@@ -586,7 +595,7 @@ internal sealed class EnergyController
             if (packet.Phase == 1) { if (!remote.StartCharge(owner, packet, Time.time)) return; }
             else remote.EndCharge(packet);
             packet.Shooter = sender;
-            EnergyNetwork.ChargeVisual.Broadcast(packet);
+            EnergyNetwork.ChargeVisual.BroadcastExcept(packet, sender);
         }
         catch (Exception error)
         {
@@ -627,7 +636,7 @@ internal sealed class EnergyController
         var remote = RemoteFor(sender, authoritative: true);
         try
         {
-            if (remote.TryLaunch(owner, weapon, command, Time.time, out var visual)) EnergyNetwork.Broadcast(visual);
+            if (remote.TryLaunch(owner, weapon, command, Time.time, out var visual)) EnergyNetwork.Broadcast(visual, sender);
         }
         // Launches that a stalled link delivers together can find no free slot: this shot is dropped, the gun is fine.
         catch (BudgetExhausted error) { Plugin.Logger.ErrorOnce("energylab-remote-shot-dropped", "A remote energy shot was dropped: " + error.Message); }
@@ -684,7 +693,7 @@ internal sealed class EnergyController
         var remote = RemoteFor(sender, authoritative: true);
         try
         {
-            if (remote.PresentAccepted(owner, visual, Time.time)) EnergyNetwork.Broadcast(visual);
+            if (remote.PresentAccepted(owner, visual, Time.time)) EnergyNetwork.Broadcast(visual, sender);
         }
         catch (Exception error)
         {

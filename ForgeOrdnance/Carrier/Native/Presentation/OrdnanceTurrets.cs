@@ -41,9 +41,9 @@ public static class OrdnanceTurrets
         else if (spec == null) why = "no spec was given";
         else
         {
-            var root = model.Prefab.transform;
+            // Read from the bundle's name table where it lists the part, so registering loads no prefab.
             foreach (var part in new[] { spec.Base, spec.Yaw, spec.Head, spec.Muzzle })
-                if (!string.IsNullOrEmpty(part) && root.Find(part) == null) { why = "the model " + model.Name + " has no part '" + part + "'"; break; }
+                if (!string.IsNullOrEmpty(part) && !model.HasNode(path => path == part)) { why = "the model " + model.Name + " has no part '" + part + "'"; break; }
             why ??= Book.Register(lookId, spec);
         }
         if (why != null)

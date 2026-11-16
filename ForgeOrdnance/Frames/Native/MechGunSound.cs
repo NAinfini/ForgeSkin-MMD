@@ -5,10 +5,10 @@ namespace ForgeOrdnance.Frames;
 /// <summary>The suit gun's own sounds, heard by the local pilot only: the start and the end of a reload and a trigger pull on an empty
 /// magazine. ForgeAudio raises those actions on the weapon the suit gun is claimed on (<see cref="MechGun"/> claims it when the gun
 /// settles in the slot and lets go when it leaves); the cues are this package's. Nothing is looked up by name while playing.</summary>
-internal sealed class MechGunSound : IWeaponActionHandler
+internal static class MechGunSound
 {
     private const WeaponAction All = WeaponAction.ReloadStart | WeaponAction.ReloadDone | WeaponAction.DryFire;
-    private static readonly MechGunSound Handler = new();
+    private static readonly System.Action<WeaponAction> Handler = Play;
     private static WeaponActionClaim? _claim;
 
     /// <summary>The suit gun <paramref name="gun"/> settled in the slot.</summary>
@@ -25,7 +25,7 @@ internal sealed class MechGunSound : IWeaponActionHandler
         _claim = null;
     }
 
-    public void Play(WeaponAction action)
+    private static void Play(WeaponAction action)
     {
         switch (action)
         {

@@ -1,8 +1,14 @@
 # Changelog
 
+## 1.0.1
+
+- Needs ForgeCore 1.0.1 and no other Forge package: ForgeUI, ForgeAudio and ForgeVisual are now part of ForgeCore; remove them when you update.
+- Multiplayer goes through ForgeCore's networking; an action state is stamped with ForgeCore's world number and checkpoint generation.
+- An action stops at once when your player is replaced by another one mid-action.
+
 ## 1.0.0
 
-- An action state is stamped with ForgeCore's world number and checkpoint generation, so one a player sent in an earlier level or before a checkpoint reload no longer shows up afterwards.
+- An action state is stamped with the world epoch (the channel follows the world), so one a player sent in an earlier level or before a checkpoint reload no longer shows up afterwards.
 
 - Action wheel on `H`: hold to open, release to choose. The key, how it fires and how long a long press lasts are in the game's key settings; the game's `Q` menu is not touched.
 - Twenty-two actions (the last two, handshake and fist bump, need a teammate within 1.5 m): come here, stop, go there, quiet, wait, follow me, cover me, 3 2 1, middle finger, wave, cheer, thumbs up, pray, backflip, shrug on the ground, convulse on the ground, dance, twerk, hip hop, zombie stumble, handshake, fist bump.

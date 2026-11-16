@@ -13,7 +13,9 @@ internal static class EnergyNetwork
 {
     private static NetChannel? _channel;
     // A held beam's or flame's shots: ten a second of presentation only, so they stay off the reliable channel. A lost one is bridged by the stream's own window, a late one refused by its sequence.
-    private static NetEvent<FireVisual> _visual = null!, _streamVisual = null!;
+    // Only the Arc Chain's shots carry every end of the chain; the others send the shot up to its first end.
+    private static NetEvent<ShotVisual> _visual = null!, _streamVisual = null!;
+    private static NetEvent<FireVisual> _chainVisual = null!;
     private static NetEvent<FlightEnd> _flightEnd = null!;
     private static uint _nextSequence;
 
@@ -45,8 +47,10 @@ internal static class EnergyNetwork
             if (FromClient(sender)) controller.ReceiveNativeVisual(sender, shot);
             else if (FromHost(sender)) controller.ReceiveVisual(shot);
         };
-        _visual = channel.Event("visual", visual);
-        _streamVisual = channel.Event("stream-visual", visual, NetDelivery.Lossy);
+        Action<ulong, ShotVisual> shot = (sender, part) => { if ((EnergyMode)part.Mode != EnergyMode.ArcChain) visual(sender, FireVisual.From(part)); };
+        _visual = channel.Event("visual", shot);
+        _streamVisual = channel.Event("stream-visual", shot, NetDelivery.Lossy);
+        _chainVisual = channel.Event("chain-visual", visual);
         Charge = channel.Event<ChargePacket>("charge", (sender, packet) => { if (FromClient(sender)) controller.ReceiveCharge(sender, packet); });
         ChargeVisual = channel.Event<ChargePacket>("charge-visual", (sender, packet) => { if (FromHost(sender)) controller.ReceiveChargeVisual(packet); });
         _flightEnd = channel.Event<FlightEnd>("flight-end", (sender, end) => { if (FromHost(sender)) controller.ReceiveFlightEnd(end); });
@@ -69,15 +73,21 @@ internal static class EnergyNetwork
         if (SNet.TryGetPlayer(lookup, out var player) && player != null) ForgeUI.UIKit.PostChatNotice(EnergyText.Mismatch(player.NickName));
     }
 
-    private static NetEvent<FireVisual> EventOf(FireVisual visual)
+    private static NetEvent<ShotVisual> EventOf(FireVisual visual)
         => (EnergyMode)visual.Mode is EnergyMode.Beam or EnergyMode.Flame ? _streamVisual : _visual;
-    /// <summary>Host: a shot it resolved or accepted, to every other player.</summary>
-    internal static void Broadcast(FireVisual visual) => EventOf(visual).Broadcast(visual);
+    /// <summary>Host: a shot it resolved or accepted, to every other player but its shooter (<paramref name="shooter"/>, 0 for the
+    /// host's own and a bot's), who drew it when it fired.</summary>
+    internal static void Broadcast(FireVisual visual, ulong shooter = 0)
+    {
+        if ((EnergyMode)visual.Mode == EnergyMode.ArcChain) _chainVisual.BroadcastExcept(visual, shooter);
+        else EventOf(visual).BroadcastExcept(visual.Shot, shooter);
+    }
     /// <summary>This machine's own shot: the host tells everyone, a client tells the host, who tells the others.</summary>
     internal static void SendVisual(FireVisual visual)
     {
         if (Session.IsHost) Broadcast(visual);
-        else EventOf(visual).ToHost(visual);
+        else if ((EnergyMode)visual.Mode == EnergyMode.ArcChain) _chainVisual.ToHost(visual);
+        else EventOf(visual).ToHost(visual.Shot);
     }
     /// <summary>Host: where a projectile ended, to every other player.</summary>
     internal static void BroadcastFlightEnd(FlightEnd end) { if (Ready && Session.IsHost) _flightEnd.Broadcast(end); }

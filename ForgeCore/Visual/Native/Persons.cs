@@ -20,8 +20,10 @@ public sealed class PersonHideOptions
     /// <summary>Renderers this names stay as they are; asked again at every refresh, so it may follow what the caller shows on the person.</summary>
     public Func<Renderer, bool>? Keep { get; set; }
 
-    /// <summary>The hold is a look replacing the person (the provider of <see cref="PlayerLooks"/>, default false). A recording takes the look
-    /// itself from <see cref="PlayerLooks.Describe"/>, so this hold is not reported to it as hidden renderers.</summary>
+    /// <summary>The hold is a look replacing the person (the provider of <see cref="PlayerLooks"/>, default false): it leaves the models looks hung
+    /// on the body (<see cref="PlayerLooks.Hang"/>) drawn, and a recording takes the look itself from <see cref="PlayerLooks.Describe"/>, so this hold
+    /// is not reported to it as hidden renderers. Any other hold stands in for the whole person shown now (a suit worn over it): it hides the
+    /// person and the look worn on it alike, and while it lasts no look shows, whichever came first; released, the look shows again.</summary>
     public bool Look { get; set; }
 }
 
@@ -36,8 +38,17 @@ public sealed class PersonHide : IDisposable
     private readonly List<Renderer> _held = new();
     private readonly HashSet<IntPtr> _seen = new();
     private readonly List<Transform> _items = new();
-    private readonly Transform? _third, _first;
+    private readonly Transform? _third, _first, _reported;
+    // A hold over a player's whole person (not a look): the animator the player's looks hang on (it need not sit under the person's root), and those looks.
+    private readonly IntPtr _lookBody;
+    private readonly List<Transform> _looks = new();
     private float _next;
+    // The person's ghost (PlayerSyncModelData.m_ghostRenderers: the copy of the person the game draws in its ghost material while
+    // m_ghostEnabled is on, as in the elevator ride), part of the person wherever it hangs; and for a look, the look's own ghost.
+    private readonly PlayerSyncModelData? _model;
+    private readonly Renderer[] _ghosts = Array.Empty<Renderer>();
+    private readonly List<(GameObject Node, SkinnedMeshRenderer Renderer)> _lookGhosts = new();
+    private bool _ghostOn;
 
     internal PersonHide(PlayerAgent? agent, Transform? body, string label, PersonHideOptions options)
     {
@@ -48,8 +59,61 @@ public sealed class PersonHide : IDisposable
         var local = agent != null && agent.IsLocallyOwned;
         if (options.ThirdPerson) _third = agent == null ? body : local ? agent.PlayerSyncModel?.transform : agent.transform;
         if (options.FirstPerson && local) _first = agent!.FPItemHolder?.transform;
+        if (options.ThirdPerson && !options.Look && agent != null && agent.AnimatorBody is { } animator) _lookBody = animator.Pointer;
+        // Reported on the player itself when its person is hidden (the local player's third-person model too): a replay's stand-in is that
+        // whole person, whatever node holds the model here.
+        _reported = agent != null && _third != null ? agent.transform : _third ?? _first;
         Switched = options.ThirdPerson && agent != null && !local;
         Active = true;
+        if (!options.ThirdPerson) return;
+        _model = agent != null ? agent.PlayerSyncModel : body != null ? body.GetComponentInParent<PlayerSyncModelData>() : null;
+        var ghosts = _model != null ? _model.m_ghostRenderers : null;
+        if (ghosts == null || ghosts.Length == 0) return;
+        _ghosts = new Renderer[ghosts.Length];
+        for (var i = 0; i < _ghosts.Length; i++) _ghosts[i] = ghosts[i];
+        if (options.Look && _model!.m_ghostMaterial is { } material) LookGhosts(agent != null ? agent.transform : body!, material, _ghosts[0] != null ? _ghosts[0].gameObject.layer : -1);
+    }
+
+    // A look hung on the body is drawn in the ghost as the person is: each of its skinned meshes gets a twin on the same bones wearing the
+    // game's own ghost material of this person (its colours and fades included) on the layer the game draws that ghost on (the elevator's
+    // camera draws only some layers), shown while the game shows the person's ghost.
+    private void LookGhosts(Transform root, Material material, int layer)
+    {
+        foreach (var source in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (source == null || !PlayerLooks.Worn(source.transform)) continue;
+            var twin = new GameObject("ForgeVisual.LookGhost");
+            twin.layer = layer >= 0 ? layer : source.gameObject.layer;
+            twin.transform.SetParent(source.transform, false);
+            var ghost = twin.AddComponent<SkinnedMeshRenderer>();
+            ghost.sharedMesh = source.sharedMesh;
+            ghost.bones = source.bones;
+            ghost.rootBone = source.rootBone;
+            ghost.localBounds = source.localBounds;
+            var slots = source.sharedMaterials;
+            for (var i = 0; i < slots.Length; i++) slots[i] = material;
+            ghost.sharedMaterials = slots;
+            ghost.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            ghost.receiveShadows = false;
+            ghost.enabled = false;
+            _lookGhosts.Add((twin, ghost));
+        }
+    }
+
+    /// <summary>Every frame: the look's ghost shows while the game shows the person's.</summary>
+    internal void Ghost()
+    {
+        if (_lookGhosts.Count == 0 || _model == null || _model.WasCollected) return;
+        var on = _model.m_ghostEnabled;
+        if (on == _ghostOn) return;
+        _ghostOn = on;
+        foreach (var (_, ghost) in _lookGhosts) if (ghost != null && !ghost.WasCollected) ghost.enabled = on;
+    }
+
+    private void DropLookGhosts()
+    {
+        foreach (var (node, _) in _lookGhosts) if (node != null && !node.WasCollected) UnityEngine.Object.Destroy(node);
+        _lookGhosts.Clear();
     }
 
     /// <summary>True until released, or until the level ended.</summary>
@@ -68,9 +132,16 @@ public sealed class PersonHide : IDisposable
         if (_agent is { WasCollected: true }) return;
         var count = _held.Count;
         if (_third != null && !_third.WasCollected) Take(_third, true);
+        if (_lookBody != IntPtr.Zero)
+        {
+            PlayerLooks.HungOn(_lookBody, _looks);
+            foreach (var look in _looks) Take(look, true);
+        }
         if (_first != null && !_first.WasCollected) Take(_first, false);
+        foreach (var ghost in _ghosts)
+            if (ghost != null && !ghost.WasCollected && _seen.Add(ghost.Pointer)) { HeldOff.Hold(ghost); _held.Add(ghost); }
         if (_held.Count > count && !_options.Look && ForgeCore.Recording.Watched)
-            ForgeCore.Recording.Model(new ForgeCore.ShownModel(ForgeCore.ShownModelKind.Hidden, 0, null, _third ?? _first, _held));
+            ForgeCore.Recording.Model(new ForgeCore.ShownModel(ForgeCore.ShownModelKind.Hidden, 0, null, _reported, _held));
     }
 
     internal bool Due(float now) => now >= _next;
@@ -86,7 +157,7 @@ public sealed class PersonHide : IDisposable
         {
             if (renderer == null || !_seen.Add(renderer.Pointer)) continue;
             var place = renderer.transform;
-            if (Holds(place) || _options.Keep != null && _options.Keep(renderer) || PlayerLooks.Worn(place)) { _seen.Remove(renderer.Pointer); continue; }
+            if (Holds(place) || _options.Keep != null && _options.Keep(renderer) || _options.Look && PlayerLooks.Worn(place)) { _seen.Remove(renderer.Pointer); continue; }
             HeldOff.Hold(renderer);
             _held.Add(renderer);
         }
@@ -107,6 +178,7 @@ public sealed class PersonHide : IDisposable
         if (_held.Count > 0 && !_options.Look && ForgeCore.Recording.Watched) ForgeCore.Recording.Model(new ForgeCore.ShownModel(ForgeCore.ShownModelKind.Shown, 0, null, null, _held));
         HeldOff.ReleaseAll(_held);
         _seen.Clear();
+        DropLookGhosts();
     }
 
     public void Dispose() => Release();
@@ -119,11 +191,14 @@ public sealed class PersonHide : IDisposable
         Active = false;
         _held.Clear();
         _seen.Clear();
+        DropLookGhosts();
     }
 }
 
-/// <summary>Hiding a player's original person (the model other players see, or the local player's shadow), for every mod together. Several holders
-/// of one player do not fight: the person comes back when the last of them lets go, and only the renderers this library turned off are turned on.</summary>
+/// <summary>Hiding a player's original person (the model other players see, or the local player's shadow), for every mod together, and the one
+/// rule for which body model a player shows: a hold that is not a look (<see cref="PersonHideOptions.Look"/>, a suit worn over the person) above
+/// a look's model (<see cref="PlayerLooks.Hang"/>) above the game's person. Several holders of one player do not fight: the person comes back
+/// when the last of them lets go, and only the renderers this library turned off are turned on.</summary>
 public static class Persons
 {
     private static readonly List<PersonHide> Holds = new();
@@ -192,6 +267,8 @@ public static class Persons
         for (var i = Holds.Count - 1; i >= 0; i--)
         {
             var hold = Holds[i];
+            try { hold.Ghost(); }
+            catch (Exception error) { Plugin.Logger.ErrorOnce("person-ghost-failed", "Showing a look's ghost for " + hold.Label + " failed: " + error); }
             if (!hold.Due(now)) continue;
             try { hold.Refresh(now); }
             catch (Exception error) { Plugin.Logger.ErrorOnce("person-hide-failed", "Hiding a person for " + hold.Label + " failed: " + error); }

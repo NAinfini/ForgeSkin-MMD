@@ -15,20 +15,12 @@ namespace ForgeReplay;
 ///   instead when it changes.
 /// - How far an enemy's sounds reach: <c>EnemyAgent.UpdateSfxLOD</c> (0x1564DA0) sets <c>SfxLOD</c> from the distance to the local
 ///   player, min(99, distance^0.5); during a replay it is set from the distance to the view the same way.
-/// Main thread only.</summary>
+/// Both patches go on at the first replay (<see cref="PlaybackHooks"/>) and do nothing outside one. Main thread only.</summary>
 internal static class Listening
 {
     private static bool _entering;
     private static LG_Area? _area;
     private static float _next;
-
-    internal static void Install()
-    {
-        var harmony = new Harmony(Plugin.Id + ".listening");
-        foreach (var feature in new[] { typeof(RoomTone), typeof(EnemyReach) })
-            try { harmony.CreateClassProcessor(feature).Patch(); }
-            catch (Exception error) { Plugin.Logger.Error("The replay's " + feature.Name + " hook could not be put on, so that part is heard from the observer: " + error.Message); }
-    }
 
     internal static void Reset() => _area = null;
 
@@ -55,13 +47,13 @@ internal static class Listening
     }
 
     [HarmonyPatch(typeof(DramaManager), nameof(DramaManager.OnPlayerEnterArea))]
-    private static class RoomTone
+    internal static class RoomTone
     {
-        private static bool Prefix() => !Replayer.Active || _entering;
+        private static bool Prefix() => _entering || !Replayer.Active;
     }
 
     [HarmonyPatch(typeof(EnemyAgent), nameof(EnemyAgent.UpdateSfxLOD))]
-    private static class EnemyReach
+    internal static class EnemyReach
     {
         private static void Postfix(EnemyAgent __instance)
         {

@@ -69,6 +69,14 @@ internal static class HeavyWeapons
     private static readonly HashSet<(ulong Summoner, uint ThrowId)> UnavailableRacks = new();
     /// <summary>Host: the racks of each call still lying in their pod (bay to kept record).</summary>
     private static readonly Dictionary<(ulong Summoner, uint ThrowId), Dictionary<int, byte[]>> HostRacks = new();
+    /// <summary>Host: the supply points (a placement with <c>Supply</c> or <c>Restock</c>), by call, with the rack record they lay again.</summary>
+    private static readonly Dictionary<(ulong Summoner, uint ThrowId), (SupplyPoint Book, byte[] Record)> Supplies = new();
+    /// <summary>Host: the supply points as the last checkpoint saved them; a level-start drop placed again by a reload takes this up.</summary>
+    private static readonly Dictionary<(ulong Summoner, uint ThrowId), SupplySnapshot> SavedSupplies = new();
+    /// <summary>Every peer: how many racks this peer saw laid at each place and the last rack record it got for it, for a host that takes a
+    /// supply point over.</summary>
+    private static readonly Dictionary<(ulong Summoner, uint ThrowId), (int Count, byte[] Record)> Laid = new();
+    private static readonly List<int> DueBays = new();
     private static readonly LoanBook Loans = new();
     private static readonly Dictionary<ulong, LauncherLoan> Launchers = new();
     /// <summary>Host after a host change: borrowers whose launcher loan was adopted from their first shot (the old host's book is gone).</summary>
@@ -87,6 +95,8 @@ internal static class HeavyWeapons
 
     private static Phase _phase;
     private static HeavyParameters? _lent;
+    /// <summary>The lent weapon's call-in name in the player's language, shown on the HUD instead of the gear's marker.</summary>
+    private static string? _lentName;
     /// <summary>The player's own special weapon and who holds the slot, shared with everything else that lends a gun into it.</summary>
     private static ForgeCore.SpecialSlot Slot => ForgeCore.Gear.SpecialSlot;
     /// <summary>This lender's name in the slot. The suit gun (<c>SuitGunLoan.Owner</c>) has its own: a checkpoint remembers whose gun was in the slot.</summary>
@@ -164,9 +174,12 @@ internal static class HeavyWeapons
     internal static void ShowRack(OrdnancePresentation p)
     {
         if (UnavailableRacks.Remove((p.SummonerLookup, p.ThrowId))) return;
+        // A direct arrival has no pod to fill: its racks are the host's rack records (OnData), laid at once with the placement's numbers,
+        // the same path a supply point lays a rack again by.
+        if (p.Arrival == OrdnanceArrivalMode.Direct) return;
         var parameters = (HeavyParameters)p.Parameters;
         var pod = OrdnanceDelivery.StartPod(p);
-        // One rack per weapon bay of the pod; a direct arrival (or no pod art) lays them side by side on the landing point.
+        // One rack per weapon bay of the pod; without pod art they lie side by side on the landing point.
         var count = pod == null ? parameters.Spec.Count : Math.Min(parameters.Spec.Count, pod.WeaponBayCount);
         for (var bay = 0; bay < count; bay++)
         {
@@ -175,6 +188,8 @@ internal static class HeavyWeapons
             Racks.Add(rack);
             rack.Pod = pod;
             rack.Claim = AddClaimable(rack, pod, spot + Vec.Up * 0.4f, OrdnanceDelivery.PodContentsDelay(p.Arrival));
+            // Nothing opens a rack that has no pod: the weapon lies where it landed.
+            if (pod == null) OpenRack(rack);
         }
     }
 
@@ -225,7 +240,8 @@ internal static class HeavyWeapons
         }
         else
         {
-            var instance = model.Spawn(rack.Fallback + Vec.Up * 0.15f, ArsenalArt.FrontToForward);
+            // Lying along the placement's facing, so the racks laid side by side lie parallel.
+            var instance = model.Spawn(rack.Fallback + Vec.Up * 0.15f, Quaternion.Euler(0f, rack.Yaw, 0f) * ArsenalArt.FrontToForward);
             if (instance == null) return;
             instance.name = "ForgeOrdnance.Arsenal.Rack";
             rack.Look = instance;
@@ -237,18 +253,33 @@ internal static class HeavyWeapons
         var summoner = e.SummonerLookup;
         var throwId = e.ThrowId;
         var p = (HeavyParameters)e.Parameters;
-        if (e.Overrides.Count != 0)
-            p = p with { Spec = p.Spec.WithAmmo(e.Overrides.TryGetValue("AmmoRatio", out var ratio) ? (float)ratio : null, e.Overrides.TryGetValue("Magazine", out var rounds) ? (float)rounds : null, e.Overrides.TryGetValue("AmmoCost", out var cost) ? (float)cost : null) };
+        float? Number(string name) => e.Overrides.TryGetValue(name, out var value) ? (float)value : null;
+        if (e.Overrides.Count != 0) p = p with { Spec = p.Spec.Placed(Number("AmmoRatio"), Number("Magazine"), Number("AmmoCost"), (int?)Number("Count")) };
         var record = Wire.Rack(new RackRecord(p.Spec, p.GearId, e.Position.x, e.Position.y, e.Position.z, e.Rotation.eulerAngles.y, e.Definition.Id));
+        var rule = SupplyRule.From(e.Overrides);
+        if (rule != null && e.Arrival != OrdnanceArrivalMode.Direct)
+        {
+            Plugin.Logger.Error("Heavy weapon placement '" + e.Definition.Id + "' (call " + throwId + ") writes Supply or Restock but arrives by drop pod; a supply point needs Arrival \"Direct\". It is placed once, as a plain drop.");
+            rule = null;
+        }
         OrdnanceDelivery.HostAfter(OrdnanceDelivery.PodContentsDelay(e.Arrival), () =>
         {
             // Kept until the weapon is taken, so a player who joins meanwhile sees it and can take it. The pod leaves once every
-            // rack of it has been taken (RackTaken), the same rule as a supply pod.
+            // rack of it has been taken (RackTaken), the same rule as a supply pod. A supply point lays the racks its book gives: the
+            // first ones, or those a checkpoint saved for this call (a level-start drop placed again by the reload).
+            IEnumerable<int> bays = Enumerable.Range(0, p.Spec.Count);
+            if (rule != null)
+            {
+                var book = new SupplyPoint(rule, p.Spec.Count);
+                bays = SavedSupplies.TryGetValue((summoner, throwId), out var saved) && book.Restore(saved, Time.time, out var lying) ? lying : book.Start();
+                Supplies[(summoner, throwId)] = (book, record);
+            }
             var kept = new Dictionary<int, byte[]>();
-            for (var bay = 0; bay < p.Spec.Count; bay++)
+            foreach (var bay in bays)
             {
                 if (!OrdnanceApi.SendState(HeavyWeaponPayload.Type, summoner, throwId, Tag(bay), record))
                 {
+                    Supplies.Remove((summoner, throwId));
                     OrdnanceApi.ClearState(HeavyWeaponPayload.Type, summoner, throwId);
                     OrdnanceApi.SendData(HeavyWeaponPayload.Type, summoner, throwId, (byte)DataTag.RackUnavailable, Array.Empty<byte>());
                     OrdnanceDelivery.HostReportPodEmpty(summoner, throwId);
@@ -262,19 +293,47 @@ internal static class HeavyWeapons
     }
 
     /// <summary>Host: a rack was taken. Late joiners see only the racks still lying there; when none is left the pod is told it is
-    /// empty and leaves after its linger time.</summary>
+    /// empty and leaves after its linger time. A supply point's rack starts its restock wait instead (<see cref="Restock"/> lays it
+    /// again), and the point ends only when its supply is spent.</summary>
     private static void RackTaken(Rack rack)
     {
         var key = (rack.Summoner, rack.ThrowId);
         OrdnanceApi.ClearState(HeavyWeaponPayload.Type, rack.Summoner, rack.ThrowId);
+        var supply = Supplies.TryGetValue(key, out var point);
+        if (supply) point.Book.Taken(rack.Bay, Time.time);
         if (HostRacks.TryGetValue(key, out var left))
         {
             left.Remove(rack.Bay);
             foreach (var (bay, record) in left) OrdnanceApi.SendState(HeavyWeaponPayload.Type, rack.Summoner, rack.ThrowId, Tag(bay), record);
-            if (left.Count != 0) return;
+            if (left.Count != 0 || supply && !point.Book.Spent) return;
             HostRacks.Remove(key);
         }
+        Supplies.Remove(key);
         OrdnanceDelivery.HostReportPodEmpty(rack.Summoner, rack.ThrowId);
+    }
+
+    /// <summary>Host, every frame: lays again each supply point's rack whose restock wait is over, through the same kept rack record every
+    /// peer (and a player who joins later) builds a rack from, and opens it to take.</summary>
+    private static void Restock(float now)
+    {
+        foreach (var (key, point) in Supplies)
+        {
+            point.Book.Due(now, DueBays);
+            foreach (var bay in DueBays)
+            {
+                if (!OrdnanceApi.SendState(HeavyWeaponPayload.Type, key.Summoner, key.ThrowId, Tag(bay), point.Record)) continue;
+                if (!HostRacks.TryGetValue(key, out var kept)) HostRacks[key] = kept = new Dictionary<int, byte[]>();
+                kept[bay] = point.Record;
+                OrdnanceDelivery.HostOpenClaim(key.Summoner, key.ThrowId, bay);
+            }
+        }
+    }
+
+    /// <summary>Host, at a checkpoint: each supply point as it stands, for the level-start drop a reload places again.</summary>
+    internal static void CheckpointReached()
+    {
+        SavedSupplies.Clear();
+        foreach (var (key, point) in Supplies) SavedSupplies[key] = point.Book.Capture(Time.time);
     }
 
     /// <summary>Host, after the platform's checks (alive, in reach, open, not reserved): a borrower cannot take a second weapon, and the
@@ -301,6 +360,7 @@ internal static class HeavyWeapons
     {
         if (_phase != Phase.None) { claim.Failed(); return; }
         _claim = claim;
+        _lentName = rack.Definition != null ? OrdnanceContent.Name(rack.Definition) : ArsenalText.CallIn(rack.Id);
         try { BeginLoan(rack.P); }
         catch (Exception error) { Plugin.Logger.ErrorOnce("Heavy weapon installation refused: " + error); Abort(); }
     }
@@ -386,7 +446,11 @@ internal static class HeavyWeapons
     internal static void OnLoanNotice(ulong sender, LoanNotice m)
     {
         // An action outside the enum is a malformed packet and is dropped, not read as Returned.
-        if (!ForgeCore.Session.IsHost || !OrdnanceNetwork.Channel.IsPlayer(sender) || !Enum.IsDefined(m.Action)) return;
+        if (!ForgeCore.Session.IsHost || !OrdnanceNetwork.Channel.IsPlayer(sender) || !Enum.IsDefined(m.Action))
+        {
+            Plugin.Logger.ErrorOnce("arsenal-loan-notice-ignored", "a heavy weapon loan notice from player " + sender + " was ignored: " + (!ForgeCore.Session.IsHost ? "this peer is not the host" : !OrdnanceNetwork.Channel.IsPlayer(sender) ? "the sender is not a human player here" : "its action is unknown") + ".");
+            return;
+        }
         if (m.Action == LoanAction.Stashed) Loans.Stash(m.Summoner, m.ThrowId, sender, m.Attempt);
         else if (Loans.Release(m.Summoner, m.ThrowId, sender, m.Attempt) || AdoptedLaunchers.Remove(sender)) Launchers.Remove(sender);
     }
@@ -419,8 +483,10 @@ internal static class HeavyWeapons
             }
             var existing = Racks.Find(r => r.Summoner == d.SummonerLookup && r.ThrowId == d.ThrowId && r.Bay == bay);
             // A rack shown from the arrival holds the definition's numbers; the host's record is the placement's (its Overrides), the same one a late joiner builds from.
-            if (existing == null) RackFromState(d, record, bay);
-            else existing.P = new HeavyParameters(record.Spec, record.GearId);
+            // A record for a bay with no rack is a rack laid now: a direct arrival's, a late joiner's, or a supply point's laid again.
+            if (existing != null) { existing.P = new HeavyParameters(record.Spec, record.GearId); return; }
+            RackFromState(d, record, bay);
+            Laid[(d.SummonerLookup, d.ThrowId)] = (Laid.TryGetValue((d.SummonerLookup, d.ThrowId), out var laid) ? laid.Count + 1 : 1, d.Data);
         }
     }
 
@@ -457,6 +523,7 @@ internal static class HeavyWeapons
         // path; this also releases the loan if that message was dropped or there was no master while it was sent.
         if (ForgeCore.Session.IsHost && Loans.Any) Loans.ReconcileLoans(HostLoanStillPresent, ReleaseHostLoan);
         if (HostOpenPending.Count != 0 && ForgeCore.Session.IsHost) OpenAdopted();
+        if (Supplies.Count != 0 && ForgeCore.Session.IsHost) Restock(now);
         try { LocalLoan(now); }
         catch (Exception error) { Plugin.Logger.ErrorOnce("Heavy weapon loan failed: " + error); Abort(); }
         if (now >= _nextSkinScan)
@@ -646,6 +713,8 @@ internal static class HeavyWeapons
                     if (!Skins.ContainsKey(instance!.Pointer) && ArsenalArt.Weapon(_lent.Spec.Model) is { Ready: false } && now - _phaseStarted < ModelWait) return;
                     var resume = _heavyStash;
                     var tuned = Tune(instance!, _lent.Spec);
+                    // The gear's public name stays the marker every peer reads; the item the HUD names shows the call-in's own name.
+                    if (_lentName != null) instance!.PublicName = _lentName;
                     // The pool took its price of a round from the game's gun when the item was made; it must charge what this weapon charges.
                     if (tuned != null) ForgeCore.Gear.SetLocalAmmoType(AmmoType.Special, tuned.AmmoCost, (int)tuned.Magazine);
                     // A weapon taken back from the stash keeps exactly the magazine and reserve it was switched away with.
@@ -798,7 +867,7 @@ internal static class HeavyWeapons
     private static bool SwitchPressed(PlayerAgent agent, BulletWeapon weapon, float now)
         => now >= _switchReadyAt && !weapon.IsReloading && FocusStateManager.CurrentState == eFocusState.FPS
             && agent.Inventory?.WieldedItem?.ItemDataBlock?.inventorySlot == InventorySlot.GearSpecial
-            && InputMapper.GetButtonDown.Invoke(InputAction.SelectSpecial, eFocusState.FPS);
+            && InputMapper.GetButtonDown is { } buttonDown && buttonDown.Invoke(InputAction.SelectSpecial, eFocusState.FPS);
 
     /// <summary>Heavy weapon to the stash, the player's own special weapon back into the slot.</summary>
     private static void Stash(PlayerBackpack backpack, BulletWeapon heavy, float now)
@@ -867,6 +936,7 @@ internal static class HeavyWeapons
     {
         _phase = Phase.None;
         _lent = null;
+        _lentName = null;
         _launcherIdentity = Guid.Empty;
         _lease = null;
         _suspendedInHand = _resumeInHand = false;
@@ -1012,6 +1082,8 @@ internal static class HeavyWeapons
         UnavailableRacks.Clear();
         HostRacks.Clear();
         HostOpenPending.Clear();
+        Supplies.Clear();
+        SavedSupplies.Clear();
         Launchers.Clear();
         AdoptedLaunchers.Clear();
         _adoptLaunchers = true;
@@ -1039,6 +1111,27 @@ internal static class HeavyWeapons
             kept[rack.Bay] = record;
             HostOpenPending.Add(rack);
         }
+        AdoptSupplies();
+    }
+
+    /// <summary>New host: takes over the supply points of the level's level-start drops (every peer reads the same rules, and a level-start
+    /// drop's call number is its name's), from the racks lying there and the count this peer saw laid. An event drop's supply point is
+    /// known only to the host that placed it: its racks still lying stay to take, but none is laid again.</summary>
+    private static void AdoptSupplies()
+    {
+        var now = Time.time;
+        foreach (var drop in OrdnanceContent.Rules.Drops)
+        {
+            if (drop.When != DropWhen.LevelStart || drop.Arrival != OrdnanceArrivalMode.Direct || drop.Overrides == null || SupplyRule.From(drop.Overrides) is not { } rule) continue;
+            var key = (0ul, DeveloperDrops.LevelStartCall(drop.Name));
+            // The rack record this peer last received for the place carries the placement's numbers, where it lies and which way it faces.
+            if (!Laid.TryGetValue(key, out var laid) || !Wire.TryRack(laid.Record, out var record)) continue;
+            var lying = new bool[HeavyWeaponSpec.MaxCount];
+            foreach (var rack in Racks) if (rack.Summoner == 0 && rack.ThrowId == key.Item2) lying[rack.Bay] = true;
+            var book = new SupplyPoint(rule, record.Spec.Count);
+            book.Adopt(lying, laid.Count, now);
+            Supplies[key] = (book, laid.Record);
+        }
     }
 
     /// <summary>Host, every frame: opens to take the racks it adopted at a host change as soon as their pods are open.</summary>
@@ -1063,6 +1156,10 @@ internal static class HeavyWeapons
         UnavailableRacks.Clear();
         HostRacks.Clear();
         HostOpenPending.Clear();
+        Supplies.Clear();
+        Laid.Clear();
+        // A reload keeps what the checkpoint saved: the level-start drops it places again take it up.
+        if (why != ArsenalVoid.CheckpointReload) SavedSupplies.Clear();
         Launchers.Clear();
         AdoptedLaunchers.Clear();
         _adoptLaunchers = false;

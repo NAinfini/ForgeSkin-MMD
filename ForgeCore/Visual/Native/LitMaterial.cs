@@ -18,6 +18,8 @@ public static class LitMaterial
     private static readonly int MainTex = Shader.PropertyToID("_MainTex"), MetallicMap = Shader.PropertyToID("_MetallicGlossMap"),
         ShadingType = Shader.PropertyToID("_ShadingType"), IsGear = Shader.PropertyToID("_IsCustomGearMaterial"),
         Cutoff = Shader.PropertyToID("_Cutoff"), BumpMap = Shader.PropertyToID("_BumpMap"), UseNormalMap = Shader.PropertyToID("_UseNormalMap"), SupportsFps = Shader.PropertyToID("_SupportsFPSRendering");
+    // The game's keyword for first-person drawing, read once.
+    private static readonly string FpsKeyword = Player.PlayerBackpackManager.ENABLE_FPS_RENDERING;
 
     /// <summary>A material of the gear shader showing <paramref name="albedo"/> (sRGB) with <paramref name="metallicSmooth"/> (linear: metal in red,
     /// smoothness in green), or null while the game has not loaded the shader (it appears once a level has been built).
@@ -62,20 +64,35 @@ public static class LitMaterial
     /// <summary>A copy of <paramref name="world"/> drawn with the game's first-person item camera, as the game's own guns are in the hands (a gun on the first-person layer without it stands apart from the hands, drawn with the world camera). The caller owns it.</summary>
     public static Material FirstPersonCopy(Material world)
     {
-        world.SetFloat(SupportsFps, 1f);
         var copy = new Material(world) { name = world.name + " (first person)" };
-        copy.EnableKeyword(Player.PlayerBackpackManager.ENABLE_FPS_RENDERING);
+        SetFirstPerson(copy, true);
         return copy;
     }
+
+    /// <summary>Switches <paramref name="material"/> (one the caller owns) to the game's first-person item camera or back to the world camera, in
+    /// place. The game draws a material with the item camera only when it supports that (<c>_SupportsFPSRendering</c>, the property
+    /// <c>PlayerBackpackManager.SetFPSRendering</c> picks materials by) and <c>ENABLE_FPS_RENDERING</c> is on; one without either, on a held
+    /// item, is drawn by the world camera and shows as a second, smaller copy away from the hands.</summary>
+    public static void SetFirstPerson(Material material, bool on)
+    {
+        // Marked as supporting it either way, so the game's own later switch (SetFPSRendering) takes it along.
+        material.SetFloat(SupportsFps, 1f);
+        if (on) material.EnableKeyword(FpsKeyword);
+        else material.DisableKeyword(FpsKeyword);
+    }
+
+    /// <summary>Whether <paramref name="material"/> is drawn with the game's first-person item camera (its <c>ENABLE_FPS_RENDERING</c>; the game
+    /// switches a held item's materials, so a part material of an item says how that item is drawn now).</summary>
+    public static bool IsFirstPerson(Material material) => material.IsKeywordEnabled(FpsKeyword);
 
     /// <summary>What a copy of a first-person surface draws in the world: <paramref name="material"/> itself unless it is drawn with the item camera, otherwise one kept copy without that (the library's, shared).</summary>
     internal static Material ForWorld(Material material)
     {
-        if (!material.IsKeywordEnabled(Player.PlayerBackpackManager.ENABLE_FPS_RENDERING)) return material;
+        if (!IsFirstPerson(material)) return material;
         return KeptCopy(WorldCopies, material, static source =>
         {
             var copy = new Material(source) { name = source.name + " (world)" };
-            copy.DisableKeyword(Player.PlayerBackpackManager.ENABLE_FPS_RENDERING);
+            copy.DisableKeyword(FpsKeyword);
             return copy;
         });
     }

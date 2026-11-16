@@ -186,7 +186,7 @@ public static class Store
             try { WriteText(path, job.Text); }
             catch (Exception error)
             {
-                try { Log.For(job.ModId).ErrorOnce("core-store-file-could-not-be-written", "Store file " + path + " could not be written: " + error); } catch { }
+                try { Log.For(job.ModId).ErrorOnce("core-store-file-could-not-be-written", "Store file " + path + " could not be written: " + error); } catch { } // The log itself failed: nowhere left to report, and the writer thread must not stop.
             }
             // Removed only now, and only if no newer text arrived meanwhile, so a read in between still sees the value.
             lock (Pending) if (Pending.TryGetValue(path, out var current) && ReferenceEquals(current.Text, job.Text)) Pending.Remove(path);

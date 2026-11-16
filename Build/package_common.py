@@ -23,7 +23,6 @@ REPO = Path(__file__).resolve().parents[2]
 TEAM = "NAinfini"
 NAME = r"[A-Za-z0-9_]{1,128}"
 VERSION = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
-LIBRARY_METADATA = ("manifest.json", "icon.png", "README.md", "DEVELOPERS.md", "CHANGELOG.md", "LICENSE", "NOTICE", "web-manifest.forge")
 # Thunderstore's own files stay at the zip root; every other file of package <Name> is the zip entry plugins/<Name>/<path>.
 ROOT_FILES = ("manifest.json", "icon.png", "README.md", "CHANGELOG.md")
 # The GTFO install routes of r2modman and the Thunderstore Mod Manager (the game's installRules). A zip folder named like a route is copied
@@ -326,7 +325,7 @@ def package_files(folder: Path, name: str, files: dict[str, Path | str], output:
 
 def package_library(
     folder: Path, name: str, dlls: tuple[str, ...], artifacts: Path, output: Path,
-    metadata: tuple[str, ...] = LIBRARY_METADATA, extra: dict[str, Path] | None = None, project: str | None = None,
+    metadata: tuple[str, ...], extra: dict[str, Path] | None = None, project: str | None = None,
 ) -> Path:
     """Zip a package: metadata beside the package, every dll read from artifacts/bin/<project>/release (by default the dll's own name),
     plus the extra entry -> file table."""
@@ -349,7 +348,7 @@ def package_library(
 
 
 def main(
-    name: str, dlls: tuple[str, ...], extra: Callable[[Path, Path], dict[str, Path]] | None = None, metadata: tuple[str, ...] = LIBRARY_METADATA,
+    name: str, dlls: tuple[str, ...], extra: Callable[[Path, Path], dict[str, Path]] | None, metadata: tuple[str, ...],
     project: str | None = None,
 ) -> int:
     """extra(folder, built) returns the entry -> file table beyond the dlls and metadata; built is the first dll's Release output folder.

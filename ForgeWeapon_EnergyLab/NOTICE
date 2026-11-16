@@ -20,6 +20,7 @@ Sound effects (audio/*.ogg):
 - Draw, holster, reload and disc-hit-on-flesh sounds are the game's own and are played from the installed game; they are not in this package.
 
 Effects in forge-energylab-fx.bundle are rebuilt from Unity Asset Store packs under the Asset Store EULA (commercial use allowed; shipped inside this built bundle, not redistributed on their own; Assets/Vfx/fx-licences.forge lists the packs).
+The blast gun's explosion (HeavyBlast/forge-visual-fx.bundle) is rebuilt the same way; HeavyBlast/fx-licences.forge lists its packs.
 
 The package is compiled against BepInEx, HarmonyX, Il2CppInterop, GTFO-API and the game's interop assemblies, which the mod manager installs
 separately and which are not included here.

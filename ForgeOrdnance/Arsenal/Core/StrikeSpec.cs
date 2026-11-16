@@ -33,9 +33,15 @@ internal enum StrikeKind : byte
 
 /// <summary>Validated parameters of one offensive call-in. Every field is plain data read once at load; fields a kind does
 /// not use keep their default and are rejected in the file.</summary>
-internal sealed class StrikeSpec
+internal sealed class StrikeSpec : IOrdnanceDescribed
 {
     public const string TypeName = "arsenal.Strike";
+
+    /// <summary>A description's numbers (DEVELOPERS.md, "Description numbers"): {0} Damage, {1} BlastRadius, {2} Force, {3} Shells, {4} Spread,
+    /// {5} Duration, {6} Rows, {7} Length, {8} Width, {9} RowInterval, {10} Tick, {11} TickDamage, {12} ZoneRadius, {13} Speed, {14} Slow in per cent.
+    /// A field the kind does not use reads 0.</summary>
+    public IReadOnlyList<double> DescriptionValues =>
+        new double[] { Damage, BlastRadius, Force, Shells, Spread, Duration, Rows, Length, Width, RowInterval, Tick, TickDamage, ZoneRadius, Speed, Slow * 100.0 };
 
     public StrikeKind Kind { get; internal set; }
     /// <summary>Peak damage of one explosion (at its centre; the game's explosion falls off to its edge).</summary>

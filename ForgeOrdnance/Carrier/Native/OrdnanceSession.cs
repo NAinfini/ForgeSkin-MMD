@@ -137,23 +137,31 @@ internal sealed class OrdnanceSession
         PresentationReset?.Invoke(false);
     }
 
-    /// <summary>ForgeCore matched a player's copy and sent it the tables. The host gives that player the level's authored loadout, and
-    /// writes again every row that counts seconds from when it was written, so the newcomer does not start those clocks at their old
-    /// values. It can run more than once for one player; every write here is safe to repeat.</summary>
+    /// <summary>ForgeCore matched a player's copy and is about to send it the tables. The host gives that player the level's authored
+    /// loadout, and rewrites every row that counts seconds from when it was written for that player alone (<c>Refresh</c>: the whole
+    /// table it gets this frame carries them, the players who hold the table keep theirs), so the newcomer does not start those clocks
+    /// at their old values. It can run more than once for one player; every write here is safe to repeat.</summary>
     internal void PeerSynced(ulong peer)
     {
         if (!_inLevel || !ForgeCore.Session.IsHost) return;
         ApplyAuthoredLoadout(peer);
-        foreach (var entry in _book.Capture(Now).Entries) WriteSlot(entry.Player, entry.Key, entry.Uses, entry.CooldownRemaining);
-        Deliveries.WriteRows();
-        GearPayload.WriteRows();
+        foreach (var entry in _book.Capture(Now).Entries)
+        {
+            // Only the cooldown counts from the write; a row whose uses differ from the book is a change for everyone.
+            var slot = new SlotKey(entry.Player, entry.Key);
+            if (OrdnanceNetwork.SlotRows.TryGet(slot, out var held) && held.UsesLeft == entry.Uses && held.InitialUses == _book.InitialOf(entry.Player, entry.Key))
+                OrdnanceNetwork.SlotRows.Refresh(slot, held with { CooldownRemaining = (float)entry.CooldownRemaining });
+            else WriteSlot(entry.Player, entry.Key, entry.Uses, entry.CooldownRemaining);
+        }
+        Deliveries.RefreshRows();
+        GearPayload.RefreshRows();
         // A refreshed state is written back into the table, so its keys are walked from a copy; the list is the same one every time.
         _refreshed.Clear();
         _refreshed.AddRange(OrdnanceNetwork.StateRows.Rows.Keys);
         foreach (var state in _refreshed)
         {
             if (!OrdnanceApi.TryGetType(state.Type, out var type) || !OrdnanceNetwork.StateRows.TryGet(state, out var kept)) continue;
-            try { OrdnanceNetwork.StateRows.Set(state, type.Payload.RefreshState(state.Thrower, state.ThrowId, state.Tag, (byte[])kept.Clone())); }
+            try { OrdnanceNetwork.StateRows.Refresh(state, type.Payload.RefreshState(state.Thrower, state.ThrowId, state.Tag, (byte[])kept.Clone())); }
             catch (Exception error) { Plugin.Logger.ErrorOnce("Payload state refresh failed; the kept state stays as it was: " + error.Message); }
         }
     }
@@ -280,7 +288,7 @@ internal sealed class OrdnanceSession
 
     internal void ServeLoadout(ForgeCore.NetAsk ask)
     {
-        if (!_inLevel || !ForgeCore.Session.IsHost || !OrdnanceNetwork.Channel.IsPlayer(ask.From)) return;
+        if (!HostServes("A loadout", ask.From)) return;
         ask.Answer(new[] { (byte)DecideLoadout(ask.From, ask.Body) });
     }
 
@@ -415,7 +423,7 @@ internal sealed class OrdnanceSession
 
     internal void ServeLanding(ForgeCore.NetAsk ask)
     {
-        if (!_inLevel || !ForgeCore.Session.IsHost || !OrdnanceNetwork.Channel.IsPlayer(ask.From)) return;
+        if (!HostServes("A ball landing", ask.From)) return;
         ask.Answer(new[] { (byte)(ForgeCore.NetBody.TryRead(ask.Body, out LandingMessage message) ? DecideLanding(ask.From, message) : Rejection.InvalidLanding) });
     }
 
@@ -653,7 +661,16 @@ internal sealed class OrdnanceSession
 
     internal void OnClaimRequest(ulong sender, ClaimMessage message)
     {
-        if (_inLevel && ForgeCore.Session.IsHost && OrdnanceNetwork.Channel.IsPlayer(sender)) OrdnanceClaims.OnRequest(sender, message);
+        if (HostServes("A claim", sender)) OrdnanceClaims.OnRequest(sender, message);
+    }
+
+    /// <summary>Whether this peer acts on a player's request to the host; when not, one line says why (the asker hears nothing back).</summary>
+    private bool HostServes(string what, ulong from)
+    {
+        var reason = !_inLevel ? "this peer is not in a level" : !ForgeCore.Session.IsHost ? "this peer is not the host" : !OrdnanceNetwork.Channel.IsPlayer(from) ? "the sender is not a human player here" : null;
+        if (reason == null) return true;
+        Plugin.Logger.ErrorOnce("ordnance-request-ignored", what + " from " + NameOf(from) + " was ignored: " + reason + ".");
+        return false;
     }
 
     internal void OnClaimState(ulong sender, ClaimStateMessage message)

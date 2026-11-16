@@ -28,7 +28,7 @@ namespace ForgeOrdnance.Frames;
 /// instance would be lost. The instance stands in the slot a frame after the ask, but its parts come one per frame from the game's
 /// part spawner coroutine (<see cref="ForgeCore.GearAssembly"/>), which kept the new gun unloaded, unheld and empty for a dozen frames (0.27 to
 /// 0.49 s measured). The spawner of the new gun's own part holder is finished at once in the frame the instance stands in the slot, and
-/// the rounds are written in that same frame. The slot's gear, weapon and model, and the swap's timing, are logged after each swap.</para></summary>
+/// the rounds are written in that same frame.</para></summary>
 internal static class MechGun
 {
     private const float SwapTimeout = 8f, SettleSeconds = 1.5f, SlotWait = 3f;
@@ -81,11 +81,9 @@ internal static class MechGun
     /// not the empty gun the game assembles first), or null when none is.</summary>
     internal static SlotRounds? Incoming(int suitStock)
     {
-        {
-            if (Loan.Pending == null) return null;
-            var cost = LoanedGun.TryLocalSpecial(out var backpack, out _) ? backpack!.AmmoStorage.SpecialAmmo.CostOfBullet : 0f;
-            return SuitGunStock.Incoming(Loan, ClipSize, cost, suitStock);
-        }
+        if (Loan.Pending == null) return null;
+        var cost = LoanedGun.TryLocalSpecial(out var backpack, out _) ? backpack!.AmmoStorage.SpecialAmmo.CostOfBullet : 0f;
+        return SuitGunStock.Incoming(Loan, ClipSize, cost, suitStock);
     }
 
     /// <summary>Whether <paramref name="item"/> is the suit gun settled in the local player's special slot.</summary>
@@ -122,8 +120,8 @@ internal static class MechGun
     private static IntPtr _timedArchetype;
     private static float _shotTimerSeen, _burstTimerSeen;
     private static bool _firingExtra;
-    // The faster reload, measured: the game's own reload time and the factor applied the last time the game asked, and when the
-    // current reload started.
+    // The faster reload, for the HUD's progress: the game's own reload time and the factor applied the last time the game asked, and
+    // when the current reload started.
     private static float _reloadNative, _reloadFactor = 1f, _reloadStarted;
 
     /// <summary>After the game fired a shot of <paramref name="archetype"/> and set its next-shot (and next-burst) timer from the gun's own
@@ -131,7 +129,7 @@ internal static class MechGun
     /// by the fire-rate factor. Shots already due in this frame are fired at once through the game's own entry (its pre-fire check, its
     /// shot and its post-fire check: ammunition, recoil, sound and replication as for any shot), and the game's timer is set to the ideal
     /// time of the next one, so the rate is the target at any frame rate instead of rounding up to whole frames. A timer the game has not
-    /// rewritten since the last call is left alone. The first second of each planted stream is measured and logged once per siege.</summary>
+    /// rewritten since the last call is left alone.</summary>
     internal static void AfterShot(BulletWeaponArchetype archetype)
     {
         if (_firingExtra) return;
@@ -170,18 +168,11 @@ internal static class MechGun
         return archetype.m_firing && weapon != null && !weapon.WasCollected && weapon.GetCurrentClip() > 0 && archetype.PreFireCheck();
     }
 
-    /// <summary>The game asked for the reload time of the local pilot's gun <paramref name="weapon"/>: kept to log the reload when it ends.</summary>
+    /// <summary>The game asked for the reload time of the local pilot's gun <paramref name="weapon"/>: kept for the HUD's reload progress.</summary>
     internal static void ReloadAsked(BulletWeapon weapon, float native, float factor)
     {
         _reloadNative = native;
         _reloadFactor = factor;
-    }
-
-    private static void ReloadChanged(bool reloading, float now)
-    {
-        if (reloading) { _reloadStarted = now; return; }
-        if (_reloadFactor >= 1f || _reloadStarted <= 0f) return;
-        _reloadStarted = 0f;
     }
 
     /// <summary>The current reload's progress 0..1 and whether one runs (for the HUD).</summary>
@@ -341,7 +332,7 @@ internal static class MechGun
         _clip = weapon!.GetCurrentClip();
         _pack = ammo.BulletsInPack;
         var reloading = weapon.IsReloading;
-        if (reloading != _reloading) ReloadChanged(reloading, now);
+        if (reloading && !_reloading) _reloadStarted = now;
         _reloading = reloading;
         if (_overflow > 0)
         {

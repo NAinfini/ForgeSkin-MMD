@@ -2,8 +2,7 @@ using ForgeVisual;
 
 namespace ForgeOrdnance.Arsenal;
 
-/// <summary>The strike moments whose effect comes from the effect library (the bundle <c>forge-arsenal-fx.bundle</c> and its slot table
-/// <c>fx-slots.forge</c> in the plugin's <c>Arsenal</c> folder, made by <c>Tools/Vfx/FxLibrary/fx_slots.py</c> from the owner's selection). Which prefab plays
+/// <summary>The strike moments whose effect comes from the mod's effect library (<see cref="OrdnanceFxSlots"/>). Which prefab plays
 /// for a slot is data in that table, not code here; a slot the table does not list, or an install without the files, logs its error and draws
 /// nothing. Playing is ForgeVisual's <see cref="Fx"/>. The handles are null until <see cref="Load"/>, which the plugin runs when the first
 /// level has been built: every reader takes its handle at the moment it plays.</summary>
@@ -43,7 +42,9 @@ internal static class ArsenalFxSlots
 
     internal static void Load()
     {
-        var set = FxSlots.Load(Plugin.Id, "ArsenalFx", "Arsenal/forge-arsenal-fx.bundle", "Arsenal/fx-slots.forge");
+        var set = OrdnanceFxSlots.Set; // the library OrdnanceFxSlots.Load read
+        HeavyBlast.Load(); // the grenade launcher's explosion: the mod's copy, registered at plugin load (Plugin.LoadArsenal)
+
         ShellTrail = set.Find("strike.shell");
         HunterTrail = set.Find("strike.hunter");
         GasCloud = set.Find("strike.gas.cloud"); StasisField = set.Find("strike.stasis.field"); FireZone = set.Find("strike.fire");

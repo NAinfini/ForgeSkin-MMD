@@ -1,11 +1,11 @@
 # Changelog
 
-## 1.0.2
+## 1.0.1
 
-This version stays at 1.0.x although it removes and changes public interfaces; each one is listed below under "Breaking" and "Interface", and mods that use them need to be recompiled. From this version on, 1.x only adds to the interface and removes nothing.
+Everything since 1.0.0. This version stays at 1.0.x although it removes and changes public interfaces; each one is listed below under "Breaking" and "Interface", and mods that use them need to be recompiled. From this version on, 1.x only adds to the interface and removes nothing.
 
 - Breaking: `HookFanout<T>`, `HookLease` and `HookDispatch` are removed; there is no replacement.
-- Breaking: `ItemModelIcons.Photograph` and `ModelPictureView` are removed; there is no replacement (ForgeSkin's picker shows the picture each pack carries).
+- Breaking: `ModelPictureView` is removed; there is no replacement (ForgeSkin's picker shows the picture each pack carries).
 - Breaking: `Glow.Srgb` and `Glow.LinearToSrgb` are removed; use `ColourSpace.ToSrgb`, `ColourSpace.ToLinear` and `ColourSpace.Glow`. `Glow.Value` and `Glow.Write(material, srgb, gain)` convert a glow colour once, by whether the shader property is HDR (`Glow.IsHdr`).
 - Breaking: `FirstPersonWear.Follow` is removed: the library follows a worn model's visibility every frame itself. `FirstPersonWearOptions` adds `Descendants` and `LeaveOut`, and the wear accepts the caller's own model instance.
 - Interface: `MenuScreenWindow.AddButton` takes an optional `why`: a disabled button fades with its frame and text, takes no press or hover, and shows that one sentence under it. Recompile mods that call it.
@@ -16,7 +16,7 @@ This version stays at 1.0.x although it removes and changes public interfaces; e
 - Added: `Models.Drawn` (enabled and not turned off by `forceRenderingOff`; outlines collect only what is drawn), `Models.LeaveOutInFirstPerson`, `OwnBodyCut`.
 - Added: replayable objects for recordings: `Recording.Track` (pose, scale and visibility recorded when they change), `Recording.State`, `Recording.Provide` / `IRecordingProvider`, `Recording.Find`, `Recording.Apply` and `Recording.Placed`.
 - Added: `Combat.Kill` kills an enemy whatever its health, melee resistance or not-dying flag (on the host, through the game's own damage entry); `EnemyDamageCall.Unruled` marks that hit so Forge damage rules leave it alone.
-- Added: local rundown progress. `Progression` records the zones cleared in each level of a local rundown on this machine, and the game's rundown screen unlocks levels from it without the game's server.
+- Added: local rundown progress for custom rundowns. `Progression` records the zones cleared in each level of a custom rundown (a Forge rundown, or every rundown when MTFO loads its own game data) on this machine, and the game's rundown screen unlocks its levels from that by the rundown's own rules, without asking the game's server. The game's own rundowns are left alone and keep your own progress.
 - Added: `PickerSource.Layout`, `Panel`, `PickScheme`, `Settings`, `SettingsInfo` and `NumberSlots`, with `PickerPanel` and `PickerScheme` (a picker's colour schemes and its settings behind the title bar's gear); `UIKitSprites.Gear` and `Tick`.
 - Added: `NativeObjects.Same` and `Identity` (compare game objects by the object, not the wrapper), `GameText.Read` and `TryColumn`, `ColourSpace`, `WorldBackdrop.Queue`, `Png.TryDecode`.
 - Fixed: outlines draw every part of a model with many sub-meshes (a character model was outlined only at the face); a hidden original body no longer enters the outline.
@@ -43,13 +43,10 @@ This version stays at 1.0.x although it removes and changes public interfaces; e
 - `PlayerHits` puts on only the patches a registration needs: a redirect alone no longer puts the reading prefix, postfix and finalizer on `OnIncomingDamage`. Priorities and the order of the callbacks are unchanged.
 - Interface: `GameHooks.WieldedSlotBlocked.Release`, `GameHooks.LocalItemHeld.Hide` and the five `PlayerStats` subscriptions (`Walk`, `CarryUnslowed`, `Jump`, `NoStamina`, `NoFlinch`) return an `IDisposable` that ends the subscription (they returned nothing); the hook stays on. Recompile mods that call them.
 - Added: the full `Combat.Noise` overload takes an optional `maker` (a `PlayerAgent`), handed to the game as the noise's maker. Recompile mods that call that overload.
-
-## 1.0.1
-
 - Interface: `UIKit.AddLobbyButton` takes the button's area (`LobbyArea`: below, right, above) and width (`LobbyWidth`: full, half, third); buttons of one area fill rows in order and move to the next area only when they do not fit. Under APPAREL the buttons' rows and the lobby strips' rows close up and then get lower (not below 0.6 of their height, always as wide as APPAREL) to stay above the screen's bottom before a button moves elsewhere.
-- Added: `Images.Queue` and `Images.QueueRaw` (images decoded and uploaded over several frames within a frame budget, raw DDS-style blocks uploaded directly); `Store.Read` / `Store.Write` with an explicit path, which never overwrite a file they could not read; `StrictJson.NamespacedId`; `ItemModelIcons.Photograph`; `EnemyNames` and `UIKit.EnemyName` (the game's enemy names in English and Chinese).
+- Added: `Images.Queue` and `Images.QueueRaw` (images decoded and uploaded over several frames within a frame budget, raw DDS-style blocks uploaded directly); `Store.Read` / `Store.Write` with an explicit path, which never overwrite a file they could not read; `StrictJson.NamespacedId`; `EnemyNames` and `UIKit.EnemyName` (the game's enemy names in English and Chinese).
 - Added: the procedural pattern library (`Procedural`, `ProceduralCatalog`, `ProceduralPainter`, with blend modes and `SetTime`), and the adjust-page controls `UISlider`, `UIToggle`, `UIChoice` and `UISwatches`.
-- Added: `Il2CppArrays.Store` and `Il2CppArrays.ToGameReferences`, which store into the game's arrays of references with the collector's write barrier (ForgeSkin 1.1.0 needs them).
+- Added: `Il2CppArrays.Store` and `Il2CppArrays.ToGameReferences`, which store into the game's arrays of references with the collector's write barrier (ForgeSkin needs them).
 - Added: `AudioKit.CheckClip`, the container check `AudioKit.Load` applies to each clip, for one clip on any thread (null when it passes, else why not).
 - Added: `PickerCard.Swatch` and `PickerInfo.Swatch` show a colour choice as a tile on the card and large in the details. Picker titles too long for one line take two; an adjust page draws its controls as soon as it opens; list rows never draw past the list's frame.
 - Full-screen lists (`MenuScreen` entries) centre each line of a row in the row's box, and hovering a row no longer scrolls the list.

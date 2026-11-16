@@ -14,7 +14,9 @@ var carrier = checks;
 ArsenalChecks.Run(Check);
 var arsenal = checks - carrier;
 FramesChecks.Run(Check);
-Console.WriteLine("ForgeOrdnance core: " + checks + " checks passed (carrier " + carrier + ", Arsenal " + arsenal + ", Frames " + (checks - carrier - arsenal) + ").");
+var frames = checks - carrier - arsenal;
+TextChecks.Run(Check);
+Console.WriteLine("ForgeOrdnance core: " + checks + " checks passed (carrier " + carrier + ", Arsenal " + arsenal + ", Frames " + frames + ", player texts " + (checks - carrier - arsenal - frames) + ").");
 
 /// <summary>The mod's folder, from this source file's own location (the build output lives under artifacts/): the shipped
 /// definition files are read from it.</summary>

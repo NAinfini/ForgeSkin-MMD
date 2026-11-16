@@ -17,7 +17,9 @@ internal static class ReplayAssist
     // When the clearing last asked the game for the no-fog block (it is asked again while fog still shows, at most once a second).
     private static float _fogAsked = float.MinValue;
     private static readonly OutlineHandle?[] Ally = new OutlineHandle?[4];
-    private static int _wieldSeen = -1, _viewedSeen = -1;
+    // The stand-in version each outline was made for (StandIn.Version): a body whose drawing changed is outlined anew.
+    private static readonly int[] Seen = { -1, -1, -1, -1 };
+    private static int _viewedSeen = -1;
 
     internal static bool Fog { get => _fog; set { if (_fog == value) return; _fog = value; if (!value) RestoreFog(); } }
     internal static bool Bright { get => _bright; set { if (_bright == value) return; _bright = value; if (!value) RestoreBright(); } }
@@ -40,18 +42,22 @@ internal static class ReplayAssist
     {
         if (_fog) HoldFog();
         if (_bright) HoldBright();
-        var redo = Puppeteer.WieldVersion != _wieldSeen || (eyes ? viewed : -1) != _viewedSeen;
-        if (!redo && UnityEngine.Time.frameCount % 60 != 0) return;
-        _wieldSeen = Puppeteer.WieldVersion; _viewedSeen = eyes ? viewed : -1;
+        var viewing = eyes ? viewed : -1;
+        var redo = viewing != _viewedSeen;
+        _viewedSeen = viewing;
+        var check = redo || UnityEngine.Time.frameCount % 60 == 0;
         for (var slot = 0; slot < 4; slot++)
         {
-            var body = Puppeteer.BodyOf(slot);
-            var want = _allies && body != null && !(eyes && slot == viewed);
-            if (!want) { Ally[slot]?.Remove(); Ally[slot] = null; continue; }
-            if (!redo && Ally[slot] is { Active: true }) continue;
+            var standIn = Puppeteer.StandInOf(slot);
+            var version = standIn?.Version ?? -1;
+            if (!check && version == Seen[slot]) continue;
+            var want = _allies && standIn != null && !(eyes && slot == viewed);
+            if (!want) { Ally[slot]?.Remove(); Ally[slot] = null; Seen[slot] = -1; continue; }
+            if (!redo && version == Seen[slot] && Ally[slot] is { Active: true }) continue;
+            Seen[slot] = version;
             Ally[slot]?.Remove();
             var colour = ReplayScreen.SlotColour(slot);
-            Ally[slot] = Outlines.Add(Plugin.Id, body!, new OutlineColor(colour.r, colour.g, colour.b, 0.95f), priority: 10, xRay: true);
+            Ally[slot] = Outlines.Add(Plugin.Id, standIn!.Body, new OutlineColor(colour.r, colour.g, colour.b, 0.95f), priority: 10, xRay: true);
         }
     }
 
@@ -62,13 +68,14 @@ internal static class ReplayAssist
         if (_bright) RestoreBright();
         _fog = _bright = false; _allies = true;
         RemoveAllies();
-        _wieldSeen = _viewedSeen = -1;
+        _viewedSeen = -1;
+        Array.Fill(Seen, -1);
     }
 
     private static void RemoveAllies()
     {
         for (var slot = 0; slot < 4; slot++) { Ally[slot]?.Remove(); Ally[slot] = null; }
-        _wieldSeen = -1;
+        Array.Fill(Seen, -1);
     }
 
     private static void HoldFog()

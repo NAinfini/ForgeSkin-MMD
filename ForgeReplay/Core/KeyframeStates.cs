@@ -20,6 +20,9 @@ internal sealed class KeyframeStates
         else _live[id] = payload.ToArray();
     }
 
+    /// <summary>Whether the object's held state is exactly <paramref name="payload"/>: writing it again would say nothing.</summary>
+    internal bool Holds(ushort kind, ulong key, ReadOnlySpan<byte> payload) => _live.TryGetValue((kind, key), out var held) && payload.SequenceEqual(held);
+
     internal void Write(BlockPipeline pipeline, uint nowMs)
     {
         foreach (var (id, payload) in _live) pipeline.Event(nowMs, id.Kind, payload);

@@ -127,7 +127,7 @@
   "hud.behind": "BEHIND ×{0}",
   "slot.piloting": "Piloting an exosuit",
   "keys.group.frames": "Forge Frames",
-  "keys.exit": "Exit frame",
+  "keys.exit": "Exit exosuit",
   "keys.special": "Special",
   "keys.rockets": "Rocket salvo"
 }

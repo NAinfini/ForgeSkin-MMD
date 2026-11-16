@@ -7,9 +7,9 @@ namespace ForgeReplay;
 
 /// <summary>
 /// How the observer watches a replay. Two states: watching (the mouse turns the view, W A S D with E up and Q down fly the free camera,
-/// Shift is faster, the wheel sets its speed; behind a player the mouse circles the player and the wheel sets the distance) and using the
+/// Shift is faster, the wheel sets its speed; orbiting a player the mouse circles the player; behind a player the wheel sets the distance) and using the
 /// screen (Control held, or tapped to stay: the HUD pointer clicks the time bar, cards and buttons and the view stays still). The views:
-/// at a player's eyes (with the game's first-person arms and gun), behind a player turning with the player's view (chase), behind a player
+/// at a player's eyes (with the game's first-person arms and gun), behind a player looking the way the player looked when recorded, the mouse doing nothing (chase), behind a player
 /// turned only by the mouse while it keeps to the player's place (orbit, the first view), free and above a player looking down. 1 to 4 or a card
 /// picks a player (again: behind and eyes swap), [ and ] the previous and next, V first person, chase and orbit in turn, F free, T above, C the
 /// automatic camera on and off; Space plays and pauses, the arrows jump 5 s, Shift and an arrow the previous or next mark, up and down the speed,
@@ -291,7 +291,6 @@ internal static class ReplayCamera
             _velocity = Vec.Zero;
         }
         if (mode == ViewMode.Eye) Enemy = -1;
-        if (mode == ViewMode.Follow && Mode != ViewMode.Follow) _orbitYaw = _orbitPitch = 0f;
         if (mode == ViewMode.Orbit && Mode != ViewMode.Orbit)
         {
             // The orbit starts the way the view is turned, so nothing swings when it is chosen.
@@ -426,21 +425,24 @@ internal static class ReplayCamera
                 }
             default:
                 {
-                    // Behind the player, circled by the mouse, the wheel nearer or farther. Chasing, the circle turns with the player, eased; orbiting, only the mouse turns it.
-                    if (!Ui)
+                    // Behind the player, the wheel nearer or farther. Orbiting, the mouse circles the player and nothing else turns the view; chasing, the
+                    // view stays behind the player and looks the way the player looked when recorded (the turn eased, the pitch as recorded), the mouse does nothing.
+                    var chase = mode == ViewMode.Follow;
+                    if (!Ui && !chase)
                     {
                         _orbitYaw += InputLease.Axis(InputAction.LookHorizontal) * LookScale;
                         _orbitPitch = Mathf.Clamp(_orbitPitch - InputLease.Axis(InputAction.LookVertical) * LookScale, -35f, 60f);
                     }
                     var eye = feet + Vec.Up * height;
                     var flat = look * Vec.Forward;
+                    var up = flat.y;
                     flat.y = 0f;
                     var heading = Vec.SqrLength(flat) > 1e-4f ? Heading(flat) : 0f;
                     var same = _placed && !_snap && _lastMode == mode && _lastSlot == target;
                     _heading = same ? Mathf.LerpAngle(_heading, heading, 1f - Mathf.Exp(-12f * dt)) : heading;
                     // The first view of a replay starts behind the player.
                     if ((!_placed || _behind) && mode == ViewMode.Orbit) { _orbitYaw = heading; _behind = false; }
-                    var around = Quaternion.Euler(OrbitTilt + _orbitPitch, (mode == ViewMode.Follow ? _heading : 0f) + _orbitYaw, 0f);
+                    var around = chase ? Quaternion.Euler(OrbitTilt, _heading, 0f) : Quaternion.Euler(OrbitTilt + _orbitPitch, _orbitYaw, 0f);
                     var ahead = around * Vec.Forward;
                     var level = Vec.Of(ahead.x, 0f, ahead.z);
                     var levelLength = Vec.Length(level);
@@ -455,7 +457,7 @@ internal static class ReplayCamera
                     var want = eye + ray / reach * Math.Min(_clear, reach);
                     position = same ? Vector3.Lerp(_shown, want, 1f - Mathf.Exp(-12f * dt)) : want;
                     // The way the camera looks does not depend on how far a wall lets it stand back.
-                    turn = Quaternion.LookRotation(eye + level * 1.5f - full);
+                    turn = chase ? Quaternion.Euler(Mathf.Clamp(-Mathf.Asin(Mathf.Clamp(up, -1f, 1f)) * Mathf.Rad2Deg, -60f, 60f), _heading, 0f) : Quaternion.LookRotation(eye + level * 1.5f - full);
                     break;
                 }
         }

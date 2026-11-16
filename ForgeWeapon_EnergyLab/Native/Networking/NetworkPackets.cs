@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using UnityEngine;
@@ -72,16 +73,38 @@ internal struct FireCommand
         };
 }
 
+/// <summary>A shot as every gun but the Arc Chain sends it: <see cref="FireVisual"/> up to its first end (the beam's), 63 bytes.</summary>
+[StructLayout(LayoutKind.Sequential, Pack = 1)]
+internal struct ShotVisual
+{
+    internal ulong Shooter;
+    internal uint Sequence;
+    internal uint CategoryId;
+    internal byte Mode, Segments, HitMask;
+    internal float X, Y, Z, Dx, Dy, Dz, Power;
+    internal float Damage;
+    internal float E0x, E0y, E0z;
+}
+
+/// <summary>A shot: what the shooter resolved, for the other machines to draw. On the wire the Arc Chain sends all of it (99 bytes) and
+/// every other gun only its first part, <see cref="ShotVisual"/>, which has the same layout up to there (<see cref="Shot"/>, <see cref="From(ShotVisual)"/>).</summary>
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 internal struct FireVisual
 {
     internal ulong Shooter;
     internal uint Sequence;
     internal uint CategoryId;
-    internal int Mode, Segments, HitMask;
+    internal byte Mode, Segments, HitMask;
     internal float X, Y, Z, Dx, Dy, Dz, Power;
     internal float Damage;
     internal float E0x, E0y, E0z, E1x, E1y, E1z, E2x, E2y, E2z, E3x, E3y, E3z;
+    internal ShotVisual Shot => Unsafe.As<FireVisual, ShotVisual>(ref this);
+    internal static FireVisual From(ShotVisual shot)
+    {
+        var visual = default(FireVisual);
+        Unsafe.As<FireVisual, ShotVisual>(ref visual) = shot;
+        return visual;
+    }
     internal Vector3 Start => new(X, Y, Z);
     internal Vector3 Direction => new(Dx, Dy, Dz);
     internal bool Hit(int index) => (HitMask & (1 << index)) != 0;
@@ -108,7 +131,7 @@ internal struct FireVisual
     {
         Shooter = shooter,
         Sequence = command.Sequence,
-        Mode = command.Mode,
+        Mode = (byte)command.Mode,
         CategoryId = command.CategoryId,
         X = command.X,
         Y = command.Y,

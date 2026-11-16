@@ -26,7 +26,7 @@ namespace ForgeOrdnance.Frames;
 /// wrecked) stands in its rest pose, completely still. The pilot's game footsteps, jump and landing sounds are claimed through ForgeAudio (<see cref="AudioKit.ClaimBodySounds"/>): the suit plays its own footsteps,
 /// jump and landing for everyone. The pilot's flashlight becomes the suit's lamp (wider, longer, warm), with a glow on the suit
 /// while it is on.</summary>
-internal sealed partial class FrameVisual : IBodySoundHandler
+internal sealed partial class FrameVisual
 {
     private const float FallHeight = 40f;
     internal const float FallSeconds = 2.0f;
@@ -73,7 +73,7 @@ internal sealed partial class FrameVisual : IBodySoundHandler
     private bool _plateOpen, _eventsClosing;
     private int _eventStep;
     private bool _ownHidden;
-    private readonly List<Renderer> _forcedOff = new();
+    private ForgeVisual.PersonHide? _concealed;
     private int _tracerFrame, _tracersThisFrame;
     private readonly PilotHull _hull = new();
 
@@ -81,9 +81,9 @@ internal sealed partial class FrameVisual : IBodySoundHandler
     private ulong _shownPilot;
     private PlayerAgent? _pilot;
     private PilotBody? _body;
-    private bool _pilotLocal, _hidden, _landed, _airborne, _silenced;
+    private bool _pilotLocal, _landed, _airborne, _silenced;
     private BodySoundClaim? _bodySounds;
-    private float _arriveStart, _stateStart, _nextHideCheck;
+    private float _arriveStart, _stateStart;
     private OrdnanceDrop? _drop;
     private float _yaw, _seenBoost, _nextPilotTry;
     private bool _seenSiege;
@@ -101,7 +101,7 @@ internal sealed partial class FrameVisual : IBodySoundHandler
     private readonly FrameCarry _carry = new();
     // The pilot's flashlight while it is the suit's lamp.
     private Light? _light;
-    private float _lightRange, _lightAngle, _lightIntensity, _appliedRange;
+    private float _lightRange, _lightAngle, _lightIntensity, _appliedRange, _appliedAngle, _appliedIntensity;
     private Color _lightColour;
     private ForgeVisual.GlowSpot? _lamp;
     private static readonly Color LampColour = new(1f, 0.85f, 0.6f, 0.85f);
@@ -174,7 +174,7 @@ internal sealed partial class FrameVisual : IBodySoundHandler
             bounds.Expand(LimbReach * 2f);
             renderer.localBounds = bounds;
         }
-        _pose = _renderers.Length > 0 ? ForgeVisual.Models.ReadPoseTarget(_transform, _renderers[0], FrameBodyRig.PoseLinks, unit.Record.Spec.Model) : null;
+        _pose = ForgeVisual.Models.Get(unit.Record.Spec.Model) is { } handle ? ForgeVisual.Models.ReadPoseTarget(root, handle, unit.Record.Spec.Model) : null;
         if (found == 0) Plugin.Logger.ErrorOnce("Exosuit model " + unit.Record.Spec.Model + " has no opening parts; it does not visibly open.");
         if (unit.Record.Spec.Rockets is { } rockets)
         {
@@ -222,7 +222,7 @@ internal sealed partial class FrameVisual : IBodySoundHandler
     internal static FrameVisual? Create(FrameUnit unit, bool replayed = false)
     {
         var r = unit.Record;
-        var root = FrameAssets.Spawn(r.Spec.Model, new Vector3(r.X, r.Y, r.Z), Quaternion.Euler(0f, r.Yaw, 0f));
+        var root = FrameAssets.Spawn(r.Spec, new Vector3(r.X, r.Y, r.Z), Quaternion.Euler(0f, r.Yaw, 0f));
         if (root == null) return null;
         root.name = "ForgeOrdnance.Frames.Frame." + r.ThrowId;
         var visual = new FrameVisual(unit, root);
@@ -305,7 +305,6 @@ internal sealed partial class FrameVisual : IBodySoundHandler
         }
         TickFxLight(r, now);
         TickGlow(r, now);
-        if (_hidden && now >= _nextHideCheck) WatchHidden(now);
     }
 
     private bool _helmetMeasured;
@@ -549,7 +548,7 @@ internal sealed partial class FrameVisual : IBodySoundHandler
         foreach (var renderer in _renderers)
             if (renderer != null && !renderer.WasCollected) ForgeVisual.SurfaceLook.SetShadowOnly(renderer, hidden);
         _rocketPod?.ShadowOnly(hidden);
-        _heldCopy?.ShadowOnly(hidden);
+        _copy?.Held?.ShadowOnly(hidden);
     }
 
     private void Transition(FrameRecord r, float now, bool replayed = false)
@@ -664,15 +663,14 @@ internal sealed partial class FrameVisual : IBodySoundHandler
 
     /// <summary>Another peer's pilot fired: muzzle flash and a tracer from the muzzle of the gun the suit holds (the game plays the
     /// weapon's own sound); at most two tracers per suit per frame.</summary>
-    internal void Shots(int count, Vector3 origin, Vector3 target)
+    internal void Shot(Vector3 origin, Vector3 target)
     {
-        if (count <= 0) return;
         // The pilot's own shot left from the gun the suit holds here.
         if (HeldMuzzle(out var held)) origin = held;
         if (FramesFxSlots.GunMuzzle is { } flash) ForgeVisual.Fx.Play(flash, origin, target - origin);
         var frame = Time.frameCount;
         if (frame != _tracerFrame) { _tracerFrame = frame; _tracersThisFrame = 0; }
-        for (var s = 0; s < Math.Min(count, 2) && _tracersThisFrame < 2; s++, _tracersThisFrame++) FrameFx.Tracer(origin, target);
+        if (_tracersThisFrame < 2) { _tracersThisFrame++; FrameFx.Tracer(origin, target); }
     }
 
     // ---- lamp ---------------------------------------------------------------------------------------------------
@@ -689,18 +687,24 @@ internal sealed partial class FrameVisual : IBodySoundHandler
         if (_light != null && (light == null || light.Pointer != _light.Pointer)) RestoreLight();
         if (light == null) { Glow(false); return; }
         var spec = _unit.Record.Spec.Light;
+        var tint = new Color(spec.R, spec.G, spec.B, 1f);
         var range = light.range;
-        if (_light == null || Math.Abs(range - _appliedRange) > 0.01f)
+        var angle = light.spotAngle;
+        var intensity = light.intensity;
+        var colour = light.color;
+        // Any of the four the game wrote again (not only the range) makes all four the new base.
+        if (_light == null || Math.Abs(range - _appliedRange) > 0.01f || Math.Abs(angle - _appliedAngle) > 0.01f
+            || Math.Abs(intensity - _appliedIntensity) > 0.001f || colour != tint)
         {
             _light = light;
             _lightRange = range;
-            _lightAngle = light.spotAngle;
-            _lightIntensity = light.intensity;
-            _lightColour = light.color;
+            _lightAngle = angle;
+            _lightIntensity = intensity;
+            _lightColour = colour;
             light.range = _appliedRange = _lightRange * spec.RangeMultiplier;
-            light.spotAngle = Math.Min(150f, _lightAngle * spec.AngleMultiplier);
-            light.intensity = _lightIntensity * spec.IntensityMultiplier;
-            light.color = new Color(spec.R, spec.G, spec.B, 1f);
+            light.spotAngle = _appliedAngle = Math.Min(150f, _lightAngle * spec.AngleMultiplier);
+            light.intensity = _appliedIntensity = _lightIntensity * spec.IntensityMultiplier;
+            light.color = tint;
         }
         // The local pilot never sees its own helmet: the lamp's place on it and its glow are for everyone else.
         if (_pilotLocal) { Glow(false); return; }
@@ -793,7 +797,7 @@ internal sealed partial class FrameVisual : IBodySoundHandler
         if (on)
         {
             if (_pilot != null && !_pilot.WasCollected)
-                _bodySounds = AudioKit.ClaimBodySounds(Plugin.Id, _pilot.gameObject, BodySound.Footstep | BodySound.Movement, this);
+                _bodySounds = AudioKit.ClaimBodySounds(Plugin.Id, _pilot.gameObject, BodySound.Footstep | BodySound.Movement, PlayBodySound);
         }
         else
         {
@@ -811,12 +815,7 @@ internal sealed partial class FrameVisual : IBodySoundHandler
         _body = null;
         ReleaseMarker();
         // A pilot the game already destroyed (dropped out) leaves nothing to show again, but the suit's own state must still be cleared.
-        if (_pilot != null && !_pilot.WasCollected) Conceal(false);
-        else
-        {
-            ForgeVisual.Models.ShowRenderers(_forcedOff);
-            _hidden = false;
-        }
+        Conceal(false);
         _hull.Remove();
         RestoreLight();
         Glow(false);
@@ -826,48 +825,17 @@ internal sealed partial class FrameVisual : IBodySoundHandler
         _pilotLocal = false;
     }
 
-    /// <summary>Stops (or resumes) drawing the pilot as a person. A remote pilot: the game's own switch
-    /// (<c>PlayerSyncModelData.SetAllVisible</c>) and then <c>forceRenderingOff</c> on every renderer of its agent (model and held
-    /// item), which the game never writes, so a refresh by the game cannot bring the person back. The local pilot: only its
-    /// third-person model, which draws its shadow; the first-person body is the worn shell's (<see cref="LocalPilot"/>). Only renderers turned off
-    /// here are turned back on.</summary>
+    /// <summary>Stops (or resumes) drawing the pilot as a person, through <see cref="ForgeVisual.Persons.Hide(Player.PlayerAgent, string, ForgeVisual.PersonHideOptions?)"/>: a remote pilot whole with its
+    /// held item, except what the suit shows on itself (<see cref="FrameCarry.Shows"/>); the local pilot only its third-person model, which draws its
+    /// shadow, the first-person body being the worn shell's (<see cref="LocalPilot"/>). Not a look's hold, so a character model another mod wears on the
+    /// pilot is hidden with the person while the suit is worn and shows again when it is left.</summary>
     private void Conceal(bool hide)
     {
-        if (hide == _hidden || _pilot == null) return;
-        var agent = _pilot;
-        try
-        {
-            if (!_pilotLocal)
-            {
-                var model = agent.PlayerSyncModel;
-                if (model != null) model.SetAllVisible(!hide);
-            }
-            if (hide) HideRenderers(agent);
-            else ForgeVisual.Models.ShowRenderers(_forcedOff);
-
-            _hidden = hide;
-            _nextHideCheck = Time.time + 0.5f;
-        }
+        if (hide == (_concealed != null)) return;
+        if (!hide) { _concealed!.Release(); _concealed = null; return; }
+        if (_pilot == null) return;
+        try { _concealed = ForgeVisual.Persons.Hide(_pilot, "exosuit pilot", new ForgeVisual.PersonHideOptions { Keep = _carry.Shows }); }
         catch (Exception error) { Plugin.Logger.ErrorOnce("Hiding the exosuit pilot failed: " + error); }
-    }
-
-    private void HideRenderers(PlayerAgent agent)
-    {
-        if (!_pilotLocal) { ForceOff(agent.gameObject); return; }
-        var model = agent.PlayerSyncModel;
-        if (model != null) ForceOff(model.gameObject);
-    }
-
-    private void ForceOff(GameObject root) => ForgeVisual.Models.HideRenderers(root.transform, _carry.Shows, _forcedOff);
-
-
-    /// <summary>Every 0.5 s while the pilot is inside: renderers the game created since (a newly drawn weapon of a remote pilot) are
-    /// turned off too. Nothing the game switched is switched back here; the renderers already off stay off by themselves.</summary>
-    private void WatchHidden(float now)
-    {
-        _nextHideCheck = now + 0.5f;
-        if (_pilot == null || _pilot.WasCollected) return;
-        HideRenderers(_pilot);
     }
 
     /// <summary>A suit's barrier (the tank's, or the firepower's while planted) has no standing picture: its raise, drop and hit sounds
@@ -924,7 +892,7 @@ internal sealed partial class FrameVisual : IBodySoundHandler
 
     /// <summary>One of the pilot's own game body sounds: a footstep becomes the suit's footstep at the same place, once per footfall,
     /// whatever the pilot's pace; the jump and landing are dropped (the suit plays its own). The game's sound never plays.</summary>
-    bool IBodySoundHandler.Play(BodySound kind, Vector3 position)
+    private bool PlayBodySound(BodySound kind, Vector3 position)
     {
         if (kind == BodySound.Footstep && _stepGate.Admit(Time.time)) SoundAt(FrameSound.Footstep, position);
         return true;

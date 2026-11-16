@@ -1,5 +1,5 @@
-using System.Linq;
 using System;
+using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using ForgeOrdnance.Arsenal;
@@ -15,18 +15,20 @@ namespace ForgeOrdnance;
 /// It is the only place that names all three: each of the game's moments has one handler here, which runs the parts' steps in order.</summary>
 [BepInPlugin(Id, "Forge Ordnance", Version)]
 [BepInDependency("dev.gtfomodding.gtfo-api", ">=0.6.1")]
-[BepInDependency("NAinfini.ForgeCore", ">=1.0.0")]
+[BepInDependency("NAinfini.ForgeCore", ">=1.0.1")]
 // MTFO marks the game as modded (achievements and public matchmaking off) and provides the CustomPath the definitions live in.
-[BepInDependency("com.dak.MTFO")]
+[BepInDependency("com.dak.MTFO", ">=4.6.3")]
 internal sealed class Plugin : BasePlugin
 {
     internal const string Id = "NAinfini.ForgeOrdnance";
-    internal const string Version = "1.0.1"; // package-version: NAinfini-ForgeOrdnance
+    internal const string Version = "1.0.2"; // package-version: NAinfini-ForgeOrdnance
     private static OrdnanceController? _controller;
     private static OrdnanceHud? _hud;
     /// <summary>The content parts that loaded; the steps of one that did not are left out everywhere.</summary>
     private static bool _arsenal, _frames;
-    private static bool _effectsRead;
+    /// <summary>Whether a level is built (until it is left), what of the level's art each part has loaded in it, whether the effect library has been
+    /// read and which parts have found their moments in it.</summary>
+    private static bool _levelBuilt, _arsenalLevel, _framesLevel, _fx, _arsenalFx, _framesFx;
 
     /// <summary>This mod's ForgeCore log.</summary>
     internal static ForgeCore.ModLog Logger = null!;
@@ -51,9 +53,13 @@ internal sealed class Plugin : BasePlugin
         try
         {
             harmony.PatchAll(typeof(Plugin).Assembly);
-            SupplyHoldPatch.Subscribe();
-            EmptyPackGuard.Subscribe();
-            ForgeCore.GameHooks.PickupItemState.After((call, _) => SupplyPickupSound.Changed(call.Old, call.New, call.Recall));
+            // One handler of a pickup's state change: hold it in a shut pod, check a placed pack, play the pickup sound.
+            ForgeCore.GameHooks.PickupItemState.After((call, _) =>
+            {
+                SupplyHoldPatch.Changed(call.Item, call.New, call.Recall);
+                EmptyPackGuard.Changed(call.Item, call.New, call.Old, call.Recall);
+                SupplyPickupSound.Changed(call.Old, call.New, call.Recall);
+            });
             BeaconLookHook.Subscribe();
             BallThrowHook.Subscribe();
             TurretLookHook.Subscribe();
@@ -80,6 +86,10 @@ internal sealed class Plugin : BasePlugin
             ForgeCore.GameEvents.MasterChanged += HostChanged;
             // A migration can end with the same master, which MasterChanged does not report.
             ForgeCore.GameEvents.MasterMigrated += MigrationCompleted;
+            // A pick that arrives once the level is built (a late joiner), and a call-in no pick listed, load their art then.
+            OrdnanceApi.PickedParametersChanged += () => { if (_levelBuilt) PrepareLevel(); };
+            Session.BeaconStarted += (_, _, definition) => Arriving(definition);
+            Session.BeaconArrived += (_, definition) => Arriving(definition);
         }
         catch (Exception error)
         {
@@ -111,6 +121,8 @@ internal sealed class Plugin : BasePlugin
         DeployablePayload.Type = OrdnanceApi.RegisterBuiltIn(DeployableSpec.TypeName, new DeployablePayload());
         ArsenalNetwork.Register();
         PartSounds.Arsenal = PartSounds.Load(Messages.ArsenalId, "Arsenal");
+        // The grenade launcher's explosion is drawn under ForgeCore's shared name from this mod's own copy (Vfx/HeavyBlast/).
+        ForgeVisual.HeavyBlast.Register(Id, "Vfx/HeavyBlast/forge-visual-fx.bundle", "Vfx/HeavyBlast/fx-slots.forge");
         // Before the definition files are read: the turret definitions name looks registered here.
         ArsenalArt.Register();
         HeavyWeapons.Subscribe();
@@ -148,28 +160,79 @@ internal sealed class Plugin : BasePlugin
 
     private static void LevelBuilt()
     {
-        Guard("Loading the call-ins' art", OrdnanceAssets.Load);
-        if (!_effectsRead) { _effectsRead = true; ReadEffects(); }
-        if (_arsenal)
+        _levelBuilt = true;
+        if (_arsenal) Guard("Starting the level's strike effects", StrikeVisuals.BeginLevel);
+        PrepareLevel();
+    }
+
+    /// <summary>What this level can call in is loaded while it is built: every call-in <see cref="OrdnanceApi.PickedParameters"/> lists (the
+    /// players' picks, the level's drops and loadouts, every <c>Callable: false</c> definition). Nothing of a part none of them uses is read.</summary>
+    private static void PrepareLevel()
+    {
+        foreach (var type in OrdnanceApi.TypeNames)
         {
-            Guard("Starting the level's strike effects", StrikeVisuals.BeginLevel);
-            Guard("Loading Arsenal's art", ArsenalArt.Load);
-        }
-        if (_frames)
-        {
-            Guard("Loading the exosuits' art", FrameAssets.LevelBuilt);
-            Guard("Loading the pilot's body", PilotBody.Load);
+            var picked = new List<object>();
+            LobbySync.PickedParameters(type, picked);
+            if (picked.Count > 0) Prepare(picked);
         }
     }
 
-    /// <summary>The three parts' effect libraries (each its own bundle and slot table), read at one moment: when the first level has
-    /// been built, ahead of anything that plays an effect. A library that cannot be read is reported once and its moments draw
-    /// nothing (a strike keeps its sprite effects).</summary>
-    private static void ReadEffects()
+    /// <summary>A call-in is presented on this peer: what it needs is loaded now if the level's picks did not list it.</summary>
+    private static void Arriving(OrdnanceDefinition definition)
     {
-        Guard("Reading the call-ins' library effects", OrdnanceFxSlots.Load);
-        if (_arsenal) Guard("Reading Arsenal's library effects", ArsenalFxSlots.Load);
-        if (_frames) Guard("Reading the exosuits' library effects", FramesFxSlots.Load);
+        if (_levelBuilt) Prepare(new List<object> { definition.Parameters });
+    }
+
+    /// <summary>Loads what call-ins with these parameters draw, each thing once: the carrier's pod, shell, ball and the mod's one
+    /// effect library for any call-in, and a turret look's model; Arsenal's models and sprite sheets for its strikes, heavy weapons, devices
+    /// and turret looks; a suit's art and the pilot's body for a suit. Each part finds its moments in the library the first time it is
+    /// prepared; a library that cannot be read is reported once and its moments draw nothing (a strike keeps its sprite effects).</summary>
+    private static void Prepare(List<object> parameters)
+    {
+        Guard("Loading the call-ins' art", OrdnanceAssets.Load);
+        ReadOnce(ref _fx, "Reading the library effects", OrdnanceFxSlots.Load);
+        var arsenalModels = new List<ForgeVisual.ModelHandle?>();
+        var arsenal = false;
+        foreach (var p in parameters)
+            switch (p)
+            {
+                case GearParameters { Look.Length: > 0 } gear when OrdnanceTurrets.TryGet(gear.Look, out var look, out _):
+                    _ = look.Ready;
+                    arsenal |= gear.Look.StartsWith(ArsenalArt.Pack + ":", StringComparison.Ordinal);
+                    break;
+                case StrikeSpec:
+                    arsenalModels.AddRange(ArsenalArt.ShellLooks);
+                    arsenal = true;
+                    break;
+                case HeavyWeaponSpec heavy:
+                    arsenalModels.Add(ArsenalArt.Weapon(heavy.Model));
+                    arsenalModels.Add(ArsenalArt.Rocket);
+                    arsenalModels.Add(ArsenalArt.Grenade);
+                    arsenal = true;
+                    break;
+                case DeployableSpec device:
+                    arsenalModels.Add(ForgeVisual.Models.Get(device.Head));
+                    arsenalModels.Add(device.Munition.Length > 0 ? ForgeVisual.Models.Get(device.Munition) : ArsenalArt.Bomblet);
+                    arsenal = true;
+                    break;
+                case FrameSpec suit when _frames:
+                    if (!_framesLevel) { _framesLevel = true; Guard("Loading the exosuits' art", FrameAssets.LevelBuilt); }
+                    ReadOnce(ref _framesFx, "Finding the exosuits' library effects", FramesFxSlots.Load);
+                    Guard("Loading an exosuit's art", () => FrameAssets.Prepare(suit));
+                    break;
+            }
+        if (!arsenal || !_arsenal) return;
+        var first = !_arsenalLevel;
+        _arsenalLevel = true;
+        ReadOnce(ref _arsenalFx, "Finding Arsenal's library effects", ArsenalFxSlots.Load);
+        Guard("Loading Arsenal's art", () => ArsenalArt.Load(arsenalModels, first));
+    }
+
+    private static void ReadOnce(ref bool read, string what, Action step)
+    {
+        if (read) return;
+        read = true;
+        Guard(what, step);
     }
 
     private static void EnterLevel()
@@ -182,6 +245,7 @@ internal sealed class Plugin : BasePlugin
     /// <summary>Each step on its own: one that throws must not leave the others' level state for the next level.</summary>
     private static void LeaveLevel()
     {
+        _levelBuilt = _arsenalLevel = _framesLevel = false;
         Guard("Leaving the level (session)", Session.LeaveLevel);
         Guard("Leaving the level (sentries)", GearPayload.Clear);
         Guard("Leaving the level (beacon looks)", BeaconLook.Clear);
@@ -196,10 +260,12 @@ internal sealed class Plugin : BasePlugin
         if (_frames) Guard("Exosuit level cleanup", FrameWorld.LevelCleanup);
     }
 
-    /// <summary>Host: the mod's one checkpoint copy, the carrier's slot book and after it the suits as they stand.</summary>
+    /// <summary>Host: the mod's one checkpoint copy, the carrier's slot book and after it the suits as they stand; the heavy weapon supply
+    /// points are kept by the host itself.</summary>
     private static void CheckpointReached()
     {
         if (!ForgeCore.Session.IsHost) return;
+        if (_arsenal) Guard("Heavy weapon supply checkpoint", HeavyWeapons.CheckpointReached);
         var suits = Array.Empty<byte>();
         if (_frames) Guard("Exosuit checkpoint", () => suits = FrameWorld.CaptureCheckpoint());
         Guard("Checkpoint", () => Session.PublishCheckpoint(suits));

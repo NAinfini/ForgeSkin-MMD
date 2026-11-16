@@ -43,7 +43,9 @@ internal enum SheddingHookId
     LeakScrollHeaders,
     MeleePacket,
     IrfDraw,
-    IrfLateUpdate
+    IrfLateUpdate,
+    MagazineDrop,
+    RepellerState
 }
 
 internal sealed class SheddingHookPlan
@@ -55,9 +57,10 @@ internal sealed class SheddingHookPlan
         Settings = settings;
         _hooks = hooks;
         RequiresDecorationAnimationScan = settings.DecorationAnimation;
-        RequiresExtras = settings.AnyRenderCut || settings.ShadowDistance || settings.SoftParticlesOff || settings.StackTraceTrim
+        RequiresExtras = settings.TextureStreamingOff || settings.ShadowDistance || settings.SoftParticlesOff || settings.StackTraceTrim
             || settings.GuiMirrorOff || settings.LowQualitySpitter || settings.LeakCleanup || settings.DecayCleanup
-            || settings.DebrisFreeze || settings.GlueSoundRecycle;
+            || settings.DebrisFreeze || settings.GlueSoundRecycle || settings.DroppedMagazineCleanup
+            || settings.SpentFogRepellerCleanup;
     }
 
     internal SheddingSettings Settings { get; }
@@ -117,6 +120,8 @@ internal sealed class SheddingHookPlan
         Add(settings.MeleePacketReuse, SheddingHookId.MeleePacket);
         Add(settings.IrfWorldCameraOnly, SheddingHookId.IrfDraw);
         Add(settings.IrfOffscreenSkip, SheddingHookId.IrfLateUpdate);
+        Add(settings.DroppedMagazineCleanup, SheddingHookId.MagazineDrop);
+        Add(settings.SpentFogRepellerCleanup, SheddingHookId.RepellerState);
         return new SheddingHookPlan(settings, hooks.ToArray());
     }
 }

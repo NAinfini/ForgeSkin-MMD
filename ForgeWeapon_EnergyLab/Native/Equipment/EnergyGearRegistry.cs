@@ -6,7 +6,6 @@ using ForgeCore;
 using GameData;
 using Gear;
 using GTFO.API;
-using Localization;
 using Player;
 using UnityEngine;
 using Il2CppGearList = Il2CppSystem.Collections.Generic.List<Gear.GearIDRange>;

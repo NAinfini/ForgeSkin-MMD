@@ -189,12 +189,12 @@ Keys are changed in the game's settings, Controls. Your own movement keys always
 
 | Setting | Where | Default |
 |---|---|---|
-| Language of every text | `NAinfini.ForgeUI.cfg`: Language `Language` (`Auto` follows the game; `en`, `zh`) | Auto |
-| Move the lobby button | `NAinfini.ForgeUI.cfg`: Lobby `ButtonOffsetX` / `ButtonOffsetY` | 0 |
-| Sound volume | `NAinfini.ForgeAudio.cfg` | 1 |
-| Camera shake from drop pods, strikes and exosuit landings (0 off, 1 full) | `NAinfini.ForgeVisual.cfg`, section Camera: `ShakeStrength` | 1 |
+| Language of every text | `NAinfini.ForgeCore.cfg`: Language `Language` (`Auto` follows the game; `en`, `zh`) | Auto |
+| Move the lobby button | `NAinfini.ForgeCore.cfg`: Lobby `ButtonOffsetX` / `ButtonOffsetY` | 0 |
+| Sound volume | `NAinfini.ForgeCore.cfg` | 1 |
+| Camera shake from drop pods, strikes and exosuit landings (0 off, 1 full) | `NAinfini.ForgeCore.cfg`, section Camera: `ShakeStrength` | 1 |
 
-Light flashes from strikes and from a destroyed suit follow ForgeVisual's `Effects / FlashLights` setting. A burning wreck's light and the planted siege lamp always stay on.
+Light flashes from strikes and from a destroyed suit follow ForgeCore's `Effects / FlashLights` setting in `NAinfini.ForgeCore.cfg`. A burning wreck's light and the planted siege lamp always stay on.
 
 ## Multiplayer
 
@@ -202,7 +202,7 @@ Everyone in the lobby needs the same Forge Ordnance version and the same call-in
 
 ## Installation
 
-Install with r2modman or the Thunderstore Mod Manager. It also installs BepInExPack_GTFO, GTFO_API, MTFO, ForgeCore, ForgeUI, ForgeAudio and ForgeVisual. MTFO marks the game as modded, which turns off achievements and public matchmaking.
+Install with r2modman or the Thunderstore Mod Manager. It also installs BepInExPack_GTFO, GTFO_API, MTFO and ForgeCore. MTFO marks the game as modded, which turns off achievements and public matchmaking.
 
 ## For rundown and mod makers
 
@@ -210,4 +210,4 @@ Writing your own call-ins, placing drop pods, turrets or suits from a rundown, c
 
 ## License
 
-Code: [MIT](https://github.com/NAinfini/GTFO-Forge-Mods/blob/main/ForgeOrdnance/LICENSE). Models, effects and sounds keep their own licenses and credits, listed in the `NOTICE` and `LICENSE.forge` files shipped in the package and in `fx-licences.forge` (the Asset Store packs the effect bundles are rebuilt from): effect textures are CC0 or free Unity Asset Store packs (commercial use allowed), sounds come from the author's licensed Sonniss GameAudioGDC 2026 and Boom Library collections. The four suits are adapted from fan models on Sketchfab, three of them Halo armors, each credited by author in `NOTICE`. Three of the four suit models are CC BY-NC 4.0, so this mod is free and non-commercial. Halo and its armor designs belong to Microsoft / 343 Industries; this fan mod is not affiliated with them.
+Code: [MIT](https://github.com/NAinfini/GTFO-Forge-Mods/blob/main/ForgeOrdnance/LICENSE). Models, effects and sounds keep their own licenses and credits, listed in the `NOTICE` and `LICENSE.forge` files shipped in the package and in `fx-licences.forge` (the Asset Store packs the effect bundles are rebuilt from): effect textures are CC0 or free Unity Asset Store packs (commercial use allowed), sounds come from the author's licensed Sonniss GameAudioGDC 2026 and Boom Library collections. The four suits are adapted from models players made and shared on Sketchfab, each credited by author in `NOTICE`. Three of the four suit models are CC BY-NC 4.0, so this mod is free and non-commercial.

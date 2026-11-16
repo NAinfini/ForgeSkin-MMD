@@ -50,8 +50,9 @@ and forgets the look of one who left). ForgeSkin never calls NetworkAPI and touc
 `Core/Look.cs` (the layout is in its header comment): version, flags, the character entry (skin number 0 when no character is
 picked), then per gear of the loadout that has a skin of its own (at most 8): gear id, skin number (FNV-1a 32 of the skin id),
 content hash (FNV-1a 64 of the `.forgeskin` file, read on a worker and kept with the loaded skin), the Thunderstore mod folder it
-came in, the wear stage reached and the player's changes that differ from the author's (a player colour in 4 bytes, a code-effect
-number or transform entry in 3, an effect colour in 5). A whole value is at most 6 KiB; a larger or unreadable one is dropped and
+came in, the wear stage reached and the player's changes that differ from the author's (kind, a 16-bit effect index and a 16-bit
+entry index, then the value: a player colour in 3 bytes, a number or transform in 2, an effect colour in 4). A whole value is at most
+64 KiB (the largest ForgeCore Net lobby message); a larger or unreadable one is dropped and
 logs `skin-look-malformed`. The local look is written half a second after the last pick, colour or adjustment, and within a
 second of a gear of the local player's being built (a loadout change builds the new gear; the backpack is read only then) or a
 wear stage moving; the same bytes are never sent again.
@@ -59,7 +60,8 @@ wear stage moving; the same bytes are never sent again.
 A teammate's gear wears their skin when the same pack is installed here (same number, same content hash, the skin made for that
 gear) with their changes (`Look.Fit`); otherwise it shows its original look and logs one line per player and skin
 (`skin-look-missing`, `skin-look-mismatch`, `skin-look-bad-value`), and the picker's details list it with the player's name, the
-gear and the Thunderstore mod to install. The local player's global skins are not put on a teammate's gear. On it, the ammo
+gear and the Thunderstore mod to install. A replay stand-in's gear the look has no skin for is one log line naming its key and the
+look's keys; one whose gear id cannot be worked out here (its range matches no gear) is `skin-look-gear-unknown`. The local player's global skins are not put on a teammate's gear. On it, the ammo
 screen, low-ammo, empty, ammo pickup and aim end are drawn as the menu preview draws them (no reads of this player's backpack or
 hands); code effects draw while it is in its owner's hands; its sounds play at the gear (3D) for what this machine sees: the shot
 (`GameHooks.Fire.BulletWeaponSynced` / `ShotgunSynced`), wield and unwield, going down and getting up (the player's health
@@ -125,7 +127,7 @@ folder, and the plugin's next reload writes it into its own choices and deletes 
 `active.json` does not, and a skin it names that a choice keeps off is reported in `forgeskin.log`. Global skins (`active.json` `global`) are on every
 gear under its own skin (the gear's skin wins on a material both cover); the picker neither lists nor removes them, so the
 original look removes only the gear's own skin, and its details say how many global skins stay. Choices, colours and changes
-of the gear's own skin reach teammates through the look (above); a skin allows at most 8 player colours (`too-many-player-colors`).
+of the gear's own skin reach teammates through the look (above); a skin may have any number of player colours, and the first 65536 travel.
 
 `Native/Previews.cs` shows each skin card the picture its pack carries, drawn by the editor when it packed the skin (a gear
 skin's `picture`, a character's `character.picture`): read from the pack and decoded off the main thread (`Images.Queue`), only
@@ -173,7 +175,7 @@ values, only where the author allowed them.
 ## Charms
 
 An attachment's `charm` hangs its model and screen on a rope generated in code, from the attachment's origin (its -Y the
-rest direction); the model hangs by its own origin. At most 4 charms on one gear; `SkinPack.Validate` rejects a value out of
+rest direction); the model hangs by its own origin. A gear may have any number of charms; `SkinPack.Validate` rejects a value out of
 range with `bad-vector`.
 
 | Field | Default | Range | Meaning |
@@ -213,7 +215,7 @@ path for a preview motion (`viewport/motion.ts`, shared with the charm preview) 
 The motion row under the preview plays moves the way the game does. A clip plays on a hidden canonical body, the skeleton the
 action file carries, and the model copies that body's pose every frame (`character/clips.ts`).
 `character.links { bones, fingers }` returns, per canonical joint, the link ForgeCore's `HumanRig.Links` gives (`toward`, `from`)
-and whether `PoseSolver.Skipped` leaves it out; it also returns `HumanRig.ArmReach` as `[upper, lower, end, anchor]`. The copy is
+and whether `PoseSolver.Skipped` leaves it out; it also returns `HumanRig.ArmReach` as `[upper, lower, end]`. The copy is
 the site's port of `PoseCopy`, `Web/src/shared/render/imported-skin-pose.ts` (`createSkinPose`; its optional `reach` bends those
 limbs as `LimbReach.Bend` does). While a move plays, the springs run through the same frames (`simulate(motion, clip)` in
 `character/model.ts`). With no move or preview motion they run 8 s held still from the bound pose, so hair and skirts drop under
@@ -272,7 +274,7 @@ is) or a plain colour (Unity converts it from sRGB). With no `EmissiveColor` the
 A texture set straight on a material (a material's, a wear stage's or an attachment material's, not a layer atlas) is a
 PNG, a JPEG or a precompressed DDS (`Core/Dds.cs`), told apart by its header: a standard DDS with the DX10 header, BC1 when
 opaque or BC3 with alpha and for normal maps (DXT5nm), sRGB in the DXGI format, Unity's full mip chain with rows from the
-bottom, both sides multiples of 4 up to 8192. The editor writes every such texture as `textures/<name>.dds` only (a PNG
+bottom, both sides multiples of 4 up to 16384 (the texture side Unity's Direct3D 11 takes). The editor writes every such texture as `textures/<name>.dds` only (a PNG
 when a side is not a multiple of 4) and the manifest names that file; a layer atlas must stay a PNG or JPEG (`bad-image`
 otherwise). A layer's frames are its `TargetRect` region at full size, or, where they would not fit a 4096 atlas
 (`PackBuilder.AtlasLayout`), smaller by one scale for both sides (never larger, `bad-atlas`); the plugin copies a full-size
@@ -285,7 +287,7 @@ a worker thread reads the zip, the SFM1 meshes and checks the precompressed text
 audio library and queues the textures on ForgeCore: a precompressed one on `Images.QueueRaw` (uploaded as it is), any other
 on `Images.Queue` (decoded and compressed in the game). Until every skin a gear wears is loaded the gear keeps its look and waits; a picture,
 mesh or sound that does not decode rejects the pack then (`skin-pack-rejected`), and a pack whose file changed since its
-manifest was read is read again first. A skin no gear shows or waits for is freed after 30 s (`Skins.Release`); a replaced
+manifest was read is read again first. A skin no gear shows or waits for is freed after 30 s (`Skins.Release`), except a character the local player picks or a teammate's look names, kept while they do (`Characters.InUse`); a replaced
 or removed one as soon as no gear shows it.
 
 ## Logs
@@ -384,17 +386,18 @@ ForgeSkin <x.y.z>` writes it into `manifest.json` and the code), the editor uses
 own source, and the two need not match. Build it from the repository root with a BepInEx IL2CPP profile for the game references:
 
 ```powershell
-pwsh Mods/ForgeSkin/tools/build-editor-release.ps1 -BepInEx "$env:APPDATA\r2modmanPlus-local\GTFO\profiles\Forge-Multiplayer\BepInEx" [-Output <dir>] [-SkipMake]
+pwsh Mods/ForgeSkin/tools/build-editor-release.ps1 -ForgeCore <release>/packages/NAinfini-ForgeCore-<version>.zip -BepInEx "$env:APPDATA\r2modmanPlus-local\GTFO\profiles\Forge-Multiplayer\BepInEx" [-Output <dir>] [-SkipMake]
 ```
 
 The script, all under `<Output>` (default `artifacts/forge-skin-release`):
 
 1. builds `ForgeSkin.csproj` in Release (ForgeCore builds with it) into `dotnet/`;
-2. writes the ForgeCore and ForgeSkin Thunderstore zips into `thunderstore/` with each package's `tools/package_release.py`
-   and checks them with `Mods/Build/verify_release.py`;
+2. writes the ForgeSkin Thunderstore zip into `thunderstore/` with `tools/package_release.py`, puts the `-ForgeCore` zip beside it (the
+   release set's own package from `Mods/Release/build-all.ps1` or `build-release-set.ps1`, never a second build of it) and checks
+   both against this build with `Mods/Build/verify_release.py`;
 3. publishes the backend (`Backend/ForgeSkin.Backend.csproj`, .NET 10, self-contained single file) into `publish/`;
 4. stages the plugin the installer carries: `publish/plugin/ForgeSkin/` (`ForgeSkin.Plugin.dll` and `lang/`) and `publish/plugin/ForgeCore/`
-   (the ForgeCore zip unpacked);
+   (the ForgeCore zip's `plugins/ForgeCore/`, the folder a mod manager installs as `plugins/NAinfini-ForgeCore/ForgeCore/`);
 5. runs `pnpm install --frozen-lockfile` and `pnpm make` in `Editor/` with `FORGESKIN_PUBLISH_DIR` set to `publish/`, which
    `forge.config.ts` ships as the app's `resources/publish` (the prePackage hook refuses to package without it);
    Squirrel writes `ForgeSkin-<version> Setup.exe`, `ForgeSkin-<version>-full.nupkg` and `RELEASES` into
@@ -408,14 +411,13 @@ feed (`ForgeSkin-update` release of NAinfini/GTFO-Forge-Mods) are in `Mods/Relea
 
 In a checkout the backend installs the plugin from `artifacts/forge-skin-release/publish/plugin` (`Install.PluginSource`),
 so run the script, at least with `-PluginOnly` (steps 1, 2 and 4 only; `-BepInEx` defaults to `GTFO_BEPINEX_PATH`, else the
-Forge-Multiplayer r2modman profile), after changing the plugin. `pnpm start` runs that itself when the staged plugin is missing
-(`artifacts/` gets cleaned). The script stages `publish/plugin` in a sibling folder and swaps it in whole, so an interrupted run
+Forge-Multiplayer r2modman profile), after changing the plugin or when `artifacts/` was cleaned. The script stages `publish/plugin` in a sibling folder and swaps it in whole, so an interrupted run
 leaves no half folder. Installing into a profile deletes the
 `ForgeSkin.Format.dll` and `NVorbis.dll` that 1.0.3 and earlier left in `BepInEx/plugins/ForgeSkin/`. When the mod manager
 installed the plugin (a `ForgeSkin.Plugin.dll` elsewhere under `BepInEx/plugins`), the editor keeps that copy and deletes
-its own `ForgeSkin.Plugin.dll` and `lang/` from `plugins/ForgeSkin/`, so one copy loads; a managed copy older than the
-shipped one makes the install fail with `forge-skin-old`. Without a managed copy it copies `ForgeSkin.Plugin.dll` and
-`lang/` to `plugins/ForgeSkin/`. ForgeCore is left to the mod manager: a profile that has `ForgeCore.dll` anywhere under
-`BepInEx/plugins` keeps it, and one older than the shipped copy makes the install fail with `forge-core-old`; a profile
-without ForgeCore gets the shipped package in `BepInEx/plugins/NAinfini-ForgeCore/`. Uninstalling removes only the
+its own `ForgeSkin.Plugin.dll` and `lang/` from `plugins/ForgeSkin/`, so one copy loads. ForgeCore and ForgeSkin follow the
+editor, by content and not by version number: every ForgeCore in the profile (a folder under `BepInEx/plugins` holding
+`ForgeCore.dll`) and the plugin the game loads (the managed copy, else `plugins/ForgeSkin/`) whose files differ from the
+shipped build are overwritten in place with it; a profile without ForgeCore gets the shipped package in
+`BepInEx/plugins/NAinfini-ForgeCore/ForgeCore/`, where a mod manager puts it. Uninstalling removes only the
 editor's own plugin copy and its `lang/`; the skins folder and a managed copy stay.

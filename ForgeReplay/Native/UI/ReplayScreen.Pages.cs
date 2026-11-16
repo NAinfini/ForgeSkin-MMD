@@ -237,21 +237,6 @@ internal static partial class ReplayScreen
         return enemy != 0 ? what + " · " + EnemyName(enemy) : what;
     }
 
-    // The feed's lines for downs and rescues: the player, what happened, and what did it.
-    private static void AddDownFeed(Analysis analysis)
-    {
-        var r = analysis.Report;
-        if (r == null) return;
-        foreach (var d in r.Downs)
-            FeedItems.Add((d.TimeMs, d.Slot, PlayerName.Plain(HolderAt(analysis, d.Slot, d.TimeMs).Name), _ui.Text("feed.down"), CauseText(d.Cause, d.Grab, d.EnemyDataId, d.Attacker, analysis), !d.Estimated, false, -1, d.TimeMs));
-        foreach (var rescue in analysis.Rescues)
-        {
-            var known = rescue.Reviver is >= 0 and < 4;
-            FeedItems.Add((rescue.TimeMs, known ? rescue.Reviver : -1, known ? PlayerName.Plain(HolderAt(analysis, rescue.Reviver, rescue.TimeMs).Name) : _ui.Text("feed.unknown"),
-                _ui.Text("feed.revive"), PlayerName.Plain(HolderAt(analysis, rescue.Revived, rescue.TimeMs).Name), true, false, -1, rescue.TimeMs));
-        }
-    }
-
     // The time bar keeps to what matters: a down, a wipe, a wave, a scan or alarm, the reactor, a checkpoint, a kill worth a mark, a ping and
     // the highlights; doors, terminals, chat and revives are in the event list, not on the bar.
     private static bool OnBar(MarkerKind kind) => kind is MarkerKind.Down or MarkerKind.Wave or MarkerKind.Alarm or MarkerKind.Scan or MarkerKind.Reactor or MarkerKind.Checkpoint or MarkerKind.Kill or MarkerKind.Ping or MarkerKind.WorldEvent or MarkerKind.Note;

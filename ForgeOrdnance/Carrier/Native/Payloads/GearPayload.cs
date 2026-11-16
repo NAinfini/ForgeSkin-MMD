@@ -13,7 +13,11 @@ namespace ForgeOrdnance;
 /// <summary>Multipliers over the vanilla sentry of the same gear block; 1 leaves a value as the game has it.</summary>
 internal sealed record SentryStrength(float Damage, float FireRate, float Ammo, float Range, float Turn, float Acquire);
 
-internal sealed record GearParameters(uint GearId, float AmmoRatio, float Lifetime, bool Pickable, SentryStrength Strength, string Look);
+/// <summary>What the built-in <c>Gear</c> payload parses to. A description's numbers (DEVELOPERS.md, "Description numbers"): {0} Lifetime.</summary>
+internal sealed record GearParameters(uint GearId, float AmmoRatio, float Lifetime, bool Pickable, SentryStrength Strength, string Look) : IOrdnanceDescribed
+{
+    public IReadOnlyList<double> DescriptionValues => new double[] { Lifetime };
+}
 
 /// <summary>Built-in payload <c>Gear</c>: an <c>Instance</c> of any offline gear block, which is how the game stands a
 /// deployed sentry gun. <c>{ "Type": "Gear", "Gear": 24 | "name", "AmmoRatio": 0..1, "Lifetime": 0..3600 seconds (0 = stays),
@@ -171,11 +175,14 @@ internal sealed class GearPayload : IOrdnancePayload
         Expiring[replicator] = new Expiry { Identity = row.Identity, ExpiresAt = expires };
     }
 
-    /// <summary>Host: every timer's row again with the seconds it has left now (a player joined).</summary>
-    internal static void WriteRows()
+    /// <summary>Host: every timer's row with the seconds it has left now, for the player who joined.</summary>
+    internal static void RefreshRows()
     {
         foreach (var (id, expiry) in Expiring)
-            OrdnanceNetwork.SentryRows.Set(id, new SentryRow { Identity = expiry.Identity, Remaining = Math.Max(0f, expiry.ExpiresAt - Time.time) });
+        {
+            var row = new SentryRow { Identity = expiry.Identity, Remaining = Math.Max(0f, expiry.ExpiresAt - Time.time) };
+            if (!OrdnanceNetwork.SentryRows.Refresh(id, row)) OrdnanceNetwork.SentryRows.Set(id, row);
+        }
     }
 
     /// <summary>The timer is over on this peer; the host takes its row away with it.</summary>

@@ -346,7 +346,7 @@ internal static class LocalPilot
     /// Null (logged) when it cannot be built; the game's own body then stays.</summary>
     private static FirstPersonWear? BuildShell(FrameSpec spec, PlayerAgent agent)
     {
-        if (spec.Shell.Length == 0) return null;
+        if (spec.Shell.Length == 0 || !FrameAssets.Prepare(spec)) return null;
         if (Models.Get(spec.Model) is not { } look)
         {
             Plugin.Logger.ErrorOnce("Exosuit first-person shell: ForgeVisual has no model " + spec.Model + "; the game's own body stays.");
@@ -460,7 +460,6 @@ internal static class LocalPilot
         if (_unit == null) { HandBack(now); return; }
         var agent = ForgeCore.Players.Local;
         if (agent == null || agent.WasCollected) return;
-        _shell?.Follow();
         var camera = agent.FPSCamera;
         if (_view == null || camera == null || camera.WasCollected) return;
         var r = _unit.Record;
@@ -888,15 +887,12 @@ internal static class LocalPilot
         var muzzle = unit.Visual.Muzzle;
         FrameNetwork.Fire.Broadcast(new FrameFireMessage
         {
-            Thrower = unit.Record.Thrower,
-            ThrowId = unit.Record.ThrowId,
             OriginX = muzzle.x,
             OriginY = muzzle.y,
             OriginZ = muzzle.z,
             TargetX = hitPoint.x,
             TargetY = hitPoint.y,
             TargetZ = hitPoint.z,
-            Shots = 1,
         });
     }
 
@@ -916,9 +912,12 @@ internal static class LocalPilot
             return;
         }
         var target = struck ? hit.point : origin + forward * rockets.Range;
-        _rocketsReadyAt = now + 0.5f;
+        _rocketsReadyAt = now + RequestDebounce;
         FrameWorld.RequestRockets(unit, target);
     }
+
+    // Local only: one press is one request while the host's answer is on its way; the salvo's real cooldown comes from RocketsLaunched.
+    private const float RequestDebounce = 0.5f;
 
     /// <summary>Where a salvo fired now would land (the same ray as <see cref="Rockets"/>), dim when the point is beyond the salvo's range or so close its blast would reach the suit.</summary>
     private static void RocketMark(PlayerAgent agent, RocketsSpec rockets)
@@ -1048,7 +1047,7 @@ internal static class LocalPilot
     /// <param name="keepView">The camera's hand-back after a landing is still running: its lease stays until <see cref="HandBack"/> ends it.</param>
     internal static void Release(string reason, bool keepView = false)
     {
-        Step("hit marks", Hits.Clear);
+        Step("charge query", Hits.Clear);
         _boardTarget = null;
         _wasSprintBonus = false;
         Step("prompt", ClearPrompt);
@@ -1064,7 +1063,7 @@ internal static class LocalPilot
         if (unit.Record.Spec.CarryHeavy)
         {
             Step("carried object", ForgeCore.CarrySlot.GiveBack);
-            Hud.CarryHint(null);
+            Step("carry hint", () => Hud.CarryHint(null));
         }
         _unit = null;
         _phase = (FrameState)255;

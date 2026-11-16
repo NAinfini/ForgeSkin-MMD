@@ -13,7 +13,7 @@ public sealed record ReplayNote(uint TimeMs, string ModId, string Kind, string P
 /// <summary>What ForgeReplay tells other mods. Handlers run on the main thread; one that throws is logged and does not stop the others.</summary>
 public static class ReplayEvents
 {
-    /// <summary>A recording was closed and is now an ordinary file in the replay folder (the level ended or was left). Not raised for a recording cut off by a crash.</summary>
+    /// <summary>A recording was closed and is now an ordinary file in the replay folder (the level ended or was left), raised once the old recordings past the limit are removed (read off the main thread, so a few frames later). Not raised for a recording cut off by a crash.</summary>
     public static event Action<RecordingInfo>? RecordingFinished;
 
     /// <summary>The playing replay passed a note a mod wrote while recording (<c>Recording.Note</c>); not raised for a jump, which passes nothing.</summary>

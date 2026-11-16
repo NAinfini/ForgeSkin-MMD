@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Security.Cryptography;
 using CullingSystem;
 using Decals;
 using FX_EffectSystem;
@@ -25,10 +24,14 @@ internal sealed partial class DecorationShedding
     private readonly DecalBudget<DecalEntry> _decalBudget;
     private readonly Action<DecalEntry> _retire;
     private int _impactDepth;
-    private long _shadowSeen, _shadowChanged, _shadowRestored, _shadowCalls;
+    private long _shadowSeen, _shadowChanged, _shadowRestored, _shadowCalls, _shadowPlanHits, _shadowPlanMisses;
     private long _cullSeen, _cullChanged, _cullRestored, _cullCalls;
     private long _cullReleased;
     private Il2CppSystem.Collections.Generic.List<C_Cullable>? _nativeShown;
+    // Hidden decorations the shown list held when CameraBefore read it, valid at that list version (ReadShown).
+    private readonly HashSet<IntPtr> _shown = new();
+    private int _shownVersion;
+    private bool _shownRead;
     private long _animationSeen, _animationChanged, _animationRestored;
     private long _decalSeen, _decalChanged, _decalSkipped, _decalRestored, _decalRetired;
     private long _lightSeen, _lightChanged, _lightSkipped, _lightRestored;
@@ -54,9 +57,8 @@ internal sealed partial class DecorationShedding
         if (!owner.Settings.DecorationCulling) return;
         try
         {
-            using var input = File.OpenRead(Path.Combine(BepInEx.Paths.GameRootPath, "GTFO_Data", "globalgamemanagers.assets"));
-            using var sha = SHA256.Create();
-            _shaderAssetVerified = Convert.ToHexString(sha.ComputeHash(input)) == DecorationClassifier.ShaderAssetSha256;
+            _shaderAssetVerified = FileHashCache.Sha256(Path.Combine(BepInEx.Paths.GameRootPath, "GTFO_Data", "globalgamemanagers.assets"))
+                == DecorationClassifier.ShaderAssetSha256;
             _shaderAssetReason = _shaderAssetVerified ? "verified_single_additive_pass" : "asset_fingerprint_mismatch";
         }
         catch (Exception error) { _shaderAssetReason = "asset_unavailable:" + error.GetType().Name + ": " + error.Message; }
@@ -112,7 +114,14 @@ internal sealed partial class DecorationShedding
         // A combat decal has its own visual-only prefab and reviewed native
         // provenance. Its attachment surface/FX pool is not its object tree:
         // never classify or modify that enemy, item, wall, or pool as decoration.
-        for (var parent = decal ? null : root.transform.parent; parent != null; parent = parent.parent)
+        if (!decal) risks |= ParentRisk(root.transform);
+        return risks;
+    }
+    // Gameplay when any parent between the object and its room carries more than a Transform.
+    private static DecorationRisk ParentRisk(Transform start)
+    {
+        var risks = DecorationRisk.None;
+        for (var parent = start.parent; parent != null; parent = parent.parent)
         {
             if (parent.GetComponent<LG_Geomorph>() != null) break;
             foreach (var component in parent.GetComponents<Component>())
@@ -135,19 +144,45 @@ internal sealed partial class DecorationShedding
     {
         if (!_owner.Active) return;
         var hidden = _hiddenByDistance;
-        for (var i = 0; i < hidden.Count; i++)
+        if (hidden.Count == 0) return;
+        ReadShown();
+        try
         {
-            var entry = hidden[i];
-            if (!entry.Hidden || entry.Rotator == null) continue;
-            // Restore first so the native portal/frustum pass decides whether
-            // it wants this object shown; never Show after that native pass.
-            RestoreVisibility(entry);
+            for (var i = 0; i < hidden.Count; i++)
+            {
+                var entry = hidden[i];
+                if (!entry.Hidden || entry.Rotator == null) continue;
+                // Restore first so the native portal/frustum pass decides whether
+                // it wants this object shown; never Show after that native pass.
+                RestoreVisibility(entry);
+            }
         }
+        finally { _shownRead = false; _shown.Clear(); }
         hidden.Clear();
+    }
+    // One walk over the game's shown list notes which hidden decorations it holds, instead of one native
+    // Contains per hidden decoration over the whole list. The note answers only while the list's version
+    // is the one read here: a Show that changed the list sends the remaining questions to Contains again.
+    private void ReadShown()
+    {
+        var shown = _nativeShown;
+        if (shown == null) return;
+        var list = shown.Pointer;
+        _shownVersion = NativeList<C_Cullable>.VersionOf(list);
+        for (int i = 0, count = NativeList<C_Cullable>.Count(list); i < count; i++)
+            if (_visuals.TryGetValue(NativeList<C_Cullable>.Item(list, i), out var entry) && entry.Hidden) _shown.Add(entry.Culler.Pointer);
+        _shownRead = true;
+    }
+    private bool Listed(C_CullBucket culler)
+    {
+        var shown = _nativeShown;
+        if (shown == null) return false;
+        if (_shownRead && NativeList<C_Cullable>.VersionOf(shown.Pointer) == _shownVersion) return _shown.Contains(culler.Pointer);
+        return shown.Contains(culler);
     }
     private void RestoreVisibility(VisualEntry entry)
     {
-        if (entry.Body.activeInHierarchy && entry.Culler.IsRegistered && _nativeShown?.Contains(entry.Culler) == true)
+        if (entry.Body.activeInHierarchy && NativeReads.IsRegistered(entry.Culler) && Listed(entry.Culler))
         { entry.Culler.Show(); _cullRestored++; }
         else _cullReleased++; // Native unregistration/visibility supersedes us.
         entry.Hidden = false;
@@ -162,12 +197,12 @@ internal sealed partial class DecorationShedding
         for (var i = 0; i < candidates.Count; i++)
         {
             var entry = candidates[i];
-            if (entry.Rotator == null || !entry.Culler.IsShown) continue;
+            if (entry.Rotator == null || !NativeReads.IsShown(entry.Culler)) continue;
             _cullCalls++;
             // Distance to nearest bounds point, not centre, protects a nearby
             // part of a large decorative object from premature disappearance.
             // The bounds are a native field (no call); the nearest point is worked out here, not by a native call per candidate.
-            if (!DecorationPolicy.Beyond(SqrDistance(entry.Culler.Bounds, position), Settings.CullDistance)) continue;
+            if (!DecorationPolicy.Beyond(SqrDistance(NativeReads.Bounds(entry.Culler), position), Settings.CullDistance)) continue;
             entry.Culler.HideSafe();
             if (!entry.Hidden) _hiddenByDistance.Add(entry);
             entry.Hidden = true;
@@ -213,29 +248,34 @@ internal sealed partial class DecorationShedding
         if (list == null) return;
         if (!scope.UsesPlans) { ScanShadows(list, scope, null); return; }
         var id = list.Pointer;
-        var version = list._version;
-        var count = list.Count;
+        var version = NativeList<C_Cullable>.VersionOf(id);
+        var count = NativeList<C_Cullable>.Count(id);
         if (!_shadowPlans.TryGetValue(id, out var plan)) _shadowPlans[id] = plan = new RemovalPlan<VisualEntry>();
         if (plan.Matches(id, version, count))
+        {
+            _shadowPlanHits++;
             for (var i = 0; i < plan.Length; i++)
             {
                 scope.Remove(list, plan.IndexAt(i), plan.ItemAt(i).Culler); _shadowCalls++;
             }
+        }
         else
         {
+            _shadowPlanMisses++;
             plan.Begin(id, version, count);
             ScanShadows(list, scope, plan);
             plan.Commit();
         }
         scope.Track(plan, list);
     }
+    // Reads the items' pointers in place: a full scan makes no wrapper per item.
     private void ScanShadows(Il2CppSystem.Collections.Generic.List<C_Cullable> list, ShadowScope scope,
         RemovalPlan<VisualEntry>? plan)
     {
-        for (var i = list.Count - 1; i >= 0; i--)
+        var id = list.Pointer;
+        for (var i = NativeList<C_Cullable>.Count(id) - 1; i >= 0; i--)
         {
-            var culler = list[i];
-            if (culler == null || !_visuals.TryGetValue(culler.Pointer, out var entry)
+            if (!_visuals.TryGetValue(NativeList<C_Cullable>.Item(id, i), out var entry)
                 || !entry.ShadowEligible
                 || !DecorationClassifier.Allows(DecorationClass.VisualRotator, entry.Risks, DecorationUse.Shadow)) continue;
             scope.Remove(list, i, entry.Culler); _shadowCalls++;
@@ -373,12 +413,7 @@ internal sealed partial class DecorationShedding
             if (component == null || component.GetIl2CppType().FullName is not
                 ("UnityEngine.Transform" or "UnityEngine.Light" or "LevelGeneration.LG_SpotLightAmbient" or "CL_SpotLight"))
                 risk |= DecorationRisk.UnknownComponent;
-        for (var parent = light.transform.parent; parent != null; parent = parent.parent)
-        {
-            if (parent.GetComponent<LG_Geomorph>() != null) break;
-            foreach (var component in parent.GetComponents<Component>())
-                if (component == null || component.GetIl2CppType().FullName != "UnityEngine.Transform") risk |= DecorationRisk.Gameplay;
-        }
+        risk |= ParentRisk(light.transform);
         var entry = new LightEntry(native, risk);
         _lights.Add(native.Pointer, entry);
         Classify(native.Pointer, DecorationClassifier.Allows(DecorationClass.StaticGeneralLight, risk, DecorationUse.Light)
@@ -441,12 +476,13 @@ internal sealed partial class DecorationShedding
         }
         Array.Clear(_lightCandidates, 0, count);
     }
+    // Reads the items' pointers in place: no wrapper per visible light.
     private void GatherLights(Il2CppSystem.Collections.Generic.List<C_Light> list, ref int count)
     {
-        for (var i = 0; i < list.Count; i++)
+        var id = list.Pointer;
+        for (var i = 0; i < NativeList<C_Light>.Count(id); i++)
         {
-            var native = list[i];
-            if (native == null || !_lights.TryGetValue(native.Pointer, out var entry)
+            if (!_lights.TryGetValue(NativeList<C_Light>.Item(id, i), out var entry)
                 || !DecorationClassifier.Allows(DecorationClass.StaticGeneralLight, entry.Risks, DecorationUse.Light))
             { _lightSkipped++; continue; }
             if (entry.Dropped) { entry.Dropped = false; _lightReleased++; }
@@ -512,7 +548,8 @@ internal sealed partial class DecorationShedding
         if (first != null) _owner.RestorationFailed();
         void Log(bool enabled, string item, long seen, long changed, long restored, string extra)
         { if (enabled) _owner.LogItem(item, seen, changed, restored, extra); }
-        Log(Settings.DecorationShadows, "decoration-shadows", _shadowSeen, _shadowChanged, _shadowRestored, "draws_skipped=" + _shadowCalls);
+        Log(Settings.DecorationShadows, "decoration-shadows", _shadowSeen, _shadowChanged, _shadowRestored, "draws_skipped=" + _shadowCalls
+            + "\tplan_hits=" + _shadowPlanHits + "\tplan_misses=" + _shadowPlanMisses);
         Log(Settings.DecorationCulling, "decoration-culling", _cullSeen, _cullChanged, _cullRestored, "distance_m=" + Settings.CullDistance
             + "\tchecks=" + _cullCalls + "\tnative_scope_released=" + _cullReleased + "\tshader_asset_verified=" + _shaderAssetVerified
             + "\tshader_found=" + (_nonOccludingShader != null) + "\tshader_reason=" + _shaderAssetReason);
@@ -570,7 +607,7 @@ internal sealed partial class DecorationShedding
         {
             var count = base.Restore();
             for (var i = 0; i < _tracked; i++)
-            { _plans[i]!.Reverted(_lists[i]!._version); _plans[i] = null; _lists[i] = null; }
+            { _plans[i]!.Reverted(NativeList<C_Cullable>.VersionOf(_lists[i]!.Pointer)); _plans[i] = null; _lists[i] = null; }
             _tracked = 0; UsesPlans = false;
             return count;
         }

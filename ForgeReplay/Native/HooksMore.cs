@@ -30,6 +30,10 @@ internal static partial class Hooks
         Subscribe("EnemyAttack", () => ForgeCore.GameHooks.EnemyAttackStarted.After((call, _) => EnemyAct.Attack(call.State, call.Target, call.AnimIndex)));
         Subscribe("EnemyHitreact", () => ForgeCore.GameHooks.EnemyHitreacted.After((state, _) => EnemyAct.Hitreact(state)));
         Subscribe("Scout.On", () => ForgeCore.GameHooks.ScoutDetectionEntered.After((scout, _) => Scout.On(scout)));
+        Subscribe("Wake.Handed", () => ForgeCore.GameHooks.EnemyTargetInjected.After(Wake.Handed));
+        Subscribe("Wake.Noise", () => ForgeCore.GameHooks.HibernatingNoiseHeard.Around(Wake.Hearing, (_, _, _) => Wake.Heard(), (_, _, _) => Wake.Heard()));
+        Subscribe("WakeUp", () => ForgeCore.GameHooks.HibernateWakeupStarted.After(WakeUp));
+        Subscribe("SleepSense", () => { ForgeCore.GameHooks.HibernateDetectionStarted.After(SleepSensed); ForgeCore.GameHooks.HibernateDetectionEnded.After(SleepSensed); });
         Subscribe("Noise.Made", () => ForgeCore.GameHooks.NoiseMade.Before(Noise.Made));
         Subscribe("ResourceBox", () => ForgeCore.GameHooks.ResourceContainerState.After((call, _) =>
         {
@@ -45,8 +49,9 @@ internal static partial class Hooks
             if (!Rec.On) return;
             try
             {
-                var said = call.Visible + call.Message + call.TimerPrefix + call.TimerSuffix;
-                if (said == _lastReactorText) return;
+                // Set every frame: compared field by field, no text is built for the comparison.
+                var said = (call.Visible, call.Message, call.TimerPrefix, call.TimerSuffix);
+                if (_lastReactorText is { } last && last == said) return;
                 _lastReactorText = said;
                 var key = Rec.Key(call.Reactor);
                 Rec.Begin().U(key).U(call.Visible ? 1UL : 0UL).Text(call.Message, 500).Text(call.TimerPrefix).Text(call.TimerSuffix);
@@ -581,20 +586,6 @@ internal static partial class Hooks
             try { Foam(data.syncID, 2, Vec.Zero, default, Vec.Zero, 0f, 0f, false, 0); } catch (Exception e) { Rec.Fail("foam", e); }
         }
 
-        // While a recording plays the foam is what the recording says: a blob in the air flies until its recorded landing, and foam settles nothing with anything it touches.
-        [HarmonyPatch(typeof(GlueGunProjectile), nameof(GlueGunProjectile.CollisionCheck))]
-        [HarmonyPrefix]
-        private static bool NoLanding(ref bool __result)
-        {
-            if (!Replayer.Active) return true;
-            __result = false;
-            return false;
-        }
-
-        [HarmonyPatch(typeof(GlueGunProjectile), nameof(GlueGunProjectile.OnTriggerEnter))]
-        [HarmonyPrefix]
-        private static bool NoTouch() => !Replayer.Active;
-
         private static void Emit(ulong kind, ulong id, Vector3 p)
         {
             if (!Rec.On) return;
@@ -667,7 +658,6 @@ internal static partial class Hooks
     // U what that player was doing as the target says (the game's Agent.NoiseType: 2 sneak, 3 walk, 4 run, 5 jump, 6 loud landing, 7 melee
     // hit, 8 shot, 9 silenced shot, 10 decoy; 0 none). Written from ES_HibernateWakeUp.ActivateState, which only the host runs: a client
     // has no Wake events and its wake-ups have no known cause.
-    // patch-targets: observation (read-only, put on through ForgeCore Hooks.ObserveClass beside each method's owner)
     [HarmonyPatch]
     private static class Wake
     {
@@ -698,28 +688,25 @@ internal static partial class Hooks
         [HarmonyFinalizer]
         private static Exception? PropagatedFull(Exception? __exception) { _propagating = -1; return __exception; }
 
-        [HarmonyPatch(typeof(EnemyAI), nameof(EnemyAI.InjectPropagatedTarget))]
-        [HarmonyPostfix]
-        private static void Handed(EnemyAI __instance)
+        // EnemyAI.InjectPropagatedTarget and EB_Hibernating.OnNoiseDetected are patched once, by ForgeCore (GameHooks.EnemyTargetInjected,
+        // GameHooks.HibernatingNoiseHeard); these follow the call after its body, and the noise from before the body until it returned or threw.
+        internal static void Handed(EnemyAI ai, bool ran)
         {
             if (!Rec.On || _propagating < 0) return;
-            try { if (__instance.m_enemyAgent is { } woken) HandedBy[woken.Pointer] = _propagating; }
+            try { if (ai.m_enemyAgent is { } woken) HandedBy[woken.Pointer] = _propagating; }
             catch (Exception e) { Rec.Fail("wake-pass", e); }
         }
 
-        [HarmonyPatch(typeof(EB_Hibernating), nameof(EB_Hibernating.OnNoiseDetected))]
-        [HarmonyPrefix]
-        private static void Hearing(ref NM_NoiseData noiseData)
+        internal static bool Hearing((EB_Hibernating State, NM_NoiseData Noise, float Distance01) call)
         {
-            if (!Rec.On) return;
+            if (!Rec.On) return false;
             _hearing = true; _noiseMaker = -1;
-            try { _noiseMaker = noiseData.noiseMaker?.TryCast<PlayerAgent>() is { } maker ? maker.PlayerSlotIndex : -1; }
+            try { _noiseMaker = call.Noise.noiseMaker?.TryCast<PlayerAgent>() is { } maker ? maker.PlayerSlotIndex : -1; }
             catch (Exception e) { Rec.Fail("wake-noise", e); }
+            return true;
         }
 
-        [HarmonyPatch(typeof(EB_Hibernating), nameof(EB_Hibernating.OnNoiseDetected))]
-        [HarmonyFinalizer]
-        private static Exception? Heard(Exception? __exception) { _hearing = false; return __exception; }
+        internal static void Heard() => _hearing = false;
 
         // ES_HibernateWakeUp.ActivateState is patched once, by ForgeCore (GameHooks.HibernateWakeActivated); this follows the call when it ran.
         internal static void Activated((ES_HibernateWakeUp State, float Distance, float Delay, bool Propagated) call, bool ran)
@@ -746,42 +733,26 @@ internal static partial class Hooks
         }
     }
 
-    // patch-targets: observation (read-only, put on through ForgeCore Hooks.ObserveClass beside each method's owner)
-    [HarmonyPatch]
-    private static class WakeAnim
+    // 92 WakeUp: U enemy entity, U 1 for the turning set of wake-up animations, U the animation's index, U delay in ms before it plays,
+    // U propagated. ES_HibernateWakeUp.DoWakeup runs on every machine (the host from the state packet it sends itself), so a client has it too.
+    // ForgeCore patches it once (GameHooks.HibernateWakeupStarted); this follows the call after its body.
+    private static void WakeUp((ES_HibernateWakeUp State, bool Turn, int Index, float Delay, bool Propagated) call, bool ran)
     {
-        // 92 WakeUp: U enemy entity, U 1 for the turning set of wake-up animations, U the animation's index, U delay in ms before it plays,
-        // U propagated. ES_HibernateWakeUp.DoWakeup runs on every machine (the host from the state packet it sends itself), so a client has it too.
-        [HarmonyPatch(typeof(ES_HibernateWakeUp), nameof(ES_HibernateWakeUp.DoWakeup))]
-        [HarmonyPostfix]
-        private static void Getting(ES_HibernateWakeUp __instance, bool turn, int index, float delay, bool isPropagatedWakeup)
+        if (!Rec.On) return;
+        try
         {
-            if (!Rec.On) return;
-            try
-            {
-                var entity = EnemyRecorder.Entity(__instance.m_enemyAgent);
-                if (entity < 0) return;
-                EnemyRecorder.Hot(entity);
-                Rec.Begin().U((ulong)entity).U(turn ? 1UL : 0UL).U((ulong)Math.Max(0, index)).U(Pack(delay, 1000f)).U(isPropagatedWakeup ? 1UL : 0UL);
-                Rec.Emit(EventKind.WakeUp);
-            }
-            catch (Exception e) { Rec.Fail("wake-up", e); }
+            var entity = EnemyRecorder.Entity(call.State.m_enemyAgent);
+            if (entity < 0) return;
+            EnemyRecorder.Hot(entity);
+            Rec.Begin().U((ulong)entity).U(call.Turn ? 1UL : 0UL).U((ulong)Math.Max(0, call.Index)).U(Pack(call.Delay, 1000f)).U(call.Propagated ? 1UL : 0UL);
+            Rec.Emit(EventKind.WakeUp);
         }
+        catch (Exception e) { Rec.Fail("wake-up", e); }
     }
 
-    // patch-targets: observation (read-only, put on through ForgeCore Hooks.ObserveClass beside each method's owner)
-    [HarmonyPatch]
-    private static class SleepSense
-    {
-        // A sleeper starting or ending to sense someone: written at once (EnemyMind), not left to the round of reads.
-        [HarmonyPatch(typeof(ES_Hibernate), nameof(ES_Hibernate.DoStartDetection))]
-        [HarmonyPostfix]
-        private static void Sensing(ES_Hibernate __instance) { if (Rec.On) EnemyRecorder.Mind(__instance.m_enemyAgent); }
-
-        [HarmonyPatch(typeof(ES_Hibernate), nameof(ES_Hibernate.DoEndDetection))]
-        [HarmonyPostfix]
-        private static void Calmed(ES_Hibernate __instance) { if (Rec.On) EnemyRecorder.Mind(__instance.m_enemyAgent); }
-    }
+    // A sleeper starting or ending to sense someone (ES_Hibernate.DoStartDetection / DoEndDetection, patched once by ForgeCore): written at
+    // once (EnemyMind), not left to the round of reads.
+    private static void SleepSensed(ES_Hibernate hibernate, bool ran) { if (Rec.On) EnemyRecorder.Mind(hibernate.m_enemyAgent); }
 
     // U enemy entity, U on (1 while the scout's feelers are out).
     [HarmonyPatch]

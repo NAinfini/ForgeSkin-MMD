@@ -12,7 +12,6 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <!-- Line numbers in error logs without the builder's local paths. -->
     <DebugType>embedded</DebugType>
-    <PathMap>$(MSBuildProjectDirectory)=/ForgeWeaponEnergyLab</PathMap>
     <GTFOBepInExPath Condition="'$(GTFOBepInExPath)' == ''">$(GTFO_BEPINEX_PATH)</GTFOBepInExPath>
   </PropertyGroup>
   <Target Name="RequireGameReferences" BeforeTargets="ResolveReferences">
@@ -32,10 +31,10 @@
     <None Include="audio/cues.forge" Link="audio/cues.forge" CopyToOutputDirectory="PreserveNewest" />
     <None Include="$(ForgeModsRoot)ForgeWeapon_EnergyLab/Assets/Audio/ogg/*.ogg" Link="audio/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <!-- The eight weapon model bundles sit beside energylab.forge, which names them, with the shared bundle they depend on and Unity's
-         manifest of the set, which ForgeCore reads as ForgeEnergyLab/ForgeEnergyLab; they are local media (Assets/Models). -->
+         text manifest of the set, which ForgeCore reads as ForgeEnergyLab/ForgeEnergyLab.manifest; they are local media (Assets/Models). -->
     <None Include="$(ForgeModsRoot)ForgeWeapon_EnergyLab/Assets/Models/forge-energy-model-*.bundle" Link="ForgeEnergyLab/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="$(ForgeModsRoot)ForgeWeapon_EnergyLab/Assets/Models/forge-energy-unity-manifest.bundle" Link="ForgeEnergyLab/ForgeEnergyLab" CopyToOutputDirectory="PreserveNewest"
-          Condition="Exists('$(ForgeModsRoot)ForgeWeapon_EnergyLab/Assets/Models/forge-energy-unity-manifest.bundle')" />
+    <None Include="$(ForgeModsRoot)ForgeWeapon_EnergyLab/Assets/Models/forge-energy-unity.manifest" Link="ForgeEnergyLab/ForgeEnergyLab.manifest" CopyToOutputDirectory="PreserveNewest"
+          Condition="Exists('$(ForgeModsRoot)ForgeWeapon_EnergyLab/Assets/Models/forge-energy-unity.manifest')" />
     <EmbeddedResource Include="$(ForgeModsRoot)ForgeWeapon_EnergyLab/Assets/Vfx/forge-energy-disc.bundle" LogicalName="ForgeWeaponEnergyLab.Vfx.forge-energy-disc.bundle" />
     <Reference Include="BepInEx.Core" HintPath="$(GTFOBepInExPath)/core/BepInEx.Core.dll" Private="false" />
     <Reference Include="GTFO-API" HintPath="$(GTFOApiPath)" Private="false" />

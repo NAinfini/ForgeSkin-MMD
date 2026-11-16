@@ -9,10 +9,10 @@ using UnityEngine;
 
 namespace ForgeReplay;
 
-/// <summary>Puts the recording's people and monsters into the replay level: one puppet per enemy near the camera, one per recorded player
-/// the level has a bot for. What a puppet shows comes from the recording only: the position and facing between the latest sample and the
-/// next, an enemy's walk animation from the speed those samples give and a player's from the recorded walk values, death from the enemy's
-/// end event, the player's stance and wielded slot from the latest status. How a puppet is held and driven is ForgeCore's <see cref="Puppets"/>. Main thread only.</summary>
+/// <summary>Puts the recording's people and monsters into the replay level: one puppet per enemy near the camera (held and driven through
+/// ForgeCore's <see cref="Puppets"/>) and one stand-in per recorded player (<see cref="StandIn"/>, a body with no player behind it). What they
+/// show comes from the recording only: the position and facing between the latest sample and the next, an enemy's walk animation from the speed
+/// those samples give and its death from its end event, a player's body from the recorded layer states and parameters. Main thread only.</summary>
 internal static class Puppeteer
 {
     // Puppets exist only near the camera: 85 enemies at once is more than the GPU of the test machine took (device removed), and an enemy far
@@ -38,23 +38,19 @@ internal static class Puppeteer
     private static readonly List<int> Remove = new();
     // Enemy types the recording has and this game does not: skipped, not asked of the game again every frame.
     private static readonly HashSet<ulong> MissingTypes = new();
-    private static readonly Dictionary<int, PlayerPuppet> Players = new();
-    private static readonly Dictionary<int, CosmeticPlayer> Cosmetics = new();
+    private static readonly Dictionary<int, StandIn> StandIns = new();
     private static readonly int[] Wielded = { -1, -1, -1, -1 };
-    private static readonly bool[] Charging = new bool[4];
-
-    /// <summary>A recorded swing of a player's melee weapon on its puppet (the recorder writes it once the game decided it); false when the player has no puppet.</summary>
-    internal static bool MeleeSwing(int slot, ulong kind)
-    {
-        var puppet = PlayerOf(slot);
-        return puppet != null && puppet.MeleeSwing(kind != 0);
-    }
+    // The line the stand-in holds for Wielded: a gear line, or StandIn.ItemLine for a pack, consumable or carried item.
+    private static readonly string[] WieldLine = { "", "", "", "" };
+    // The gear slot each player held last that the recording has no line for: noted once, not rebuilt as text every frame.
+    private static readonly int[] MissingWield = { -1, -1, -1, -1 };
+    // A body that could not be made is tried again for that slot only after this long, not every frame.
+    private const float MakeRetrySeconds = 2f;
+    private static readonly float[] _retryAt = new float[4];
 
     internal static int EnemyCount => Foes.Count;
     internal static int ParkedCount { get { var n = 0; foreach (var foe in Foes.Values) if (foe.Parked) n++; return n; } }
-    internal static int PlayerCount => Players.Count;
-    /// <summary>Counts every change of a player puppet's wielded item, so what draws round the puppet can be redone.</summary>
-    internal static int WieldVersion { get; private set; }
+    internal static int PlayerCount => StandIns.Count;
     internal static int Retaken { get { var n = 0; foreach (var foe in Foes.Values) n += foe.Puppet?.Retaken ?? 0; return n; } }
 
     /// <summary>The enemies a puppet exists for (not parked), for the status line.</summary>
@@ -97,22 +93,10 @@ internal static class Puppeteer
 
     private static EnemyPuppet? Live(int entity) => Foes.TryGetValue(entity, out var foe) && !foe.Parked && foe.Puppet is { Held: true } puppet ? puppet : null;
 
-    private static PlayerAgent? NearestPlayer(Vector3 from)
-    {
-        PlayerAgent? best = null; var bestDistance = float.MaxValue;
-        foreach (var puppet in Players.Values)
-        {
-            if (!puppet.Held) continue;
-            var distance = Vec.SqrLength(puppet.Agent.transform.position - from);
-            if (distance < bestDistance) { bestDistance = distance; best = puppet.Agent; }
-        }
-        return best;
-    }
-
-    /// <summary>A recorded enemy attack: the enemy plays it in the game's own attack state, aimed at the nearest player puppet.</summary>
+    /// <summary>A recorded enemy attack: the enemy plays it in the game's own attack state, aimed at the recorded place.</summary>
     internal static void EnemyAttack(int entity, ES_StateEnum state, Vector3 aim, int animation, float seconds)
     {
-        if (Live(entity) is { } puppet) puppet.Attack(state, aim, animation, seconds, NearestPlayer(puppet.Agent.transform.position));
+        if (Live(entity) is { } puppet) puppet.Attack(state, aim, animation, seconds, null);
     }
 
     // The tentacle's own callback when it is out: a replay has nothing to settle there.
@@ -191,48 +175,14 @@ internal static class Puppeteer
     /// <summary>The wield state the body of <paramref name="slot"/> was last asked to show (an <see cref="InventorySlot"/> value, -1 before any).</summary>
     internal static int WieldedOf(int slot) => Wielded[slot & 3];
 
-    internal static CosmeticPlayer? CosmeticOf(int slot) => Cosmetics.TryGetValue(slot & 3, out var cosmetic) && cosmetic.Held ? cosmetic : null;
+    /// <summary>The stand-in of a recorded player slot, if one exists.</summary>
+    internal static StandIn? StandInOf(int slot) => StandIns.TryGetValue(slot & 3, out var body) && body.Held ? body : null;
 
-    /// <summary>The gear line of the weapon held in <paramref name="wield"/>: the loadout's lines are standard, special, melee, tool.</summary>
-    internal static string GearLineOf(string loadout, int wield)
-    {
-        var line = LineIndex(wield);
-        var lines = loadout.Split('\n');
-        return line >= 0 && line < lines.Length ? lines[line].Trim() : "";
-    }
+    /// <summary>The animator of a recorded player's stand-in, for its bones; null while the player has none or it is not shown.</summary>
+    internal static Animator? AnimatorOf(int slot) => StandInOf(slot) is { Visible: true } body ? body.Animator : null;
 
-    /// <summary>The loadout line of the inventory slot <paramref name="wield"/> (<see cref="GearSlots"/>), -1 for a slot that is not gear.</summary>
-    internal static int LineIndex(int wield) => Array.IndexOf(GearSlots, (InventorySlot)wield);
-
-    /// <summary>The player puppet of a recorded player slot, if one exists.</summary>
-    internal static PlayerPuppet? PlayerOf(int slot) => Players.TryGetValue(slot & 3, out var puppet) && puppet.Held ? puppet : null;
-
-    /// <summary>The animator of a recorded player's puppet or cosmetic copy; null when the player has none.</summary>
-    internal static Animator? AnimatorOf(int slot) => PlayerOf(slot) is { } puppet ? puppet.Agent.AnimatorBody : Cosmetics.TryGetValue(slot & 3, out var cosmetic) && cosmetic.Held ? cosmetic.Animator : null;
-
-    /// <summary>The body of a recorded player's puppet or cosmetic copy, for hiding and outlining; null when the player has none.</summary>
-    internal static GameObject? BodyOf(int slot)
-    {
-        if (PlayerOf(slot) is { } puppet) return puppet.Agent.gameObject;
-        return Cosmetics.TryGetValue(slot & 3, out var cosmetic) && cosmetic.Held ? cosmetic.Body : null;
-    }
-
-    /// <summary>The character rig belongs to a body other than the observer's: a player agent of another slot (a puppet's bot) or a cosmetic copy.
-    /// The bodies' rigs need not hang under their agents, and the observer's own is hidden by its place.</summary>
-    internal static bool OthersRig(Transform rig)
-    {
-        foreach (var agent in PlayerManager.PlayerAgentsInLevel)
-        {
-            if (agent == null || agent.WasCollected || agent.IsLocallyOwned && agent.Owner is { } owner && owner != null && !owner.IsBot) continue;
-            var body = agent.AnimatorBody;
-            if (Related(rig, body != null ? body.transform : null) || Related(rig, agent.transform)) return true;
-        }
-        foreach (var cosmetic in Cosmetics.Values)
-            if (cosmetic.Held && Related(rig, cosmetic.Body != null ? cosmetic.Body.transform : null)) return true;
-        return false;
-    }
-
-    private static bool Related(Transform rig, Transform? body) => body != null && (body.IsChildOf(rig) || rig.IsChildOf(body));
+    /// <summary>The body of a recorded player's stand-in, for outlining it and hanging things on it; null when the player has none.</summary>
+    internal static GameObject? BodyOf(int slot) => StandInOf(slot)?.Body;
 
     /// <summary>A jump in time: every enemy's action ends and every puppet's sounds stop (an attack's loop, a scream, a weapon's tail: each
     /// agent's own sound player), so nothing of the moment left goes on in the one landed in.</summary>
@@ -250,7 +200,6 @@ internal static class Puppeteer
                 puppet.Feelers(false, true);
                 puppet.Agent.Sound?.Stop();
             }
-            foreach (var puppet in Players.Values) if (puppet.Held) puppet.Agent.Sound?.Stop();
         }
         catch (Exception error) { Plugin.Logger.ErrorOnce("The puppets' actions and sounds could not be stopped after a jump: " + error.Message); }
     }
@@ -260,15 +209,10 @@ internal static class Puppeteer
     {
         foreach (var foe in Foes.Values) foe.Puppet?.Dispose();
         Corpses.All(HideCorpse);
-        foreach (var renderer in SpareBodies) if (renderer != null && !renderer.WasCollected) renderer.enabled = true;
-        SpareBodies.Clear(); _spareAt = 0f;
-        foreach (var puppet in Players.Values) puppet.Dispose();
-        HideViewed(-1);
-        foreach (var cosmetic in Cosmetics.Values) cosmetic.Dispose();
-        Cosmetics.Clear();
-        for (var slot = 0; slot < 4; slot++) { AwayBody[slot].Clear(); Away[slot] = false; WornLines[slot] = new string?[GearLines]; CannotWear[slot] = new string?[GearLines]; DressedFor[slot] = null; Redressed[slot] = false; EquipUntil[slot] = 0f; HandFarSince[slot] = 0f; HandSaid[slot] = false; ReloadSaid[slot] = false; GearNoted[slot] = null; }
-        _presenceSeen = -1;
-        Foes.Clear(); MissingTypes.Clear(); SpawnRetryAt.Clear(); SpawnFailures.Clear(); Refused.Clear(); Players.Clear(); Array.Fill(Wielded, -1); Array.Clear(DressStep, 0, 4); WieldVersion = 0; _botsWaitFrom = -1f; _botsReadyAt = -1f; _gearNotes = 0; RestoreNotes = 0;
+        foreach (var body in StandIns.Values) body.Dispose();
+        StandIns.Clear();
+        _landed = false; Array.Clear(_retryAt);
+        Foes.Clear(); MissingTypes.Clear(); SpawnRetryAt.Clear(); SpawnFailures.Clear(); Array.Fill(Wielded, -1); Array.Fill(WieldLine, ""); Array.Fill(MissingWield, -1);
     }
 
     /// <summary>Adds the pointer of every enemy agent the puppeteer holds or parks to <paramref name="into"/>.</summary>
@@ -277,80 +221,14 @@ internal static class Puppeteer
         foreach (var foe in Foes.Values) if (foe.Agent != null && !foe.Agent.WasCollected) into.Add(foe.Agent.Pointer);
     }
 
-    // The viewed player's own body while the camera is at its eyes: the camera would sit inside the head, so its renderers are off
-    // (and the weapon in its hands with them). Re-read now and then because the held weapon changes. Hidden with Renderer.forceRenderingOff,
-    // which nothing else writes: the game's culling and the other hiders below switch Renderer.enabled, and a hide and a restore of the same
-    // flag by two of them left a body off after the eyes view (or a muzzle flash sprite on for good). Only what this hid is given back.
-    private static readonly List<Renderer> HiddenBody = new();
-    private static int _hiddenSlot = -1, _hideTurn;
-    private static float _hideAt;
-    // Finding the renderers of a whole body is what costs: one of the three at a time, so a magazine shown for a reload is gone within a few frames and no frame pays for all of them.
-    private const float HideEvery = 0.05f;
-
-    /// <summary>Hides the body of the player puppet of <paramref name="slot"/> (-1: show every body again). <paramref name="refresh"/>
-    /// looks for renderers that appeared since (a new weapon in the hands, a magazine shown for a reload).</summary>
-    internal static void HideViewed(int slot, bool refresh = false)
-    {
-        var changed = slot != _hiddenSlot;
-        if (changed)
-        {
-            var restored = HiddenBody.Count; var was = _hiddenSlot;
-            foreach (var renderer in HiddenBody) if (renderer != null && !renderer.WasCollected) renderer.forceRenderingOff = false;
-            HiddenBody.Clear();
-            _hiddenSlot = slot;
-            if (restored > 0 && RestoreNotes < 4) NoteRestore(was, restored);
-        }
-        if (slot < 0 || !refresh && !changed) return;
-        var now = ForgeCore.Frame.UnscaledTime;
-        if (!changed && now < _hideAt) return;
-        _hideAt = now + HideEvery;
-        var turn = changed ? -1 : _hideTurn++ % 3;
-        if (BodyOf(slot) is not { } body) return;
-        if (turn is -1 or 0) Hide(body);
-        // The body model and the weapon in its hands do not hang under the agent's own object on every player.
-        if (PlayerOf(slot) is not { } puppet) return;
-        if (turn is -1 or 1 && puppet.Agent.AnimatorBody is { } model && model != null) Hide(model.gameObject);
-        if (turn is -1 or 2 && puppet.Agent.Inventory?.WieldedItem is { } held) Hide(held.gameObject);
-    }
-
-    private static void Hide(GameObject root)
-    {
-        foreach (var renderer in root.GetComponentsInChildren<Renderer>(false))
-            if (renderer != null && !renderer.forceRenderingOff) { renderer.forceRenderingOff = true; HiddenBody.Add(renderer); }
-    }
-
-    // Diagnostic for the owner's hand test (the body gone after the eyes view): the first few times a hidden body is given back, how many renderers
-    // were given back and what the body then draws. Remove with the cause found.
-    private static int RestoreNotes;
-
-    private static void NoteRestore(int slot, int restored)
-    {
-        RestoreNotes++;
-        var body = slot >= 0 ? BodyOf(slot) : null;
-        var skins = body != null ? body.GetComponentsInChildren<SkinnedMeshRenderer>(true) : null;
-        var on = 0; var off = 0;
-        if (skins != null) foreach (var skin in skins) if (skin.enabled && !skin.forceRenderingOff && skin.gameObject.activeInHierarchy) on++; else off++;
-        Plugin.Diagnostic.LogDebug("Eyes view of player " + (slot + 1) + " ended: " + restored + " renderers shown again; its body now has " + on + " skinned meshes drawn and " + off + " off, body active "
-            + (body != null && body.activeInHierarchy) + ", away " + (slot >= 0 && Away[slot]) + ", puppet " + (PlayerOf(slot) != null) + ", copy " + (CosmeticOf(slot) != null) + ".");
-    }
-
     /// <summary>One frame, after the game's animation: <paramref name="rate"/> is the playback speed (0 while paused).</summary>
-    internal static void Sync(WorldState state, uint nowMs, int follow, Vector3? view, float rate, float seconds, IReadOnlyList<PlayerEntry> recorded)
+    internal static void Sync(WorldState state, uint nowMs, int follow, bool eyes, Vector3? view, float rate, float seconds, IReadOnlyList<PlayerEntry> recorded)
     {
-        ReadHolders(nowMs, recorded);
         Corpses.Due(ForgeCore.Frame.UnscaledTime, HideCorpse);
         SyncEnemies(state, nowMs, follow, view, rate, seconds);
-        SyncPlayers(state, nowMs, follow, rate, recorded);
+        SyncPlayers(state, nowMs, follow, eyes, rate, recorded);
         Deployables.Frame(nowMs);
         Deployables.World(state);
-    }
-
-    internal static Vector3 Velocity(WorldState state, int entity, uint nowMs)
-    {
-        ref var p = ref state.Poses[entity];
-        if (!p.Present || !p.HasNext) return Vec.Zero;
-        var (vx, vz) = PuppetMotion.Velocity(p.X, p.Z, p.NextX, p.NextZ, (p.NextMs - p.TimeMs) / 1000f);
-        return new Vector3(vx, 0f, vz);
     }
 
     private static void SyncEnemies(WorldState state, uint nowMs, int follow, Vector3? view, float rate, float seconds)
@@ -437,7 +315,7 @@ internal static class Puppeteer
             }
             // A sleeper sensing someone (the light sleep): the game's own detection start and end on the puppet.
             if (ReplayExtras.Mind(state, entity, out var mind)) foe.Puppet.Detecting(mind.Detecting);
-            var velocity = Velocity(state, entity, nowMs);
+            var velocity = Recorded.Velocity(state, entity, nowMs);
             foe.Smoothed = Vector3.Lerp(foe.Smoothed, velocity, 1f - Mathf.Exp(-seconds / 0.12f)); velocity = foe.Smoothed;
             foe.Puppet.Drive(position, rotation, velocity);
         }
@@ -480,118 +358,51 @@ internal static class Puppeteer
         catch (Exception error) { Plugin.Logger.ErrorOnce("A puppet enemy could not be taken out of the level: " + error.Message); }
     }
 
-    /// <summary>How many bot slots were opened for this replay.</summary>
-    internal static int BotsAsked;
-    private const float BotsWaitSeconds = 20f, BotsSettleSeconds = 1f, CopySettleSeconds = 1f;
-    private static float _botsWaitFrom = -1f, _botsReadyAt = -1f;
-
-    private static void SyncPlayers(WorldState state, uint nowMs, int follow, float rate, IReadOnlyList<PlayerEntry> recorded)
+    // Every recorded player is a stand-in: a body made from the game's player rig as the game makes every player's (any player agent gives the rig;
+    // the replay level has only the observer's), made when the player first counts and kept for the whole replay. What it plays is the recording's and nothing else: the place and look between two samples,
+    // the body controller's layer states (PlayerAnimLayer) and parameters (PlayerMotion), the wielded gear, the flashlight. Its one switch says
+    // whether it shows: the player is in the game at this moment, and the camera does not sit in its head.
+    private static void SyncPlayers(WorldState state, uint nowMs, int follow, bool eyes, float rate, IReadOnlyList<PlayerEntry> recorded)
     {
-        var bots = PlayerManager.PlayerAgentsInLevel;
-        var clock = ForgeCore.Frame.UnscaledTime;
-        // The bots arrive one by one after the level is entered. A player is not held until the ones asked for are here and have had a moment to
-        // put their clothes on: the bot taken as it appeared never drew its body (its gear hung in the air), and the players after it became copies.
-        if (_botsReadyAt < 0f)
+        var jumped = _landed; _landed = false;
+        var seconds = ForgeCore.Frame.UnscaledDeltaTime;
+        for (var slot = 0; slot < 4; slot++)
         {
-            var arrived = 0;
-            foreach (var agent in bots) if (agent != null && !agent.IsLocallyOwned) arrived++;
-            if (_botsWaitFrom < 0f) _botsWaitFrom = clock;
-            if (arrived < BotsAsked && clock - _botsWaitFrom < BotsWaitSeconds) return;
-            _botsReadyAt = clock + BotsSettleSeconds;
-        }
-        if (clock < _botsReadyAt) return;
-        // The recorder's own player comes first: it is the one the camera follows by default. Everyone the recording ever has gets a body from the start,
-        // kept out of sight until the moment the player joins and from the moment the player leaves.
-        for (var pass = 0; pass < 2; pass++)
-            for (var slot = 0; slot < 4; slot++)
+            if (!ReplayFeed.EverHeld(slot, recorded, Recorded.Lines)) continue;
+            if (!StandIns.TryGetValue(slot, out var body))
             {
-                if (!ReplayFeed.EverHeld(slot, recorded, Lines)) continue;
-                var isRecorder = slot == Replayer.RecorderSlot;
-                if (isRecorder != (pass == 0)) continue;
-                var here = Holders[slot].Filled && state.Poses[slot].Present;
-                if (Cosmetics.TryGetValue(slot, out var cosmetic))
+                if (Players.Local is not { } player) continue;
+                if (ForgeCore.Frame.UnscaledTime < _retryAt[slot]) continue;
+                var made = StandIn.Make(player, Skipped.Note, out var why);
+                if (made == null)
                 {
-                    KeepAway(slot, !here);
-                    if (!here) cosmetic.Lamp(false); // its renderers are hidden; a light is not one
-                    if (here && cosmetic.Held && state.Shown(slot, nowMs, out var cx, out var cy, out var cz, out var cqx, out var cqy, out var cqz, out var cqw))
-                    {
-                        cosmetic.Lamp(state.PlayerKits[slot] is { Known: true, Flashlight: true });
-                        NoteWield(slot, state.PlayerStatus[slot]);
-                        if (Wielded[slot] > 0) cosmetic.Hold(Wielded[slot], GearLineOf(Holders[slot].Loadout, Wielded[slot]));
-                        cosmetic.Drive(new Vector3(cx, cy, cz), new Quaternion(cqx, cqy, cqz, cqw) * Vec.Forward, state.PlayerForward[slot], state.PlayerRight[slot], CrouchOf(state.PlayerStatus[slot]), rate, DownedOf(state.PlayerStatus[slot]), Wielded[slot] == (int)InventorySlot.GearMelee);
-                        if (slot != _hiddenSlot) cosmetic.KeepDrawn(slot);
-                    }
+                    Plugin.Logger.ErrorOnce("The body of a recorded player could not be made: " + why);
+                    _retryAt[slot] = ForgeCore.Frame.UnscaledTime + MakeRetrySeconds;
                     continue;
                 }
-                if (!Players.TryGetValue(slot, out var puppet))
-                {
-                    var bot = FreeBot(bots, slot, recorded);
-                    if (bot == null)
-                    {
-                        // No bot slot is left for this player (the observer holds one of the four): a body copied from a player puppet, with no slot.
-                        // Copied as it looks, not as the eyes view hid it (HideViewed hides it again later this frame), and a moment after the donor
-                        // was held, so what it wields this frame is in the copy's hands.
-                        if (clock < _botsReadyAt + CopySettleSeconds) continue;
-                        HideViewed(-1);
-                        if (Players.Values.FirstOrDefault(p => p.Held) is { } donor && CosmeticPlayer.Make(donor.Agent) is { } made) { Cosmetics[slot] = made; WieldVersion++; }
-                        continue;
-                    }
-                    puppet = Puppets.Player(bot, Plugin.Id);
-                    if (puppet == null) { Refused.Add(bot.Pointer); continue; }
-                    Players[slot] = puppet;
-                }
-                KeepAway(slot, !here);
-                Dress(slot, puppet, Holders[slot].Loadout);
-                VerifyWorn(slot, puppet, Holders[slot].Loadout);
-                if (!here || !puppet.Held || !state.Shown(slot, nowMs, out var x, out var y, out var z, out var qx, out var qy, out var qz, out var qw)) continue;
-                puppet.Rate = rate;
-                var status = state.PlayerStatus[slot];
-                var crouch = 0f;
-                if (StanceOf(status) is { } stance)
-                {
-                    crouch = stance == PlayerLocomotion.PLOC_State.Crouch ? 1f : 0f;
-                    // The air, the floor, a terminal, a ladder and a tank's tentacle are the game's own states; everything else is walking, driven below.
-                    // A trap's or a pouncer's hold is not entered: those states read the holder, which the replay has no such thing as.
-                    puppet.State(stance is PlayerLocomotion.PLOC_State.Jump or PlayerLocomotion.PLOC_State.Fall or PlayerLocomotion.PLOC_State.Land or PlayerLocomotion.PLOC_State.Downed
-                        or PlayerLocomotion.PLOC_State.OnTerminal or PlayerLocomotion.PLOC_State.ClimbLadder or PlayerLocomotion.PLOC_State.GrabbedByTank ? stance : PlayerLocomotion.PLOC_State.Stand);
-                    if (NoteWield(slot, status)) { puppet.Wield((InventorySlot)Wielded[slot]); EquipUntil[slot] = ForgeCore.Frame.UnscaledTime + EquipSeconds; }
-                }
-                // A charge begins while the button is held; its release is the Melee event.
-                var charging = ReplayExtras.MeleeCharging(state, slot);
-                if (charging && !Charging[slot]) puppet.MeleeCharge();
-                Charging[slot] = charging;
-                if (state.PlayerKits[slot] is { Known: true } kit) puppet.Flashlight(kit.Flashlight);
-                puppet.Drive(new Vector3(x, y, z), new Quaternion(qx, qy, qz, qw) * Vec.Forward, state.PlayerForward[slot], state.PlayerRight[slot], crouch);
-                KeepDrawn(slot, puppet);
-                if (rate == 0f) HandsOnItem(puppet, slot);
-                HandCheck(slot, puppet, rate);
-                GearNote(slot, puppet);
+                StandIns[slot] = body = made;
             }
-        // A jump lands in the moment: whoever is down there is already on the floor.
-        if (_landed) { _landed = false; foreach (var lying in Players.Values) lying.LieDown(); }
-        HideSpareBots(bots, clock);
-    }
-
-    private static bool _landed;
-
-    // Bots the game gave no puppet: not offered again.
-    private static readonly HashSet<IntPtr> Refused = new();
-
-    // The bot that plays the recorded slot: the one sitting in the same slot (its voice and look are that character's), else a free bot no other
-    // recorded slot is waiting for. None left means the slot is drawn as a body copy.
-    private static PlayerAgent? FreeBot(Il2CppSystem.Collections.Generic.List<PlayerAgent> bots, int slot, IReadOnlyList<PlayerEntry> recorded)
-    {
-        PlayerAgent? spare = null;
-        for (var i = 0; i < bots.Count; i++)
-        {
-            var agent = bots[i];
-            if (agent == null || agent.IsLocallyOwned || Refused.Contains(agent.Pointer) || Taken(agent)) continue;
-            var seat = agent.PlayerSlotIndex;
-            if (seat == slot) return agent;
-            if (spare == null && !(ReplayFeed.EverHeld(seat, recorded, Lines) && !Players.ContainsKey(seat & 3) && !Cosmetics.ContainsKey(seat & 3))) spare = agent;
+            if (!body.Held) continue;
+            var x = 0f; var y = 0f; var z = 0f; var qx = 0f; var qy = 0f; var qz = 0f; var qw = 1f;
+            var here = Recorded.Holder(slot).Filled && state.Poses[slot].Present && state.Shown(slot, nowMs, out x, out y, out z, out qx, out qy, out qz, out qw);
+            body.Visible = here && !(eyes && slot == (follow & 3));
+            if (!body.Visible) continue;
+            // The clothes and the look (a character model) the player had at this moment, on the slot's character (the game seats character N in
+            // slot N); a look no provider here can wear leaves the clothes.
+            var loadout = Recorded.Holder(slot).Loadout;
+            body.Dress(slot, Recorded.OutfitOf(loadout), Recorded.LookOf(loadout));
+            NoteWield(slot, state);
+            if (Wielded[slot] > 0) body.Hold(Wielded[slot], WieldLine[slot]);
+            body.Lamp(state.PlayerKits[slot] is { Known: true, Flashlight: true });
+            foreach (var layer in BodyStates.Recorded)
+                if (ReplayExtras.AnimLayer(state, slot, layer, out var played))
+                    body.Play(layer, played.State, played.StartMs, nowMs, played.FadeMs / 1000f, played.Weight / (float)BodyStates.FullWeight, jumped, rate > 0f ? seconds : 0f);
+            body.Pose(new Vector3(x, y, z), new Quaternion(qx, qy, qz, qw) * Vec.Forward, state.PlayerForward[slot], state.PlayerRight[slot], state.PlayerCrouch[slot], state.PlayerAimPitch[slot], rate, seconds, jumped);
         }
-        return spare;
     }
+
+    // A jump landed since the last frame: every stand-in enters its states at once, at the time they have reached.
+    private static bool _landed;
 
     /// <summary>The bodies in the scene, for ReplayControl.Inspect: what the puppeteer holds against what is active.</summary>
     internal static string Inspect()
@@ -605,314 +416,65 @@ internal static class Puppeteer
         }
         text.Append("foes ").Append(Foes.Count).Append(" parked ").Append(ParkedCount).Append(" corpses ").Append(Corpses.Count).Append(" active agents ").Append(alive).Append(" by type ").Append(string.Join(",", types.Select(p => p.Key + ":" + p.Value)));
         foreach (var (entity, foe) in Foes) if (foe.DataId is 29 or 36 && foe.Agent != null) text.Append("\nbig ").Append(entity).Append(" type ").Append(foe.DataId).Append(" parked ").Append(foe.Parked).Append(" at ").Append(foe.Agent.Position);
-        foreach (var (slot, puppet) in Players)
+        foreach (var (slot, body) in StandIns)
         {
-            var body = puppet.Agent.AnimatorBody;
-            text.Append("\nslot ").Append(slot).Append(' ').Append(Holders[slot].Name).Append(" agent ").Append(puppet.Agent.PlayerName).Append(" game slot ").Append(puppet.Agent.PlayerSlotIndex).Append(" state ").Append(puppet.Agent.Locomotion.m_currentStateEnum).Append(" at ").Append(puppet.Agent.Position).Append(" wielded ").Append(puppet.Agent.Inventory?.WieldedItem?.name).Append(" move hash ").Append(body != null ? body.GetCurrentAnimatorStateInfo(1).shortNameHash : 0).Append(" (Die ").Append(Animator.StringToHash("Die")).Append(" Dead ").Append(Animator.StringToHash("Dead")).Append(") reentered ").Append(puppet.Reentered).Append(" skins ").Append(SkinCount(body));
+            text.Append("\nslot ").Append(slot).Append(' ').Append(Recorded.Holder(slot).Name).Append(" stand-in held ").Append(body.Held).Append(" visible ").Append(body.Visible).Append(" holds ").Append(body.HeldName);
+            if (!body.Held || !body.Visible) continue;
+            text.Append(' ').Append(body.Describe());
+            foreach (var layer in BodyStates.Recorded)
+            {
+                var hash = body.Animator.GetCurrentAnimatorStateInfo(layer).shortNameHash;
+                text.Append(" L").Append(layer).Append('=').Append(BodyStates.Name(hash) ?? hash.ToString());
+            }
         }
-        foreach (var (slot, cosmetic) in Cosmetics) text.Append("\nslot ").Append(slot).Append(' ').Append(Holders[slot].Name).Append(" copy held ").Append(cosmetic.Held).Append(" skins ").Append(SkinCount(cosmetic.Body));
-        foreach (var agent in PlayerManager.PlayerAgentsInLevel)
-            if (agent != null && !Taken(agent)) text.Append("\nuntaken ").Append(agent.PlayerName).Append(" game slot ").Append(agent.PlayerSlotIndex).Append(" bot ").Append(agent.Owner != null && agent.Owner.IsBot).Append(" locally owned ").Append(agent.IsLocallyOwned).Append(" at ").Append(agent.Position).Append(" skins ").Append(SkinCount(agent.AnimatorBody));
         return text.ToString();
     }
 
-    // Only recorded players are shown: a bot no recorded player took stands where it landed, so its body is off for the whole replay.
-    private static readonly List<Renderer> SpareBodies = new();
-    private static float _spareAt;
-
-    private static void HideSpareBots(Il2CppSystem.Collections.Generic.List<PlayerAgent> bots, float clock)
+    // What the body has in its hands for a PlayerStatus: the gear the recording says, or the pack, consumable or carried item of that slot in the
+    // recorded kit (made as the game makes another player's held item: StandIn.ItemLine). A wield with nothing the recording can show keeps the
+    // last gear (a level item carried in the hands is shown by Carried, which puts the body's own away for as long).
+    private static void NoteWield(int slot, WorldState state)
     {
-        if (clock < _botsReadyAt + CopySettleSeconds + 1f || clock < _spareAt) return;
-        _spareAt = clock + 1f;
-        foreach (var agent in bots)
-        {
-            if (agent == null || agent.WasCollected || Taken(agent) || agent.Owner is { } owner && owner != null && owner.IsLocal && !owner.IsBot) continue;
-            foreach (var renderer in agent.GetComponentsInChildren<Renderer>(false)) if (renderer != null && renderer.enabled) { renderer.enabled = false; SpareBodies.Add(renderer); }
-            var body = agent.AnimatorBody;
-            if (body != null)
-                foreach (var renderer in body.GetComponentsInChildren<Renderer>(false)) if (renderer != null && renderer.enabled) { renderer.enabled = false; SpareBodies.Add(renderer); }
-        }
-    }
-
-    private static string SkinCount(Component? body) => SkinCount(body != null ? body.gameObject : null);
-
-    private static string SkinCount(GameObject? body)
-    {
-        if (body == null) return "none";
-        var on = 0;
-        var skins = body.GetComponentsInChildren<SkinnedMeshRenderer>(true);
-        foreach (var skin in skins) if (skin.enabled && skin.gameObject.activeInHierarchy) on++;
-        return on + "/" + skins.Length;
-    }
-
-    // The game blends a third-person body's arm IK (the left hand onto the item's grip, the aim) with the frame's delta time, and a paused replay holds the world
-    // at time scale 0: a gun wielded or a jump landed in while paused would keep the hands where the weights last were (0 at a fresh wield), the gun off the hand,
-    // until play resumed. While paused the blend is taken to its end at once.
-    // The wield itself runs on the same clock (PlayerInventorySynced puts the item in the hands after its unequip and equip times): a wield asked for
-    // in the last EquipSeconds is ended at once, or the gun hung on the body's back or hip until play went on (the 11-09 probe: 0.79 m from the hand at time scale 0).
-    private static void HandsOnItem(PlayerPuppet puppet, int slot)
-    {
-        var ik = puppet.Agent.SyncIK;
-        if (ik != null && !ik.WasCollected) { ik.m_aimWeight = ik.m_aimWeightTarget; ik.m_lookWeight = ik.m_lookWeightTarget; ik.m_leftArmWeight = ik.m_leftArmWeightTarget; }
-        if (ForgeCore.Frame.UnscaledTime < EquipUntil[slot]) puppet.FinishEquip();
-    }
-
-    private const float EquipSeconds = 3f;
-    private static readonly float[] EquipUntil = new float[4];
-
-    // Diagnostics for the owner's hand test (a held gun off the hand, no reload shown, the wrong gun in the hands); remove with the cause found.
-    // A held item that stays away from the right hand for 3 s while the replay plays, said once per player with where it hangs and the state of the arm IK.
-    private static readonly float[] HandFarSince = new float[4];
-    private static readonly bool[] HandSaid = new bool[4], ReloadSaid = new bool[4];
-
-    private static void HandCheck(int slot, PlayerPuppet puppet, float rate)
-    {
-        if (HandSaid[slot] || rate <= 0f || Time.timeScale == 0f || puppet.IsEquipping || HandAway(puppet) is not { } away || away < 0.45f) { HandFarSince[slot] = 0f; return; }
-        var now = ForgeCore.Frame.UnscaledTime;
-        if (HandFarSince[slot] == 0f) { HandFarSince[slot] = now; return; }
-        if (now - HandFarSince[slot] < 3f) return;
-        HandSaid[slot] = true;
-        var agent = puppet.Agent; var inventory = agent.Inventory!; var item = inventory.WieldedItem; var ik = agent.SyncIK;
-        var chain = new System.Text.StringBuilder();
-        for (var node = item.transform; node != null && chain.Length < 240; node = node.parent) chain.Append(node.name).Append('<');
-        Plugin.Logger.Error("Held item off the hand, player " + (slot + 1) + ": " + item.name + " is " + away.ToString("0.00") + " m from the right hand, wielded slot " + inventory.WieldedSlot + ", asked " + Wielded[slot]
-            + ", left arm weight " + (ik != null ? ik.m_leftArmWeight + " of " + ik.m_leftArmWeightTarget : "no IK") + ", chain " + chain);
-    }
-
-    // How far the item in the body's hands is from its right hand; null when it has no item or hand.
-    private static float? HandAway(PlayerPuppet puppet)
-    {
-        var agent = puppet.Agent; var body = agent.AnimatorBody; var item = agent.Inventory?.WieldedItem;
-        if (body == null || item == null || item.WasCollected || !body.isHuman || body.GetBoneTransform(HumanBodyBones.RightHand) is not { } hand) return null;
-        return Vector3.Distance(item.transform.position, hand.position);
-    }
-
-    /// <summary>A recorded reload is about to be played on the body of <paramref name="slot"/>: the first of each player says what the body's hands hold and whether the
-    /// game's equip is still running, so a reload that shows nothing has its state in the log.</summary>
-    internal static void NoteReload(int slot)
-    {
-        if (ReloadSaid[slot & 3] || PlayerOf(slot) is not { } puppet) return;
-        ReloadSaid[slot & 3] = true;
-        var inventory = puppet.Agent.Inventory;
-        Plugin.Diagnostic.LogDebug("Reload of player " + ((slot & 3) + 1) + " on its body: wielded slot " + inventory?.WieldedSlot + " (asked " + Wielded[slot & 3] + "), item " + inventory?.WieldedItem?.name + ", equipping " + puppet.IsEquipping
-            + ", " + (HandAway(puppet) is { } away ? away.ToString("0.00") + " m from the right hand" : "no hand") + ", time scale " + Time.timeScale + ".");
-    }
-
-    // The gear the body holds against what the recording says, each time the recorded wield changes (at most 12 lines a replay), once the game had time to put it on.
-    private static readonly string?[] GearNoted = new string?[4];
-    private static int _gearNotes;
-
-    private static void GearNote(int slot, PlayerPuppet puppet)
-    {
-        if (_gearNotes >= 12 || DressStep[slot] <= GearLines || ForgeCore.Frame.UnscaledTime < EquipUntil[slot] || Wielded[slot] <= 0 || puppet.Agent.Inventory is not { } inventory || inventory.WieldedItem is not { } held || held.WasCollected) return;
-        var name = held.name;
-        var key = Wielded[slot] + "|" + name;
-        if (GearNoted[slot] == key) return;
-        GearNoted[slot] = key; _gearNotes++;
-        var index = LineIndex(Wielded[slot]);
-        Plugin.Diagnostic.LogDebug("Body gear, player " + (slot + 1) + ": wielded slot " + inventory.WieldedSlot + " (asked " + Wielded[slot] + "), item " + name + ", the recording's " + (index >= 0 ? ReplayFeed.GearName(Holders[slot].Loadout, index) : "?")
-            + ", " + (HandAway(puppet) is { } away ? away.ToString("0.00") + " m from the right hand" : "no hand") + ".");
-    }
-
-
-    // A present player's body draws, whatever switched it off: only the eyes view and a player's absence may. What was found off is said once, so a next case has its cause in the log.
-    private const float DrawnCheckSeconds = 2f;
-    private static readonly float[] DrawnCheckAt = new float[4];
-
-    private static void KeepDrawn(int slot, PlayerPuppet puppet)
-    {
-        var now = ForgeCore.Frame.UnscaledTime;
-        if (slot == _hiddenSlot || now < DrawnCheckAt[slot] || puppet.Agent.AnimatorBody is not { } body || body == null) return;
-        DrawnCheckAt[slot] = now + DrawnCheckSeconds;
-        var skins = body.GetComponentsInChildren<SkinnedMeshRenderer>(false);
-        foreach (var skin in skins) if (skin.enabled) return;
-        foreach (var skin in skins) skin.enabled = true;
-        Plugin.Logger.ErrorOnce("Player " + (slot + 1) + " had no body drawn while present: " + skins.Length + " skinned meshes were off and turned on, body active " + body.gameObject.activeInHierarchy + ", " + (skins.Length > 0 ? "layer " + skins[0].gameObject.layer : "nothing to draw"));
-    }
-
-    // Who holds each slot now: the file header's player, then the Presence lines up to this moment (a join, a leave, a changed loadout). Read again when a line passes.
-    private static readonly SlotHolder[] Holders = new SlotHolder[4];
-    private static int _presenceSeen = -1;
-    private static readonly IReadOnlyList<PresenceLine> NoLines = Array.Empty<PresenceLine>();
-    private static IReadOnlyList<PresenceLine> Lines => Replayer.Report?.Presence ?? NoLines;
-
-    private static void ReadHolders(uint nowMs, IReadOnlyList<PlayerEntry> recorded)
-    {
-        var seen = ReplayFeed.PresenceUpTo(Lines, nowMs);
-        if (seen == _presenceSeen) return;
-        _presenceSeen = seen;
-        for (var slot = 0; slot < 4; slot++) Holders[slot] = ReplayFeed.Holder(slot, nowMs, recorded, Lines, "");
-    }
-
-    /// <summary>The gear lines the player of <paramref name="slot"/> carries at this moment (the first-person view, a sentry's model).</summary>
-    internal static string LoadoutOf(int slot) => Holders[slot & 3].Loadout ?? "";
-
-    /// <summary>The line of the tool (the class slot) in a loadout.</summary>
-    internal const int ToolLine = 3;
-
-    // A player not in the game at this moment: the body stays where it is with its renderers off, looked at again now and then for gear that appeared on it.
-    private static readonly List<Renderer>[] AwayBody = { new(), new(), new(), new() };
-    private static readonly bool[] Away = new bool[4];
-    private static readonly float[] AwayCheckAt = new float[4];
-    private const float AwayCheckSeconds = 1f;
-
-    private static void KeepAway(int slot, bool away)
-    {
-        if (!away)
-        {
-            if (!Away[slot]) return;
-            Away[slot] = false;
-            foreach (var renderer in AwayBody[slot]) if (renderer != null && !renderer.WasCollected) renderer.enabled = true;
-            AwayBody[slot].Clear();
-            return;
-        }
-        Away[slot] = true;
-        var now = ForgeCore.Frame.UnscaledTime;
-        if (now < AwayCheckAt[slot] || BodyOf(slot) is not { } body) return;
-        AwayCheckAt[slot] = now + AwayCheckSeconds;
-        foreach (var renderer in body.GetComponentsInChildren<Renderer>(true))
-            if (renderer != null && renderer.enabled) { renderer.enabled = false; AwayBody[slot].Add(renderer); }
-    }
-
-    // What the body shows in its hands for a PlayerStatus: the gear the recording says. A bot has no resource pack or consumable to bring up, and
-    // empty hands are the game's arms-out pose, so with one of those the last gear stays up, as far as the body goes. True when it changed.
-    private static bool NoteWield(int slot, byte[]? status)
-    {
-        if (status == null) return false;
+        if (state.PlayerStatus[slot] is not { } status) return;
         var read = PayloadReader.Over(status);
         read.U(); read.U();
         var wield = (InventorySlot)read.U();
-        var gear = wield is InventorySlot.GearStandard or InventorySlot.GearSpecial or InventorySlot.GearClass or InventorySlot.GearMelee;
-        // A gear slot the recording has no line for (a client recorder reads another player's gear only as it syncs) is not shown: what a bot holds there is the game's
-        // default for a bot, a copy of the observer's own loadout, and not what the player held.
-        if (gear && GearLineOf(Holders[slot].Loadout, (int)wield).Length == 0)
+        var loadout = Recorded.Holder(slot).Loadout;
+        var gear = IsGear((int)wield);
+        // A gear slot the recording has no line for (a client recorder reads another player's gear only as it syncs) cannot be shown.
+        if (gear && Recorded.GearLineOf(loadout, (int)wield).Length == 0)
         {
-            Skipped.Note("a player's gear in the hands is not in the recording; the last known gear is shown", "player " + (slot + 1) + " slot " + wield);
+            if (MissingWield[slot] != (int)wield)
+            {
+                MissingWield[slot] = (int)wield;
+                Skipped.Note("a player's gear in the hands is not in the recording; the last known gear is shown", "player " + (slot + 1) + " slot " + wield);
+            }
             gear = false;
         }
-        var shown = gear ? (int)wield : Wielded[slot] > 0 ? Wielded[slot] : FirstKnownGear(slot);
-        if (shown == Wielded[slot]) return false;
-        Wielded[slot] = shown; WieldVersion++;
-        return true;
+        ref readonly var kit = ref state.PlayerKits[slot];
+        var item = !kit.Known ? 0u : wield switch
+        {
+            InventorySlot.ResourcePack => kit.PackItem,
+            InventorySlot.Consumable => kit.ConsumableItem,
+            InventorySlot.InLevelCarry => kit.CarryItem,
+            _ => 0u,
+        };
+        if (gear) { Wielded[slot] = (int)wield; WieldLine[slot] = Recorded.GearLineOf(loadout, (int)wield); }
+        else if (item != 0) { Wielded[slot] = (int)wield; WieldLine[slot] = StandIn.ItemLine(item); }
+        else if (Wielded[slot] <= 0 || !IsGear(Wielded[slot]))
+        {
+            Wielded[slot] = FirstKnownGear(slot);
+            WieldLine[slot] = Recorded.GearLineOf(loadout, Wielded[slot]);
+        }
     }
+
+    private static bool IsGear(int wield) => (InventorySlot)wield is InventorySlot.GearStandard or InventorySlot.GearSpecial or InventorySlot.GearClass or InventorySlot.GearMelee;
 
     // The first gear slot the recording has a line for, or the standard slot.
     private static int FirstKnownGear(int slot)
     {
-        foreach (var gear in GearSlots) if (GearLineOf(Holders[slot].Loadout, (int)gear).Length > 0) return (int)gear;
+        foreach (var gear in Recorded.GearSlots) if (Recorded.GearLineOf(Recorded.Holder(slot).Loadout, (int)gear).Length > 0) return (int)gear;
         return (int)InventorySlot.GearStandard;
     }
 
-    // The recorded player's four gear lines on the bot that plays them, one a frame, or again a little later while its assets load.
-    private static readonly int[] DressStep = new int[4];
-    private static readonly float[] DressAt = new float[4];
-    /// <summary>The gear lines of a loadout (standard, special, melee, tool), and the inventory slots they fill in that order.</summary>
-    internal const int GearLines = 4;
-    internal static readonly InventorySlot[] GearSlots = { InventorySlot.GearStandard, InventorySlot.GearSpecial, InventorySlot.GearMelee, InventorySlot.GearClass };
-    // What each body wears, line by line, and the loadout it was last asked to wear: a later Presence line (a tool changed in the level) changes only what differs.
-    private static readonly string?[][] WornLines = { new string?[GearLines], new string?[GearLines], new string?[GearLines], new string?[GearLines] };
-    private static readonly string?[] DressedFor = new string?[4];
-    private static readonly bool[] Redressed = new bool[4];
-    // The lines the game would not put on (gear this install does not have): taken as worn and never checked again, or the check would dress the body anew every few seconds.
-    private static readonly string?[][] CannotWear = { new string?[GearLines], new string?[GearLines], new string?[GearLines], new string?[GearLines] };
-
-    private static void Dress(int slot, PlayerPuppet puppet, string loadout)
-    {
-        if (DressedFor[slot] != loadout)
-        {
-            Redressed[slot] = DressedFor[slot] != null;
-            DressedFor[slot] = loadout;
-            DressStep[slot] = 0;
-        }
-        var now = ForgeCore.Frame.UnscaledTime;
-        if (DressStep[slot] > GearLines || now < DressAt[slot]) return;
-        var lines = loadout.Split('\n');
-        while (DressStep[slot] < GearLines && (DressStep[slot] >= lines.Length || lines[DressStep[slot]].Trim().Length == 0 || lines[DressStep[slot]].Trim() == WornLines[slot][DressStep[slot]])) DressStep[slot]++;
-        if (DressStep[slot] >= GearLines)
-        {
-            // The hands went on holding what was replaced, or what the game brought up with the last line it put on (the tool): asked again
-            // once, after the first dressing too.
-            if (Wielded[slot] >= 0) { puppet.Wield((InventorySlot)Wielded[slot]); EquipUntil[slot] = now + EquipSeconds; }
-            Redressed[slot] = false;
-            DressStep[slot] = GearLines + 1;
-            return;
-        }
-        var line = lines[DressStep[slot]].Trim();
-        try
-        {
-            var reading = ForgeCore.Gear.EquipBot(puppet.Agent.Owner, new global::Gear.GearIDRange(line));
-            if (reading.Status == GearAssetStatus.Loading) { DressAt[slot] = now + 0.25f; return; }
-            if (reading.Status == GearAssetStatus.Failed) { Skipped.Note("a player puppet could not take its gear", "line " + DressStep[slot] + ": " + reading.Detail); CannotWear[slot][DressStep[slot]] = line; }
-        }
-        catch (Exception error) { Skipped.Note("a player puppet could not take its gear", error.Message); CannotWear[slot][DressStep[slot]] = line; }
-        WornLines[slot][DressStep[slot]] = line;
-        DressStep[slot]++;
-    }
-
-    // What the body's backpack really holds against what the recording says, now and then once dressed: another mod may put its own gear on a bot
-    // after the replay did (a favourite loadout given when the level starts), and a line taken as worn would then never be put on again.
-    private static readonly float[] VerifyAt = new float[4];
-    private const float VerifySeconds = 2f;
-
-    /// <summary>The first-person view just put a gear line on the local player: the bots are checked at once, not at the next two-second turn, so a bot that took the observer's
-    /// new gear along (the game's copy to a bot) is dressed again before it is seen holding it.</summary>
-    internal static void RecheckGear() => Array.Clear(VerifyAt, 0, 4);
-    private static readonly global::Gear.eGearComponent[] GearComponents = Enum.GetValues<global::Gear.eGearComponent>();
-
-    private static void VerifyWorn(int slot, PlayerPuppet puppet, string loadout)
-    {
-        var now = ForgeCore.Frame.UnscaledTime;
-        if (DressStep[slot] <= GearLines || now < VerifyAt[slot]) return;
-        VerifyAt[slot] = now + VerifySeconds;
-        var owner = puppet.Agent.Owner;
-        if (owner == null || !PlayerBackpackManager.TryGetBackpack(owner, out var backpack) || backpack?.Slots is not { } slots) return;
-        var lines = loadout.Split('\n');
-        for (var line = 0; line < GearLines && line < lines.Length; line++)
-        {
-            var wanted = lines[line].Trim();
-            var index = (int)GearSlots[line];
-            if (wanted.Length == 0 || WornLines[slot][line] != wanted || CannotWear[slot][line] == wanted || index >= slots.Length || slots[index]?.GearIDRange is not { } worn) continue;
-            global::Gear.GearIDRange want;
-            try { want = new global::Gear.GearIDRange(wanted); }
-            catch (Exception error) { CannotWear[slot][line] = wanted; Skipped.Note("a player puppet's gear line cannot be read", error.Message); continue; }
-            var same = true;
-            foreach (var component in GearComponents) if (want.GetCompID(component) != worn.GetCompID(component)) { same = false; break; }
-            if (same) continue;
-            Skipped.Note("a player puppet's gear was changed after the replay put it on", "slot " + slot + " line " + line);
-            WornLines[slot][line] = null;
-            DressStep[slot] = 0;
-        }
-    }
-    /// <summary>Every recorded player present at this moment has its body, wearing its gear (asked for), so the replay can start.</summary>
-    internal static bool AllHeld(WorldState state, IReadOnlyList<PlayerEntry> recorded)
-    {
-        if (_presenceSeen < 0) return false;
-        for (var slot = 0; slot < 4; slot++)
-        {
-            if (!Holders[slot].Filled || !state.Poses[slot].Present) continue;
-            if (Cosmetics.ContainsKey(slot)) continue;
-            if (!Players.ContainsKey(slot) || DressStep[slot] < GearLines) return false;
-        }
-        return true;
-    }
-
-    // The recorded locomotion state of a PlayerStatus payload, null without one.
-    private static PlayerLocomotion.PLOC_State? StanceOf(byte[]? status)
-    {
-        if (status == null) return null;
-        var read = PayloadReader.Over(status);
-        read.U();
-        return (PlayerLocomotion.PLOC_State)read.U();
-    }
-
-    // 1 while the recorded locomotion state is crouching.
-    private static float CrouchOf(byte[]? status) => StanceOf(status) == PlayerLocomotion.PLOC_State.Crouch ? 1f : 0f;
-
-    private static bool DownedOf(byte[]? status) => StanceOf(status) == PlayerLocomotion.PLOC_State.Downed;
-
-    private static bool Taken(PlayerAgent agent)
-    {
-        foreach (var puppet in Players.Values) if (puppet.Agent.Pointer == agent.Pointer) return true;
-        return false;
-    }
 }

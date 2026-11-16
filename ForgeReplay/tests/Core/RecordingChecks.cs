@@ -281,6 +281,67 @@ internal static class RecordingChecks
         var kinds = typeof(EventKind).GetFields(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public).Select(field => (ushort)field.GetRawConstantValue()!).ToList();
         check(kinds.Distinct().Count() == kinds.Count && new[] { EventKind.Sentry, EventKind.Mine, EventKind.ResourceBox, EventKind.Reactor, EventKind.Environment, EventKind.WeaponSound }.All(Timeline.IsStateEvent) && !Timeline.IsStateEvent(EventKind.Noise),
             "eventkinds: every event type number is unique and the persistent object kinds are state events");
+        // The body state table: a state's number is the CRC-32 of its name (what the game's animator computes), and the local player's table only names states in it.
+        var badRows = BodyStates.Rows.Where(row => (int)ChunkLog.Crc32(System.Text.Encoding.UTF8.GetBytes(row.Name)) != row.Hash).Select(row => row.Name).ToList();
+        var localNamed = Enumerable.Range(0, 6).All(family => Enumerable.Range(0, 18).All(state => BodyStates.Name(BodyStates.FullBodyState(family, state)) != null) && BodyStates.Name(BodyStates.Aim(family).State) != null)
+            && BodyStates.Name(BodyStates.FullBodyState(1, 4)) == "Pistol_JumpMidAir" && BodyStates.Name(BodyStates.FullBodyState(2, 7)) == "Dead" && BodyStates.Name(BodyStates.InteractState(2)) == "Pickup_Mid"
+            && BodyStates.MeleeShove("Sledgehammer_Idle", true) == "Sledgehammer_Crouch_Shove" && BodyStates.MeleeEquip("Knife_Idle") == "EquipKnife";
+        check(badRows.Count == 0 && localNamed, "bodystates: every state number is the CRC-32 of its name and the local player's table names only states of the table (wrong " + string.Join(",", badRows) + ")");
+
+        // A body layer's state and the body's parameters: kept per player and layer, a state told again unchanged is written once, and a jump
+        // forwards or backwards gives the layer the state, start time and weight playing gives it.
+        var bodyStream = new GatedStream();
+        var bodyKept = new KeyframeStates();
+        static byte[] Walk() => new PayloadWriter().Reset().U(2).S(20).S(-4).U(10).S(-5).Span.ToArray();
+        var bodyPipeline = new BlockPipeline(ChunkLog.Create(bodyStream, 1), _ => { }, (p, ms) => { bodyKept.Write(p, ms); if (ms >= 2000) p.Event(ms, EventKind.PlayerMotion, Walk()); }, 0, blockMs: 1000, keyframeMs: 5000);
+        void Layer(uint ms, int slot, int layer, int state, long start, int weight)
+        {
+            var key = BodyStates.Key(slot, layer);
+            var bytes = new PayloadWriter().Reset().U(key).S(state).S(start).U(BodyStates.FadeMs).U((ulong)weight).Span.ToArray();
+            if (bodyKept.Holds(EventKind.PlayerAnimLayer, key, bytes)) return;
+            bodyPipeline.Event(ms, EventKind.PlayerAnimLayer, bytes); bodyKept.Set(EventKind.PlayerAnimLayer, key, bytes);
+        }
+        var walking = BodyStates.FullBodyState(BodyStates.RifleFamily, 0); var bringUp = BodyStates.EquipState(1);
+        for (uint ms = 0; ms < 12000; ms += 33)
+        {
+            Layer(ms, 2, BodyStates.FullBody, walking, -400, BodyStates.FullWeight);
+            if (ms == 0) { Layer(ms, 2, BodyStates.UpperBody, BodyStates.UpperRest, 0, 0); Layer(ms, 3, BodyStates.FullBody, BodyStates.Dead, 0, BodyStates.FullWeight); }
+            if (ms >= 2000 && ms - 2000 < 33)
+            {
+                Layer(ms, 2, BodyStates.UpperBody, bringUp, 2000, BodyStates.FullWeight);
+                bodyPipeline.Event(ms, EventKind.PlayerMotion, Walk());
+            }
+            if (ms >= 7000 && ms - 7000 < 33) Layer(ms, 2, BodyStates.UpperBody, BodyStates.UpperRest, 7000, 0);
+            if (ms % 1000 < 33) bodyPipeline.WaitForWriter();
+            bodyPipeline.Tick(ms);
+        }
+        bodyPipeline.Finish(12000);
+        var bodyBytes = bodyStream.ToArray();
+        var bodyReader = ChunkLog.Open(new MemoryStream(bodyBytes), 1);
+        var bodyDecoder = new SampleDecoder(); var walkTold = 0;
+        foreach (var chunk in bodyReader.Chunks)
+            bodyDecoder.Decode(bodyReader.Read(chunk), chunk.RawLength, chunk.StartMs, chunk.Type == DataChunks.Keyframe, r =>
+            {
+                if (r.Kind == RecordKind.Event && r.EventType == EventKind.PlayerAnimLayer && new PayloadReader(r.Payload!).U() == BodyStates.Key(2, BodyStates.FullBody)) walkTold++;
+            });
+        var bodyLine = new Timeline(ChunkLog.Open(new MemoryStream(bodyBytes), 1));
+        string Body(Timeline t) => string.Join(" ", new[] { (2, BodyStates.FullBody), (2, BodyStates.UpperBody), (3, BodyStates.FullBody), (3, BodyStates.UpperBody) }
+            .Select(at => ReplayExtras.AnimLayer(t.State, at.Item1, at.Item2, out var l) ? BodyStates.Name(l.State) + "@" + l.StartMs + "/" + l.FadeMs + "*" + l.Weight : "-"))
+            + " " + t.State.PlayerForward[2] + " " + t.State.PlayerRight[2] + " " + t.State.PlayerCrouch[2] + " " + t.State.PlayerAimPitch[2];
+        var bodyOk = true; var bodySeen = new List<string>();
+        foreach (var at in new uint[] { 3000, 9000, 1000, 6500, 11500, 2500 })
+        {
+            bodyLine.Seek(at);
+            var fresh = new Timeline(ChunkLog.Open(new MemoryStream(bodyBytes), 1));
+            for (uint ms = 100; ms <= at; ms += 100) fresh.Advance(ms, _ => { });
+            bodyOk &= Body(bodyLine) == Body(fresh);
+            bodySeen.Add(Body(bodyLine));
+        }
+        check(bodyOk && walkTold == bodyReader.Chunks.Count(c => c.Type == DataChunks.Keyframe)
+            && bodySeen[0] == "Rifle_Movement@-400/100*10 EquipPrimary@2000/100*10 Dead@0/100*10 - 1 -0.2 0.5 -0.25"
+            && bodySeen[1] == "Rifle_Movement@-400/100*10 Spear_Idle@7000/100*0 Dead@0/100*10 - 1 -0.2 0.5 -0.25"
+            && bodySeen[2] == "Rifle_Movement@-400/100*10 Spear_Idle@0/100*0 Dead@0/100*10 - 0 0 0 0",
+            "body layers: a state told every frame is written once per keyframe, each player and layer keeps its own, and a jump gives the state, start, fade, weight and the body's parameters playing gives (" + walkTold + " | " + string.Join(" | ", bodySeen.Take(3)) + ")");
 
         // What the libraries showed: the layouts of events 94 to 97 survive a write and a read, and the name table is a state kept in every keyframe.
         var shownWriter = new PayloadWriter();
@@ -321,15 +382,23 @@ internal static class RecordingChecks
             "shown poses: a clip start with its mask weights and its stop come back as written, bodies and tracks have their own keys, and a stop retires the kept state");
         // A model and the renderers hidden under a thing: each a whole state kept per key (a model and a hidden list never share one), a world-rooted hide carries its place, an end retires the state.
         var modelKey = ShownCodec.ModelKey(900, false);
-        var modelBytes = ShownCodec.Write(shownWriter.Reset(), new ShownModelRecord(modelKey, ShownCodec.ModelPresent, 6, 1, 2, "a/b", 1.5f, 2f, -3f, 0f, 0.7071f, 0f, 0.7071f, 1f, 2f, 1f)).Span.ToArray();
+        var modelBytes = ShownCodec.Write(shownWriter.Reset(), new ShownModelRecord(modelKey, ShownCodec.ModelPresent, 6, 1, 2, "a/b", 1.5f, 2f, -3f, 0f, 0.7071f, 0f, 0.7071f, 1f, 2f, 1f, Follows: 2)).Span.ToArray();
         var modelBack = ShownCodec.ReadModel(new PayloadReader(modelBytes));
         var hideBytes = ShownCodec.Write(shownWriter.Reset(), new ShownModelRecord(ShownCodec.ModelKey(900, true), ShownCodec.ModelHidden, 0, ShownCodec.WorldRoot, 0, "", 4f, 5f, 6f, 0, 0, 0, 1, 1, 1, 1)).Span.ToArray();
         var hideBack = ShownCodec.ReadModel(new PayloadReader(hideBytes));
         var modelEndBytes = ShownCodec.Write(shownWriter.Reset(), ShownCodec.EndedModel(modelKey)).Span.ToArray();
-        check(modelBack.Key == modelKey && modelBack.Name == 6 && modelBack.Anchor == 1 && modelBack.Id == 2 && modelBack.Path == "a/b" && modelBack.Z == -3f && MathF.Abs(modelBack.Qy - 0.7071f) < 0.0001f && modelBack.Sy == 2f
+        check(modelBack.Key == modelKey && modelBack.Name == 6 && modelBack.Anchor == 1 && modelBack.Id == 2 && modelBack.Path == "a/b" && modelBack.Z == -3f && MathF.Abs(modelBack.Qy - 0.7071f) < 0.0001f && modelBack.Sy == 2f && modelBack.Follows == 2
             && hideBack.Phase == ShownCodec.ModelHidden && hideBack.Anchor == ShownCodec.WorldRoot && hideBack.X == 4f && hideBack.Z == 6f && hideBack.Key != modelKey
             && EventKind.IsExtraState(EventKind.ShownModelState) && !EventKind.Ends(EventKind.ShownModelState, modelBytes) && !EventKind.Ends(EventKind.ShownModelState, hideBytes) && EventKind.Ends(EventKind.ShownModelState, modelEndBytes),
-            "shown models: a model's state and a hidden list come back as written, they have their own keys, and an end retires the kept state");
+            "shown models: a model's state (the player whose body it follows included) and a hidden list come back as written, they have their own keys, and an end retires the kept state");
+        var trackedBytes = ShownCodec.Write(shownWriter.Reset(), new TrackedRecord(33, false, 1.5f, -2f, 7f, 0f, 0.7071f, 0f, 0.7071f, 0.5f, 3f, 1f)).Span.ToArray();
+        var trackedBack = ShownCodec.ReadTracked(new PayloadReader(trackedBytes));
+        var ownBytes = ShownCodec.Write(shownWriter.Reset(), new TrackedStateRecord(33, null)).Span.ToArray();
+        var textBack = ShownCodec.ReadTrackedState(new PayloadReader(ShownCodec.Write(shownWriter.Reset(), new TrackedStateRecord(33, "剩余 12 秒")).Span.ToArray()));
+        check(trackedBack.Name == 33 && !trackedBack.Shown && trackedBack.Y == -2f && MathF.Abs(trackedBack.Qw - 0.7071f) < 0.0001f && trackedBack.Sx == 0.5f && trackedBack.Sy == 3f
+            && textBack.Value == "剩余 12 秒" && ShownCodec.ReadTrackedState(new PayloadReader(ownBytes)).Value == null && ownBytes.Length == 2
+            && EventKind.IsExtraState(EventKind.TrackedObject) && EventKind.IsExtraState(EventKind.TrackedState) && !EventKind.Ends(EventKind.TrackedObject, trackedBytes),
+            "declared objects: a pose, scale and shown flag, an owner's text and the owner's own state come back as written, both kept per key");
         // Timeline: a jump restores the same world as playing up to that moment, from the nearest keyframe block.
         var tStream = new GatedStream();
         var tErrors = new List<string>();
@@ -391,7 +460,8 @@ internal static class RecordingChecks
         // it has read, or from a timeline that read the whole recording (the analysis' one, adopted). Both, and the cache of decoded blocks (30 blocks, 20 held)
         // across jumps forwards and backwards, must give the world playing from the start gives.
         var lStream = new GatedStream(); var lErrors = new List<string>();
-        static byte[] Item(uint id) => new PayloadWriter().Reset().U(id).Pos(1, 2, 3).U(2).Span.ToArray();
+        // Item 70 is an opening-census entry (key 900, lying in the level when the recording opened), item 71 one spawned during the level.
+        static byte[] Item(uint id) => new PayloadWriter().Reset().U(id).Pos(1, 2, 3).U(2).U(id == 70 ? 900UL : 0UL).U(id == 70 ? 1UL : 0UL).Span.ToArray();
         var lPipeline = new BlockPipeline(ChunkLog.Create(lStream, 1), lErrors.Add, (p, ms) =>
         {
             var (x, y, z) = Path(0, ms);
@@ -418,6 +488,7 @@ internal static class RecordingChecks
         var whole = new Timeline(ChunkLog.Open(new MemoryStream(lBytes), 1));
         whole.Seek(0); whole.Advance(whole.DurationMs, _ => { });
         adopted.AdoptLasting(whole);
+        check(whole.State.ItemSpawns.Count == 2 && whole.State.ItemSpawns[0] is { Key: 900, AtOpen: true, Mode: 2 } && whole.State.ItemSpawns[1] is { Key: 0, AtOpen: false }, "timeline: an item spawn reads back its pickup key and whether it was in the level at the opening");
         var lasting = true; var held = 0;
         foreach (var at in new uint[] { 29500, 1000, 17000, 3500, 29500, 2500, 22000, 5000, 9500, 3500, 25500, 8000 })
         {
@@ -765,18 +836,17 @@ internal static class RecordingChecks
             foreach (var margin in new[] { 48f, 120f })
             {
                 var screen = new HudBox(-width / 2f, -720f, width / 2f, 720f);
-                var z = ReplayZones.Of(screen, margin, 204f + margin - 48f, 84f, 12f, 600f, 152f);
-                var height = z.CardHeight(214f, 6f);
-                var boxes = new List<HudBox> { z.Bottom, z.Mission, z.Feed, z.Middle };
-                for (var i = 0; i < 4; i++) boxes.Add(z.Card(i, height, 6f));
+                var z = ReplayZones.Of(screen, margin, 204f + margin - 48f, 44f, 12f, 600f, 440f);
+                var boxes = new List<HudBox> { z.Bottom, z.Mission, z.Tabs, z.Corner, z.Cards, z.Hints, z.Views, z.Middle };
                 for (var a = 0; a < boxes.Count; a++)
                 {
                     var box = boxes[a];
                     zonesOk &= box.Width > 0f && box.Height > 0f && box.Left >= screen.Left + margin && box.Right <= screen.Right - margin && box.Bottom >= screen.Bottom + margin && box.Top <= screen.Top - margin;
                     for (var b = a + 1; b < boxes.Count; b++) zonesOk &= !box.Overlaps(boxes[b]);
                 }
-                zonesOk &= height >= 180f && z.Card(3, height, 6f).Bottom >= z.Cards.Bottom && z.Control.Bottom > z.Bottom.Bottom && z.Control.Top == z.Bottom.Top && z.Panels(z.Work.Top, 12f).Right < z.Cards.Left;
+                var panels = z.Panels(z.Work.Top, 12f);
+                zonesOk &= (z.Cards.Height - 3f * 6f) / 4f >= 180f && panels.Right < z.Cards.Left && panels.Bottom > z.Tabs.Top;
             }
-        check(zonesOk, "screen zones: at every screen shape and margin no zone covers another, the four equal cards fit, and an overlap is caught");
+        check(zonesOk, "screen zones: at every screen shape and margin no zone covers another, four whole cards fit, the panels stand above their tabs, and an overlap is caught");
     }
 }

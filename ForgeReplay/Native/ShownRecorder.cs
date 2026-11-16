@@ -10,7 +10,7 @@ namespace ForgeReplay;
 /// Records what the libraries draw and play (ForgeCore <see cref="Recording"/>: ForgeVisual's effects, lines, held effects, beams, trails, decals and models,
 /// ForgeAudio's sounds) from any mod, without that mod knowing: one observer for the length of a recording. A name travels once as a table entry (event 94,
 /// a state kept in every keyframe) and afterwards as its number; a held thing (a held effect, a beam, a trail) writes only when its quantised pose or look
-/// changed and a release when nobody tells it any more; a model is a state kept in every keyframe (event 99: its name, anchor, pose and scale, rewritten when the quantised pose changes, ended when it is destroyed), and so are the renderers a library hid under a thing, so a jump can build them again. Layouts are in DEVELOPERS.md.
+/// changed and a release when nobody tells it any more; a model is a state kept in every keyframe (event 99: its name, anchor, pose and scale and the player whose body it follows, rewritten when the quantised pose or that player changes, ended when it is destroyed), and so are the renderers a library hid under a thing, so a jump can build them again. Layouts are in DEVELOPERS.md.
 /// While no recording runs nothing observes, so the libraries' report sites cost one field read. Main thread only.
 /// </summary>
 internal sealed class ShownRecorder : IShownObserver
@@ -57,6 +57,104 @@ internal sealed class ShownRecorder : IShownObserver
         _subscription?.Dispose(); _subscription = null;
         _notes?.Dispose(); _notes = null;
         Array.Clear(_named); Looks.Clear(); HeldNow.Clear(); Loops.Clear(); Models.Clear(); Tokens.Clear(); _nextToken = 0;
+        DeclaredByName.Clear(); Declared.Clear(); Hot.Clear(); States.Clear(); _sweep = 0;
+    }
+
+    // ---- declared world objects (ForgeCore Recording.Track and State) --------------------------------------------------------------
+
+    // A declared object: its transform read once when it is declared (an object keeps its transform for its whole life), and the quantised pose,
+    // scale and shown flag last seen ([10]). Read first when it is declared, so only what changes after that is written: an object the level
+    // builds the same way in a replay needs nothing in the recording while nobody touches it.
+    private sealed class DeclaredObject
+    {
+        internal int Name;
+        internal GameObject Body = null!;
+        internal Transform Place = null!;
+        internal int HotUntil;
+        internal readonly long[] Last = new long[11];
+    }
+
+    // How many declared objects a frame looks at in turn, and how long one that moved stays looked at every few frames.
+    private const int SweepPerFrame = 32, StillFrames = 60;
+    private static readonly Dictionary<int, DeclaredObject> DeclaredByName = new();
+    private static readonly List<DeclaredObject> Declared = new();
+    private static readonly List<DeclaredObject> Hot = new();
+    private static readonly Dictionary<int, string?> States = new();
+    private static int _sweep;
+
+    public void Tracked(int name, GameObject? body)
+    {
+        if (DeclaredByName.Remove(name, out var was)) { Declared.Remove(was); Hot.Remove(was); }
+        if (body == null || body.WasCollected) return;
+        var declared = new DeclaredObject { Name = name, Body = body, Place = body.transform };
+        Look(declared, false);
+        DeclaredByName[name] = declared;
+        Declared.Add(declared);
+    }
+
+    // 115 TrackedState: the owner's own state of a declared object, a kept state per key; an unchanged value writes nothing.
+    public void StateChanged(int name, string? value)
+    {
+        if (!Rec.On) return;
+        if (States.TryGetValue(name, out var had) && had == value) return;
+        States[name] = value;
+        try
+        {
+            var id = (int)NameId(name);
+            ShownCodec.Write(Rec.Begin(), new TrackedStateRecord(id, value));
+            Rec.EmitState(EventKind.TrackedState, (ulong)id);
+        }
+        catch (Exception error) { Rec.Fail("tracked-state", error); }
+    }
+
+    // Per frame: a few declared objects in turn, and every few frames the ones that moved lately (a moving door, a turning sign), so a moving
+    // object is written at the models' rate and a still one costs one look in a while.
+    private static void SweepDeclared(int frame)
+    {
+        var count = Declared.Count;
+        for (var i = 0; i < Math.Min(SweepPerFrame, count) && count > 0; i++)
+        {
+            _sweep = (_sweep + 1) % count;
+            var d = Declared[_sweep];
+            if (d.HotUntil > frame) continue;
+            if (!Check(d, frame)) { count = Declared.Count; continue; }
+            if (d.HotUntil > frame) Hot.Add(d);
+        }
+        if (Hot.Count == 0 || frame % MoveEveryFrames != 0) return;
+        for (var i = Hot.Count - 1; i >= 0; i--)
+        {
+            var d = Hot[i];
+            if (!Check(d, frame) || d.HotUntil <= frame) Hot.RemoveAt(i);
+        }
+    }
+
+    // False when the object is gone (it is forgotten; its last written state stays in the recording).
+    private static bool Check(DeclaredObject d, int frame)
+    {
+        if (d.Body == null || d.Body.WasCollected)
+        {
+            DeclaredByName.Remove(d.Name); Declared.Remove(d);
+            return false;
+        }
+        if (Look(d, true)) d.HotUntil = frame + StillFrames;
+        return true;
+    }
+
+    // 114 TrackedObject: shown, world pose and scale of a declared object, a kept state per key, written when the quantised values changed.
+    private static bool Look(DeclaredObject d, bool write)
+    {
+        var moved = Moved(d.Place, false, d.Last, out var p, out var q, out var s);
+        var shown = d.Body.activeSelf ? 1L : 0L;
+        if (d.Last[10] != shown) { d.Last[10] = shown; moved = true; }
+        if (!moved || !write) return moved;
+        try
+        {
+            var id = (int)NameId(d.Name);
+            ShownCodec.Write(Rec.Begin(), new TrackedRecord(id, shown == 1, p.x, p.y, p.z, q.x, q.y, q.z, q.w, s.x, s.y, s.z));
+            Rec.EmitState(EventKind.TrackedObject, (ulong)id);
+        }
+        catch (Exception error) { Rec.Fail("tracked-object", error); }
+        return true;
     }
 
     /// <summary>Per frame: releases what nobody has told for a few frames, and notes models the game destroyed.</summary>
@@ -64,6 +162,7 @@ internal sealed class ShownRecorder : IShownObserver
     {
         if (_subscription == null || !Rec.On) return;
         var frame = Time.frameCount;
+        if (Declared.Count > 0) SweepDeclared(frame);
         if (HeldNow.Count > 0)
         {
             foreach (var (key, held) in HeldNow) if (frame - held.Frame >= StaleFrames) Stale.Add(key);
@@ -88,21 +187,27 @@ internal sealed class ShownRecorder : IShownObserver
     // quantised pose or scale changed since (a pod falling, a frame following its pilot, a turret turning), so a model at rest writes nothing more.
     private static void WriteState(TrackedModel tracked)
     {
-        var t = tracked.Place;
         var local = tracked.Anchor is 1 or 2;
-        var p = local ? t.localPosition : t.position;
-        var q = local ? t.localRotation : t.rotation;
-        var s = t.localScale;
-        var last = tracked.Last;
-        var changed = !tracked.Written;
+        var changed = Moved(tracked.Place, local, tracked.Last, out var p, out var q, out var s) || !tracked.Written;
+        if (!changed) return;
+        tracked.Written = true;
+        ShownCodec.Write(Rec.Begin(), new ShownModelRecord(tracked.Key, ShownCodec.ModelPresent, tracked.Name, tracked.Anchor, tracked.Id, tracked.Path, p.x, p.y, p.z, q.x, q.y, q.z, q.w, s.x, s.y, s.z, tracked.Follows));
+        Rec.EmitState(EventKind.ShownModelState, tracked.Key);
+    }
+
+    // The pose and scale of a transform, quantised (centimetres, thousandths of a quaternion, hundredths of a scale) into last[0..9]; true when any changed.
+    // The one place a followed transform is read, for the models a library made and the objects a mod declared alike.
+    private static bool Moved(Transform t, bool local, long[] last, out Vector3 p, out Quaternion q, out Vector3 s)
+    {
+        p = local ? t.localPosition : t.position;
+        q = local ? t.localRotation : t.rotation;
+        s = t.localScale;
+        var changed = false;
         void Put(int i, long v) { if (last[i] != v) { last[i] = v; changed = true; } }
         Put(0, Q(p.x)); Put(1, Q(p.y)); Put(2, Q(p.z));
         Put(3, (long)MathF.Round(q.x * 1000f)); Put(4, (long)MathF.Round(q.y * 1000f)); Put(5, (long)MathF.Round(q.z * 1000f)); Put(6, (long)MathF.Round(q.w * 1000f));
         Put(7, (long)MathF.Round(s.x * 100f)); Put(8, (long)MathF.Round(s.y * 100f)); Put(9, (long)MathF.Round(s.z * 100f));
-        if (!changed) return;
-        tracked.Written = true;
-        ShownCodec.Write(Rec.Begin(), new ShownModelRecord(tracked.Key, ShownCodec.ModelPresent, tracked.Name, tracked.Anchor, tracked.Id, tracked.Path, p.x, p.y, p.z, q.x, q.y, q.z, q.w, s.x, s.y, s.z));
-        Rec.EmitState(EventKind.ShownModelState, tracked.Key);
+        return changed;
     }
 
     private static void WriteEnd(ulong key)
@@ -120,6 +225,8 @@ internal sealed class ShownRecorder : IShownObserver
         internal int Name, Id;
         internal byte Anchor;
         internal string Path = "";
+        // The player slot whose body the model follows (ForgeCore ShownModelKind.Follows), -1 none.
+        internal int Follows = -1;
         internal bool Written;
         internal readonly long[] Last = new long[10];
     }
@@ -254,6 +361,22 @@ internal sealed class ShownRecorder : IShownObserver
                     Rec.EmitState(EventKind.ShownModelState, ShownCodec.ModelKey((ulong)token, true));
                     break;
                 }
+            case ShownModelKind.Follows:
+                {
+                    // Only a model this recording follows (one a library made) and a player's body: the state says whose pose it copies now.
+                    if (m.Token is not Transform root) return;
+                    var slot = m.On != null && Resolve(m.On, out var id, out _) == 1 ? id : -1;
+                    foreach (var tracked in Models)
+                    {
+                        if (tracked.Model == null || tracked.Model.WasCollected || tracked.Place.Pointer != root.Pointer) continue;
+                        if (tracked.Follows == slot) return;
+                        tracked.Follows = slot;
+                        tracked.Written = false;
+                        WriteState(tracked);
+                        return;
+                    }
+                    break;
+                }
             case ShownModelKind.Shown:
                 for (var i = 0; i < Tokens.Count; i++)
                 {
@@ -313,7 +436,7 @@ internal sealed class ShownRecorder : IShownObserver
         if (a.Kind == AnchorKind.Player && a.Player != null && (uint)a.Player.PlayerSlotIndex < 4)
         {
             var found = a.Node == null ? "" : PathUnder(a.Node, a.Player.transform);
-            if (found == null && a.Player.AnimatorBody != null) found = "~" + PathUnder(a.Node!, a.Player.AnimatorBody.transform);
+            if (found == null && a.Player.AnimatorBody != null && PathUnder(a.Node!, a.Player.AnimatorBody.transform) is { } underBody) found = "~" + underBody;
             if (found != null) { id = a.Player.PlayerSlotIndex; path = found; return 1; }
         }
         else if (a.Kind == AnchorKind.Enemy && a.Enemy != null && EnemyRecorder.Entity(a.Enemy) is var entity && entity >= 0)

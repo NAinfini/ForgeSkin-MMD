@@ -83,8 +83,6 @@ internal static class SupplyHold
 /// <summary>A pickup the game places in the level on a peer: when it lies in a bay of a pod whose doors are still shut, it is held.</summary>
 internal static class SupplyHoldPatch
 {
-    internal static void Subscribe() => ForgeCore.GameHooks.PickupItemState.After((call, _) => Changed(call.Item, call.New, call.Recall));
-
     internal static void Changed(LG_PickupItem_Sync item, pPickupItemState newState, bool isRecall)
     {
         try

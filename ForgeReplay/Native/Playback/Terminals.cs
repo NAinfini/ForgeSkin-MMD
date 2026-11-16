@@ -62,7 +62,9 @@ internal static class Terminals
                     var line = ReplayExtras.Printed(r.Payload!);
                     // A line printed after typing: the typed line was sent (the game empties it as it runs the command, which is not run here).
                     if (Shown.TryGetValue(key, out var before) && before.Typed.Length > 0) WorldStates.TerminalTyping(terminal, "", false);
-                    WorldStates.TerminalPrint(terminal, line.Type == 255 ? null : (TerminalLineType)line.Type, line.Text, line.WaitS);
+                    var tab = line.Type is 253 or 254 ? line.Text.IndexOf('\t') : -1;
+                    if (tab >= 0) WorldStates.TerminalPrint(terminal, line.Text.Substring(0, tab), line.Text.Substring(tab + 1), line.Type == 254);
+                    else WorldStates.TerminalPrint(terminal, line.Type == 255 ? null : (TerminalLineType)line.Type, line.Text, line.WaitS);
                     Shown[key] = (analysis.TerminalScreenAt(key, r.TimeMs, 0, null, out var typed), typed);
                     return;
                 }
@@ -121,7 +123,7 @@ internal static class Terminals
     {
         var seen = state | user << 8;
         if (StateShown.TryGetValue(key, out var had) && had == seen) return;
-        var agent = user is >= 1 and <= 4 ? Puppeteer.PlayerOf((int)user - 1)?.Agent : null;
+        Player.PlayerAgent? agent = null; // a recorded player is a stand-in, with no agent for the terminal to name
         if (!sound) GameVoices.Catch(Caught);
         try
         {

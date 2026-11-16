@@ -20,9 +20,14 @@ internal enum DeployableKind : byte
 }
 
 /// <summary>Validated parameters of one standing device. Fields a kind does not use keep their default and are rejected in the file.</summary>
-internal sealed class DeployableSpec
+internal sealed class DeployableSpec : IOrdnanceDescribed
 {
     public const string TypeName = "arsenal.Deployable";
+
+    /// <summary>A description's numbers (DEVELOPERS.md, "Description numbers"): {0} Lifetime, {1} Rounds, {2} Count, {3} MinRange, {4} MaxRange,
+    /// {5} Damage, {6} BlastRadius, {7} TriggerRadius, {8} Range, {9} Scan, {10} LightRadius, {11} FogRadius. A field the kind does not use reads 0.</summary>
+    public IReadOnlyList<double> DescriptionValues =>
+        new double[] { Lifetime, Rounds, Count, MinRange, MaxRange, Damage, BlastRadius, TriggerRadius, Range, Scan, LightRadius, FogRadius };
     /// <summary>The most munitions one dispenser lays in all (what fits one field record, <see cref="MineWire"/>).</summary>
     public const int MaxMines = 36;
     /// <summary>Seconds a dispenser's column stands still after its spin, before the plates shut.</summary>

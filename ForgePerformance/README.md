@@ -13,7 +13,7 @@ The defaults aim at the highest frame rate and accept some visual loss.
 | Corpses and bodies | Dead enemies cast no shadow, disappear sooner and stop blocking shots once hidden; old ragdolls stop moving; broken debris settles. | `CorpseShadows`, `FastCorpseHide`, `CorpseLifetime`, `RagdollCap`, `RagdollLimit`, `CorpseRecycle`, `CorpseRecycleSeconds`, `DecayCleanup`, `DebrisFreeze` |
 | Air, wind and plants | Ambient dust is off or thinner; only nearby wind effects move plants. | `AmbientDustOff`, `AmbientParticles`, `ParticleFactor`, `ParticleHz`, `WindNearest`, `WindLimit`, `WindCapacityProtection`, `GardenShadows` |
 | Decoration | Far or off-screen decoration, its shadows, lights and animation are reduced. | `DecorationShadows`, `DecorationCulling`, `CullDistance`, `DecorationLights`, `LightLimit`, `DecorationAnimation`, `IrfWorldCameraOnly`, `IrfOffscreenSkip` |
-| Effects and screen | Shorter or fewer decals, no soft-particle edges, no visor liquids, fewer shell casings, no interface mirror. | `CombatDecals`, `DecalLimit`, `DecalLifetime`, `SoftParticlesOff`, `VisorLiquidOff`, `ShellEjection`, `ShellLimit`, `GuiMirrorOff`, `LowQualitySpitter` |
+| Effects and screen | Shorter or fewer decals, no soft-particle edges, no visor liquids, fewer shell casings, magazines dropped on reload disappear after 3 seconds, used fog repellers disappear from the floor, no interface mirror. | `CombatDecals`, `DecalLimit`, `DecalLifetime`, `SoftParticlesOff`, `VisorLiquidOff`, `ShellEjection`, `ShellLimit`, `DroppedMagazineCleanup`, `DroppedMagazineSeconds`, `SpentFogRepellerCleanup`, `GuiMirrorOff`, `LowQualitySpitter` |
 | Distance and cleanup | Shorter shadow distance, texture streaming off where it is unused, and what the game forgets is cleaned up at the end of a level. | `ShadowDistance`, `ShadowDistanceFactor`, `TextureStreamingOff`, `LeakCleanup`, `GlueSoundRecycle`, `StackTraceTrim` |
 | Doors | Behind a closed door, draw only the first rooms instead of every room the door leads on to. | `ClosedDoorDepthLimit`, `ClosedDoorDepth` |
 | Multiplayer | One option shares a single melee hit message for all of your melee weapons and keeps the message numbers the same as the unmodded game. | `MeleePacketReuse` (off) |
@@ -24,7 +24,11 @@ Three defaults change play. Set them to `false` for the vanilla behaviour:
 - `CorpseRecycle`: the game's own corpse timer is shortened, so a body is despawned sooner and stops blocking bullets sooner.
 - `ClosedDoorDepthLimit`: behind a closed door only the first `ClosedDoorDepth` rooms are drawn (2 by default). Through a door gap or window, a farther room may be empty, including enemies you could otherwise spot. Rooms you can see another way, and damaged or destroyed doors, are drawn as usual.
 
-`FastCorpseHide`, `CorpseRecycle` and `ClosedDoorDepthLimit` run on each machine. Players with different settings can see a body or a far room differently. `MeleePacketReuse` is off by default; leave it off until it has been tested in multiplayer.
+`FastCorpseHide`, `CorpseRecycle`, `ClosedDoorDepthLimit`, `DroppedMagazineCleanup` and `SpentFogRepellerCleanup` run on each machine. Players with different settings can see a body or a far room differently. `MeleePacketReuse` is off by default; leave it off until it has been tested in multiplayer.
+
+`DroppedMagazineCleanup` (on) is a visible change: a magazine that falls from a gun on reload disappears `DroppedMagazineSeconds` (3 by default) after it drops, also for magazines other players drop. Reloading, ammunition and sound are unchanged. Set it to `false` and the game keeps up to five dropped magazines per gun on the floor as usual.
+
+`SpentFogRepellerCleanup` (on) is a visible change: a thrown fog repeller that has stopped repelling fog disappears from the floor on your screen as soon as its effect ends. It is never hidden while it still repels fog, and the large carried fog repeller is untouched. Only the drawing on your machine changes: the item stays in the game with its collision, nothing is sent, and other players see it as their own setting says. Used glow sticks already disappear in the game when their light goes out, so there is no switch for them.
 
 `RagdollNodeRefresh` (on) fixes a vanilla bug where a corpse thrown across a room boundary can disappear.
 

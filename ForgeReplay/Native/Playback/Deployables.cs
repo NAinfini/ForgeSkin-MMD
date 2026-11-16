@@ -311,7 +311,7 @@ internal static class Deployables
     // The tool line of the owner at this moment, else any sentry anyone ever carried (a sentry stays after its owner changed tools).
     private static string? SentryLine(int owner, uint nowMs)
     {
-        if (owner >= 0 && IsSentry(Puppeteer.LoadoutOf(owner), out var line)) return line;
+        if (owner >= 0 && IsSentry(Recorded.LoadoutOf(owner), out var line)) return line;
         var header = Replayer.Pending?.Header;
         var presence = Replayer.Report?.Presence;
         if (presence != null)
@@ -334,14 +334,13 @@ internal static class Deployables
     {
         line = "";
         var lines = loadout.Split('\n');
-        if (lines.Length <= Puppeteer.ToolLine) return false;
-        line = lines[Puppeteer.ToolLine].Trim();
+        if (lines.Length <= Recorded.ToolLine) return false;
+        line = lines[Recorded.ToolLine].Trim();
         return line.Length > 0 && new GearIDRange(line).GetCompID(eGearComponent.BaseItem) == SentryBaseItem;
     }
 
     private static PlayerAgent? OwnerAgent(int slot)
     {
-        if (slot >= 0 && Puppeteer.PlayerOf(slot)?.Agent is { } puppet && ForgeCore.Gear.SentryAmmoReady(puppet)) return puppet;
         foreach (var agent in PlayerManager.PlayerAgentsInLevel)
             if (agent != null && ForgeCore.Gear.SentryAmmoReady(agent)) return agent;
         return null;
@@ -360,7 +359,7 @@ internal static class Deployables
                 if (Dimension.TryGetCourseNodeFromPos(at + direction * distance, out node) && node != null) return node;
                 if (Dimension.TryGetCourseNodeFromPos(at - direction * distance, out node) && node != null) return node;
             }
-        return (owner >= 0 ? Puppeteer.PlayerOf(owner)?.Agent?.CourseNode : null) ?? Players.Local?.CourseNode;
+        return Players.Local?.CourseNode;
     }
 
     private static void KeepMine(Piece piece, float now)
@@ -608,7 +607,7 @@ internal static class Deployables
     }
 
     private static PlayerAgent? OwnerAgentOrAny(int slot)
-        => (slot >= 0 ? Puppeteer.PlayerOf(slot)?.Agent : null) ?? Players.Local;
+        => Players.Local;
 
     /// <summary>Forgets everything; the level cleanup that follows a replay destroys the objects.</summary>
     internal static void Clear()

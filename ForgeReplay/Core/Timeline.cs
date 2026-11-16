@@ -5,8 +5,9 @@ using ForgeCore;
 namespace ForgeReplay;
 
 /// <summary>One recorded ItemSpawn: when, which item (<c>ItemDataBlock</c> id or gear checksum, as the game spawned it), where, and the game's
-/// <c>ItemMode</c> number it was spawned in.</summary>
-internal readonly record struct ItemSpawned(uint TimeMs, uint ItemId, float X, float Y, float Z, uint Mode)
+/// <c>ItemMode</c> number it was spawned in; then the recorder's key of the pickup (0: not a pickup) and whether the item was already lying in the
+/// level when the recording opened (the opening census: built with the level, not spawned during it).</summary>
+internal readonly record struct ItemSpawned(uint TimeMs, uint ItemId, float X, float Y, float Z, uint Mode, ulong Key, bool AtOpen)
 {
     /// <summary>The game's <c>ItemMode.Pickup</c>: an item lying in the level. The other modes (in hand, a placed deployable) are shown by the
     /// player's and the deployable's own events, never as a pickup on the ground.</summary>
@@ -41,6 +42,8 @@ internal sealed class WorldState
     internal readonly PlayerKit[] PlayerKits = new PlayerKit[4];
     /// <summary>Each player's walk animation values as last recorded (the game's <c>m_animVelFwd</c> and <c>m_animVelRight</c>).</summary>
     internal readonly float[] PlayerForward = new float[4], PlayerRight = new float[4];
+    /// <summary>Each player's crouch (0 standing to 1 crouched) and aim pitch (the body's <c>AimDownUp</c>) as last recorded, the other two numbers of the same event.</summary>
+    internal readonly float[] PlayerCrouch = new float[4], PlayerAimPitch = new float[4];
     /// <summary>The step those values are recorded in.</summary>
     internal const float MotionStep = 0.05f;
     /// <summary>The enemy's locomotion state (ES_StateEnum) as last recorded; 0 when none has been recorded.</summary>
@@ -56,7 +59,7 @@ internal sealed class WorldState
     internal void Clear()
     {
         Array.Clear(ShownOn);
-        Array.Clear(Poses); Enemies.Clear(); Objects.Clear(); Extras.Clear(); Array.Clear(PlayerStatus); Array.Clear(PlayerKits); Array.Clear(PlayerForward); Array.Clear(PlayerRight); Array.Clear(EnemyLocomotion); Array.Clear(LimbsGone); ItemSpawns.Clear();
+        Array.Clear(Poses); Enemies.Clear(); Objects.Clear(); Extras.Clear(); Array.Clear(PlayerStatus); Array.Clear(PlayerKits); Array.Clear(PlayerForward); Array.Clear(PlayerRight); Array.Clear(PlayerCrouch); Array.Clear(PlayerAimPitch); Array.Clear(EnemyLocomotion); Array.Clear(LimbsGone); ItemSpawns.Clear();
     }
 
     /// <summary>The bit of <paramref name="limb"/> in <see cref="LimbsGone"/>; 0 for a limb id above <see cref="MaxLimbId"/>.</summary>
@@ -411,7 +414,9 @@ internal sealed class Timeline
                     var read = PayloadReader.Over(payload);
                     var item = (uint)read.U();
                     var (x, y, z) = read.Pos();
-                    State.ItemSpawns.Add(new ItemSpawned(r.TimeMs, item, x, y, z, (uint)read.U()));
+                    var mode = (uint)read.U();
+                    var key = read.U();
+                    State.ItemSpawns.Add(new ItemSpawned(r.TimeMs, item, x, y, z, mode, key, read.U() == 1));
                     onEvent?.Invoke(r);
                     return;
                 }
@@ -441,6 +446,8 @@ internal sealed class Timeline
                     var slot = (int)read.U() & 3;
                     State.PlayerForward[slot] = read.S() * WorldState.MotionStep;
                     State.PlayerRight[slot] = read.S() * WorldState.MotionStep;
+                    State.PlayerCrouch[slot] = read.U() * WorldState.MotionStep;
+                    State.PlayerAimPitch[slot] = read.S() * WorldState.MotionStep;
                     return;
                 }
             case EventKind.Presence:

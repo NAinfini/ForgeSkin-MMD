@@ -88,9 +88,7 @@ internal sealed class PlasmaCharge
     public bool Charging => _started.HasValue;
     public bool Ready(double now, in WeaponNumbers tuning) => _started is { } start && double.IsFinite(now)
         && now - start + 1e-7 >= tuning.MinimumCharge;
-    public float Power(double now, in WeaponNumbers tuning) => _started is { } start
-        ? (float)Math.Clamp((now - start - tuning.MinimumCharge)
-            / (tuning.FullCharge - tuning.MinimumCharge), 0d, 1d) : 0f;
+    public float Power(double now, in WeaponNumbers tuning) => _started is { } start ? tuning.ChargePower(now - start) : 0f;
 
     public bool Update(double now, bool held, bool pressed, bool allowed, in WeaponNumbers tuning, out float power)
     {

@@ -329,12 +329,12 @@ internal static class Dispenser
 
     private static int Number(string name) => int.TryParse(name.Substring("mount".Length), out var n) ? n : 0;
 
-    /// <summary>The part a dispenser model lacks, or null.</summary>
-    internal static string? MissingPart(GameObject model)
+    /// <summary>The part a dispenser model lacks, or null: a node whose name starts with it (<see cref="Articulation.Named"/>), read from the
+    /// bundle's name table where it lists one, so checking a definition loads no prefab.</summary>
+    internal static string? MissingPart(ModelHandle model)
     {
-        var art = new Articulation(model);
         foreach (var part in new[] { "column", "plate", "mount" })
-            if (art.Named(part).Count == 0) return part;
+            if (!model.HasNode(path => path.Substring(path.LastIndexOf('/') + 1).StartsWith(part, StringComparison.Ordinal))) return part;
         return null;
     }
 

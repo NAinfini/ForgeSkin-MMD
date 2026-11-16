@@ -69,25 +69,28 @@ internal static class Deliveries
 
     private static DeliveryKey KeyOf(Delivery d) => new(d.Thrower, d.ThrowId, d is DropPod ? DeliveryKey.Pod : DeliveryKey.Shell);
 
-    /// <summary>Host: the row of a pod or shell as it stands now.</summary>
-    private static void WriteRow(Delivery d)
+    /// <summary>Host: the row of a pod or shell as it stands now. <paramref name="refresh"/>: only for a player who joined (a peer
+    /// that has built the delivery reads no times from its row).</summary>
+    private static void WriteRow(Delivery d, bool refresh = false)
     {
         var now = Time.time;
         var pod = d as DropPod;
-        OrdnanceNetwork.DeliveryRows.Set(KeyOf(d), new DeliveryRow
+        var key = KeyOf(d);
+        var row = new DeliveryRow
         {
             Landing = new Vec3(d.LandingPoint.x, d.LandingPoint.y, d.LandingPoint.z),
             Yaw = d.Yaw,
             Elapsed = now - d.StartTime,
             SinceEmptied = pod?.SinceEmptied(now) ?? ((TurretShell)d).SinceRecalled(now),
             DefinitionKey = pod?.DefinitionKey ?? ((TurretShell)d).DefinitionKey
-        });
+        };
+        if (!refresh || !OrdnanceNetwork.DeliveryRows.Refresh(key, row)) OrdnanceNetwork.DeliveryRows.Set(key, row);
     }
 
-    /// <summary>Host: every row again with its times as they are now (a player joined).</summary>
-    internal static void WriteRows()
+    /// <summary>Host: every row with its times as they are now, for the player who joined.</summary>
+    internal static void RefreshRows()
     {
-        foreach (var d in Active) WriteRow(d);
+        foreach (var d in Active) WriteRow(d, refresh: true);
     }
 
     /// <summary>Every peer: the host's row of a pod or shell. A peer that has not built it (it was not in the level when it arrived)
@@ -470,6 +473,7 @@ internal sealed class DropPod : Delivery
     {
         Handle = new OrdnancePod(this);
         DefinitionKey = definition.Key;
+        OrdnanceAssets.Load(); // already loaded when the level's picks listed a call-in; a call-in none listed loads it now
         var hasPayload = OrdnanceApi.TryGetPayload(definition.PayloadType, out var payload);
         _appearance = (hasPayload ? payload.GetPodAppearance(definition) : null) ?? OrdnanceAssets.PodAppearance;
         if (_appearance == null) return;
@@ -607,6 +611,7 @@ internal sealed class TurretShell : Delivery
     {
         Handle = new OrdnanceShell(this);
         DefinitionKey = definition.Key;
+        OrdnanceAssets.Load();
         _look = (OrdnanceApi.TryGetPayload(definition.PayloadType, out var payload) ? payload.GetShellAppearance(definition) : null) ?? Plain;
         _burrow = _look.Burrow;
         _lidAt = DeliveryTiming.LidDelay(_burrow);

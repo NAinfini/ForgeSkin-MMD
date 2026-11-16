@@ -83,8 +83,9 @@ public sealed class ImportedModelDescriptor
 {
     /// <summary>The still format; <see cref="SkinnedFormat"/> adds a skeleton.</summary>
     public const int Format = 1, SkinnedFormat = 2;
-    // Limits of the format, not of any policy: they keep every size below inside 32-bit arithmetic and a texture inside the GPU's reach.
-    public const int MaxVertices = 1_000_000, MaxIndices = 3_000_000, MaxMaterials = 32, MaxTextures = 32, MaxTextureSide = 4096, MaxBones = 256;
+    // The only bounds, each a technical one: the mesh file is read as one byte array and its submeshes build one index array (.NET's
+    // largest array, Array.MaxLength); a bone index is 16 bits in the mesh file; a texture side is what Unity's Direct3D 11 takes.
+    public const int MaxArray = 0x7FFFFFC7, MaxTextureSide = 16384, MaxBones = 65536;
 
     private ImportedModelDescriptor(string key, string meshSha256, int vertices, int indices, ImportedSubmesh[] submeshes, ImportedMaterial[] materials, ImportedTexture[] textures, ImportedBone[]? bones)
     {
@@ -110,7 +111,7 @@ public sealed class ImportedModelDescriptor
     public int Indices { get; }
 
     /// <summary>The indices the built mesh holds: the sum of every submesh's count. Submeshes may overlap, so this can pass <see cref="Indices"/>;
-    /// it is what the model costs and what <see cref="MaxIndices"/> bounds.</summary>
+    /// it is what the model costs and what <see cref="MaxArray"/> bounds.</summary>
     public int DrawnIndices { get; }
     public IReadOnlyList<ImportedSubmesh> Submeshes { get; }
     public IReadOnlyList<ImportedMaterial> Materials { get; }
@@ -177,11 +178,11 @@ public sealed class ImportedModelDescriptor
         if (d.format != Format && d.format != SkinnedFormat) { failure = Refuse("descriptor format " + d.format + " is not " + Format + " or " + SkinnedFormat); return null; }
         if ((d.skin != null) != (d.format == SkinnedFormat)) { failure = Refuse("a skeleton comes with format " + SkinnedFormat + " and only with it"); return null; }
         if (d.mesh == null || !IsHash(d.mesh.sha256)) { failure = Refuse("the mesh has no SHA-256"); return null; }
-        if (d.mesh.vertices is < 3 or > MaxVertices) { failure = Refuse("the mesh has " + d.mesh.vertices + " vertices (3 to " + MaxVertices + ")"); return null; }
-        if (d.mesh.indices < 3 || d.mesh.indices > MaxIndices || d.mesh.indices % 3 != 0) { failure = Refuse("the mesh has " + d.mesh.indices + " indices (a multiple of 3 up to " + MaxIndices + ")"); return null; }
+        if (d.mesh.vertices < 3) { failure = Refuse("the mesh has " + d.mesh.vertices + " vertices (3 or more)"); return null; }
+        if (d.mesh.indices < 3 || d.mesh.indices % 3 != 0) { failure = Refuse("the mesh has " + d.mesh.indices + " indices (a multiple of 3)"); return null; }
+        if (ImportedMesh.Bytes(d.mesh.vertices, d.mesh.indices, d.skin != null) > MaxArray) { failure = Refuse("the mesh file of " + d.mesh.vertices + " vertices and " + d.mesh.indices + " indices passes " + MaxArray + " bytes"); return null; }
 
         var textures = new ImportedTexture[d.textures?.Length ?? 0];
-        if (textures.Length > MaxTextures) { failure = Refuse("more than " + MaxTextures + " textures"); return null; }
         for (var i = 0; i < textures.Length; i++)
         {
             var t = d.textures![i];
@@ -191,7 +192,7 @@ public sealed class ImportedModelDescriptor
         }
 
         var materials = new ImportedMaterial[d.materials?.Length ?? 0];
-        if (materials.Length is < 1 or > MaxMaterials) { failure = Refuse("the model needs 1 to " + MaxMaterials + " materials, it lists " + materials.Length); return null; }
+        if (materials.Length < 1) { failure = Refuse("the model lists no material"); return null; }
         for (var i = 0; i < materials.Length; i++)
         {
             var m = d.materials![i];
@@ -226,7 +227,7 @@ public sealed class ImportedModelDescriptor
             if (s.material < 0 || s.material >= materials.Length) { failure = Refuse("submesh " + i + " names the unknown material " + s.material); return null; }
             submeshes[i] = new ImportedSubmesh(s.start, s.count, s.material);
             drawn += s.count;
-            if (drawn > MaxIndices) { failure = Refuse("the submeshes draw " + drawn + " indices in all (up to " + MaxIndices + "); a range listed twice counts twice"); return null; }
+            if (drawn > MaxArray) { failure = Refuse("the submeshes draw " + drawn + " indices in all (up to " + MaxArray + "); a range listed twice counts twice"); return null; }
         }
         ImportedBone[]? bones = null;
         if (d.skin != null)
@@ -325,6 +326,9 @@ internal sealed class ImportedMesh
     public float[] Uvs { get; }
     public int[] Indices { get; }
 
+    /// <summary>The sidecar's size for these counts.</summary>
+    public static long Bytes(long vertices, long indices, bool skinned) => HeaderBytes + vertices * 32L + indices * 4L + (skinned ? vertices * 24L : 0L);
+
     /// <summary>The mesh in <paramref name="bytes"/>, which must be exactly what <paramref name="descriptor"/> declares; null with the first
     /// fault otherwise.</summary>
     public static ImportedMesh? Read(byte[] bytes, ImportedModelDescriptor descriptor, out ImportedModelFailure failure)
@@ -334,7 +338,7 @@ internal sealed class ImportedMesh
         var indices = descriptor.Indices;
         var bones = descriptor.Bones?.Count ?? 0;
         var version = (uint)(bones == 0 ? ImportedModelDescriptor.Format : ImportedModelDescriptor.SkinnedFormat);
-        var size = HeaderBytes + vertices * 32L + indices * 4L + (bones == 0 ? 0L : vertices * 24L);
+        var size = Bytes(vertices, indices, bones != 0);
         if (bytes.Length != size)
         {
             failure = Bad("the mesh is " + bytes.Length + " bytes, the descriptor's " + vertices + " vertices and " + indices + " indices make " + size);

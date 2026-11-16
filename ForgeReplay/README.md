@@ -14,6 +14,8 @@ Only you need the mod. If the host also runs Forge Replay and is recording, it a
 
 To stop recording set `Recording.Enabled` to `false` in `BepInEx/config/NAinfini.ForgeReplay.cfg`.
 
+To keep recordings somewhere else, set `Recording.Folder` in the same file to a full folder path (empty: the `replay` folder beside the game, shared by every mod manager profile). A missing folder is created; if it cannot be created or written, recordings stay beside the game and the replays list says so. Recordings already in the old place are not moved: move them yourself.
+
 ## Watching
 
 Open **REPLAYS** in the main menu bar, pick a run and press **PLAY**. The game starts that level alone from what the recording holds and shows the run again: every player and enemy where it was, the shots, hits, doors, scans, alarms, waves, terminals and chat.
@@ -21,10 +23,11 @@ Open **REPLAYS** in the main menu bar, pick a run and press **PLAY**. The game s
 ![Watching a run: the time bar and player cards](https://raw.githubusercontent.com/NAinfini/GTFO-Forge-Mods/main/ForgeReplay/docs/images/playback.jpg)
 
 - Time bar: play, pause, drag, step by frame, 0.25x to 8x, with downs, wipes, waves, scans, alarms, the reactor, checkpoints, kills worth a mark, pings and notes marked on it.
-- Views: Auto, Chase, First person, Free and Orbit, with an overhead view on its own key. Orbit circles a player with the mouse and the wheel changes the distance. First person shows the recorded player's own eyes, arms and gun, including aiming down sights.
+- Views: Auto, Chase, First person, Free and Orbit, with an overhead view on its own key. Orbit circles a player with the mouse; Chase stays behind the player and looks where they looked; the wheel changes the distance. First person shows the recorded player's own eyes, arms and gun, including aiming down sights.
 - Watch an enemy: its name and current health show on the plate, with `about` when the health is an estimate. **Esc** goes back to the player.
 - Stats: Team, Rating, Weapons, Enemies, Supplies and Level. **Stats → Rating** gives each player a grade from Output, Kills, Accuracy, Survival, Support and Mission, with a radar chart and an overall grade. The replay list and a run's details also show the grades. Grades run from D- to S+, and `~` marks an estimate.
-- Player cards, kill feed, chat log, highlights, enemy and teammate outlines, clear fog and brighten, in the game's own colours. Press **Ctrl** to use the mouse, hold **Tab** for the scoreboard.
+- Each player appears in the clothes and face they wore, and in their ForgeSkin character and gun skins when you have those skin packs.
+- Player cards, chat log, highlights, enemy and teammate outlines, clear fog and brighten, in the game's own colours. Press **Ctrl** to use the mouse, hold **Tab** for the scoreboard.
 
 ![The rating page](https://raw.githubusercontent.com/NAinfini/GTFO-Forge-Mods/main/ForgeReplay/docs/images/rating.jpg)
 
@@ -35,6 +38,7 @@ Give a `.frpl` file to a friend to share a run: they need the same game build an
 ## Limits
 
 - A recording only plays on the game build and level files it was made on. The list says why a recording cannot be played.
+- Recordings made with Forge Replay 1.0.0 cannot be played: recordings are now stored in a new, much smaller way that gets on better with other mods, and this version cannot read the old one.
 - In a recording made as client, other players' numbers are exact when the host also runs Forge Replay and is recording. Without the host's records, the numbers worked out from shots and weapon data are marked `~`.
 - Aiming down sights is only known for the player whose machine recorded the run; another player's first-person view does not show it.
 - A run under two minutes, or one where fewer than three of the six rating categories can be worked out, gets no grade.
@@ -42,7 +46,7 @@ Give a `.frpl` file to a friend to share a run: they need the same game build an
 
 ## Installation
 
-Install with r2modman or the Thunderstore Mod Manager. It also installs BepInExPack_GTFO, GTFO_API, ForgeCore, ForgeUI, ForgeAudio and ForgeVisual.
+Install with r2modman or the Thunderstore Mod Manager. It also installs BepInExPack_GTFO, GTFO_API and ForgeCore.
 
 ## For mod authors
 

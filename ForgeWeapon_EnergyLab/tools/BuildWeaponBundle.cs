@@ -29,9 +29,9 @@ public static class ForgeEnergyModelBuild
     const int Format = 5;
     static string BundleName(string mode) => "forge-energy-model-" + mode + ".bundle";
     const string SharedName = "forge-energy-model-shared.bundle";
-    // Unity names its manifest bundle after the build folder; the package ships the bundles in ForgeEnergyLab/, so the manifest is
-    // ForgeEnergyLab/ForgeEnergyLab there, where ForgeCore's loader looks for it. Kept among the local media under this file name.
-    const string ManifestFolder = "ForgeEnergyLab", ManifestFile = "forge-energy-unity-manifest.bundle";
+    // Unity names its text manifest after the build folder; the package ships the bundles in ForgeEnergyLab/, so the manifest is
+    // ForgeEnergyLab/ForgeEnergyLab.manifest there, where ForgeCore's loader looks for it. Kept among the local media under this file name.
+    const string ManifestFolder = "ForgeEnergyLab", ManifestFile = "forge-energy-unity.manifest";
     // The shared bundle's surface shader only names the texture slots of a surface material; the game never draws with it
     // (the runtime builds its materials with the game's gear shader). A fixed-function pass, as a pass-less bundle shader logs an error.
     const string SurfaceShaderPath = "Assets/Generated/SurfaceTextures.shader", SurfaceShaderName = "forge-surface-textures";
@@ -194,7 +194,7 @@ public static class ForgeEnergyModelBuild
         var sharedDestination = Path.Combine(output, SharedName); File.Copy(sharedFile, sharedDestination, true);
         sharedEvidence.sha256 = Hash(sharedDestination);
         Debug.Log("ENERGY_BUNDLE_VERIFIED " + SharedName + " " + sharedEvidence.bytes + " bytes " + sharedEvidence.sha256);
-        var manifestDestination = Path.Combine(output, ManifestFile); File.Copy(Path.Combine(staging, ManifestFolder), manifestDestination, true);
+        var manifestDestination = Path.Combine(output, ManifestFile); File.Copy(Path.Combine(staging, ManifestFolder + ".manifest"), manifestDestination, true);
         var manifestEvidence = new FileEvidence { file = ManifestFile, sha256 = Hash(manifestDestination), bytes = new FileInfo(manifestDestination).Length };
         Debug.Log("ENERGY_BUNDLE_VERIFIED " + ManifestFile + " " + manifestEvidence.bytes + " bytes " + manifestEvidence.sha256);
         File.WriteAllText(Path.Combine(output, "weapon-models-manifest.json"), JsonUtility.ToJson(new Manifest

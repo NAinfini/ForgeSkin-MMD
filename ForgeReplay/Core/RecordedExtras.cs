@@ -8,6 +8,10 @@ namespace ForgeReplay;
 /// bit; a recording of this version writes aim only on its transitions (event 108, <see cref="ReplayExtras.Aim"/>) and leaves the bit 0.</summary>
 internal readonly record struct PlayerGun(int Clip, int ClipSize, bool Aiming, int StaminaPercent);
 
+/// <summary>What one layer of a player's body plays (event 113): the state's number, the recording time it began at (earlier than the event for a state
+/// already under way), the cross-fade into it and the layer's weight in tenths.</summary>
+internal readonly record struct BodyLayer(int State, long StartMs, int FadeMs, int Weight);
+
 /// <summary>Where a player is (event 88). <see cref="Zone"/> is the number players read on the door signs, -1 unknown.</summary>
 internal readonly record struct PlayerPlace(int Dimension, int Zone, int Layer);
 
@@ -57,6 +61,16 @@ internal static class ReplayExtras
         if (!state.Extras.TryGetValue((EventKind.PlayerAim, (ulong)slot), out var payload)) return false;
         var r = PayloadReader.Over(payload); r.U();
         aiming = r.U() != 0;
+        return true;
+    }
+
+    /// <summary>What layer <paramref name="layer"/> of the player's body plays (event 113); false when the recording has none for it yet.</summary>
+    internal static bool AnimLayer(WorldState state, int slot, int layer, out BodyLayer played)
+    {
+        played = default;
+        if (!state.Extras.TryGetValue((EventKind.PlayerAnimLayer, BodyStates.Key(slot, layer)), out var payload)) return false;
+        var r = PayloadReader.Over(payload); r.U();
+        played = new BodyLayer((int)r.S(), r.S(), (int)r.U(), (int)r.U());
         return true;
     }
 

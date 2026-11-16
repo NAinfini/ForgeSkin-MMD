@@ -3,7 +3,6 @@ using System;
 using System.Collections.Generic;
 using ForgeAudio;
 using LevelGeneration;
-using Player;
 using ForgeVisual;
 using UnityEngine;
 
@@ -91,9 +90,7 @@ internal static class EventPresenter
                         var slot = (int)read.U() & 3;
                         var kind = read.U();
                         read.U();
-                        // The puppet's weapon swings by the game's own third-person code, which also plays its swing sound. A shove is the Interact event's animation; a player with no puppet only sounds.
-                        if (kind != 2 && Puppeteer.MeleeSwing(slot, kind)) break;
-                        Puppeteer.CosmeticOf(slot)?.Act(EventKind.Melee, kind); // the swing's sound below plays whether or not a body state was read
+                        // The body's swing is its recorded upper-body state; the event is the swing's sound.
                         if (Where(state, slot, out var at)) Sound(kind == 2 ? "MELEE_SHOVE" : kind == 1 ? "MELEE_SWISH_HEAVY" : "MELEE_SWISH_REGULAR", at, false);
                         break;
                     }
@@ -139,8 +136,7 @@ internal static class EventPresenter
                         if (_tier != SoundTier.All) break;
                         var said = ReplayExtras.Said(r.Payload!);
                         if (said.Slot < 0) break;
-                        if (Puppeteer.PlayerOf(said.Slot) is { } speaker) speaker.Say(said.Event, said.Seed, said.InDialog, said.StartDialog, said.Subtitle);
-                        else Puppeteer.CosmeticOf(said.Slot)?.Say(said.Slot, said.Event);
+                        Puppeteer.StandInOf(said.Slot)?.Say(said.Slot, said.Event);
                         break;
                     }
                 case EventKind.EnemyBeat:
@@ -249,27 +245,6 @@ internal static class EventPresenter
                         if (Where(state, entity, out var screamAt)) Sound(kind == 0 ? VoiceOf(state, entity).Scream : "SCOUT_DETECT_SCREAM", screamAt, false);
                         break;
                     }
-                case EventKind.Interact:
-                    {
-                        var interactSlot = (int)read.U();
-                        var interactor = Puppeteer.PlayerOf(interactSlot);
-                        if (interactor != null)
-                        {
-                            var interactType = (pGenericInteractAnimation.TypeEnum)read.U();
-                            if (interactType == pGenericInteractAnimation.TypeEnum.Reload) Puppeteer.NoteReload(interactSlot);
-                            interactor.Interact(interactType);
-                        }
-                        else if (Puppeteer.CosmeticOf(interactSlot)?.Act(EventKind.Interact, read.U()) != true) Skipped.Note("the body copy of a fourth player plays no interact, throw or melee animation (its animator states are not known)", "interact");
-                        break;
-                    }
-                case EventKind.Throw:
-                    {
-                        var throwSlot = (int)read.U();
-                        var thrower = Puppeteer.PlayerOf(throwSlot);
-                        if (thrower != null) thrower.Throw((pPlayerThrowStatus.StatusEnum)read.U());
-                        else if (Puppeteer.CosmeticOf(throwSlot)?.Act(EventKind.Throw, read.U()) != true) Skipped.Note("the body copy of a fourth player plays no interact, throw or melee animation (its animator states are not known)", "throw");
-                        break;
-                    }
                 case EventKind.Revive:
                     if (Where(state, (int)read.U() & 3, out var reviveAt)) Sound("REVIVEEND", reviveAt, false);
                     break;
@@ -286,6 +261,8 @@ internal static class EventPresenter
                 case EventKind.ShownLoop:
                 case EventKind.ShownModelState:
                 case EventKind.ShownPose:
+                case EventKind.TrackedObject:
+                case EventKind.TrackedState:
                     ShownPlayback.Present(r.EventType, r.Payload!, state, _tier, r.TimeMs);
                     break;
                 case EventKind.Explosion:
@@ -319,11 +296,10 @@ internal static class EventPresenter
     private static readonly FxHandle?[] Flashes = new FxHandle?[4];
     private static readonly string[] FlashNames = { "Game:AssaultRifle_MuzzleFlash_3RD", "Game:Pistol_MuzzleFlash_3RD", "Game:Shotgun_MuzzleFlash_3RD", "Game:SubMachine_MuzzleFlash_3RD" };
 
-    // The flash of the weapon the player puppet holds, or the game's flash of the weapon's class where the shooter has no puppet.
+    // The flash of the weapon the player's stand-in holds, or the game's flash of the weapon's class where the shooter shows no weapon.
     private static Vector3 MuzzleFlash(int slot, ulong flash, Vector3 origin, Vector3 end)
     {
-        if (Puppeteer.PlayerOf(slot)?.MuzzleFlash(out var muzzle) == true) return muzzle;
-        if (Puppeteer.CosmeticOf(slot)?.MuzzleFlash(out var cosmeticMuzzle) == true) return cosmeticMuzzle;
+        if (Puppeteer.StandInOf(slot) is { Visible: true } body && body.MuzzleFlash(out var muzzle)) return muzzle;
         var index = (int)Math.Min(flash, 3UL);
         var handle = Flashes[index] ??= Fx.Find(FlashNames[index]);
         if (handle != null) Fx.Play(handle, origin, end - origin);
@@ -473,7 +449,9 @@ internal static class EventPresenter
                 // Its progress moves while its state does not; its handler reveals the holopath and switches its scans, so only a change of state is set.
                 if (!had || (before & 0xFF) != value) Show(kind, key, at, value, extra, true);
                 break;
-            case EventKind.ItemState: Put(kind, key, at, value, extra, true); break;
+            case EventKind.ItemState:
+                if (Setter != null && !Put(kind, key, at, value, extra, true)) Skipped.Note("a recorded item has no item in the replay level", "key " + key + " near " + at);
+                break;
             case EventKind.Puzzle:
                 // The game's own handler posts the alarm's start and stop sounds of the puzzle's data block.
                 Put(kind, key, at, value, extra, true);

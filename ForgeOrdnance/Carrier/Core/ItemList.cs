@@ -8,6 +8,13 @@ namespace ForgeOrdnance;
 /// <summary>One line of an <c>Item</c> payload: <see cref="Count"/> pickups of one item data block.</summary>
 internal readonly record struct ItemEntry(uint ItemId, int Count, float AmmoRatio);
 
+/// <summary>What the built-in <c>Item</c> payload parses to. A description's numbers (DEVELOPERS.md, "Description numbers") are the
+/// <c>Count</c> of each line of <c>Items</c>, in file order: {0} the first line's, {1} the second's…</summary>
+internal sealed record ItemParameters(ItemEntry[] Items) : IOrdnanceDescribed
+{
+    public IReadOnlyList<double> DescriptionValues => Array.ConvertAll(Items, item => (double)item.Count);
+}
+
 /// <summary>The <c>Items</c> list of the built-in <c>Item</c> payload, which arrives in the drop pod:
 /// <c>"Items": [ { "Item": 101 | "name", "Count": 1..4, "AmmoRatio": 0..1 }, ... ]</c>. The pod holds
 /// <see cref="MaxPickups"/> pickups, so the counts together may not exceed that.</summary>

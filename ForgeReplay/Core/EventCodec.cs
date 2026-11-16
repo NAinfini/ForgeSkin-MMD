@@ -20,11 +20,12 @@ internal static class EventKind
         EnemyHealth = 90, PlayerHealth = 91, WakeUp = 92, SentryAmmo = 93,
         ShownName = 94, ShownFx = 95, ShownSound = 96, ShownPose = 98, ShownModelState = 99,
         MeleeHit = 100, Note = 101, ShownHeld = 102, ShownLoop = 103,
-        HostHit = 104, HostWake = 105, HostLink = 106, PlayerAim = 108, HostSupply = 109, HostPack = 110, HostHurt = 111, HostRay = 112;
+        HostHit = 104, HostWake = 105, HostLink = 106, PlayerAim = 108, HostSupply = 109, HostPack = 110, HostHurt = 111, HostRay = 112, PlayerAnimLayer = 113,
+        TrackedObject = 114, TrackedState = 115;
 
     /// <summary>Events whose latest payload per first U is what is true at a moment, kept in <see cref="WorldState.Extras"/> (read through <see cref="ReplayExtras"/>).</summary>
     internal static bool IsExtraState(ushort kind) => kind is PlayerGun or MeleeCharge or ZoneLights or ObjectiveTimer or EnemyMind or EnemyLook or WakeUp or Thrown or TerminalState or WeakLock or Bulkhead or HsuActivator
-        or Portal or GeneratorCluster or FogTurbine or Cluster or Holopath or ScanMove or Spitter or Boosters or InteractHold or PlayerPlace or ReactorText or SentryAmmo or PlayerAim or ShownName or ShownPose or ShownModelState or ShownHeld or ShownLoop;
+        or Portal or GeneratorCluster or FogTurbine or Cluster or Holopath or ScanMove or Spitter or Boosters or InteractHold or PlayerPlace or ReactorText or SentryAmmo or PlayerAim or PlayerAnimLayer or TrackedObject or TrackedState or ShownName or ShownPose or ShownModelState or ShownHeld or ShownLoop;
 
     /// <summary>A state event that says its object is gone for good (foam phase 2, a thrown item's phase 2, a shown pose's stop, a shown model's end, a sentry taken back or a mine gone off or picked up): all put the phase in the second number. Such a
     /// payload stays in the delta record, but the object leaves the keyframe table and the timeline's state, so nothing that ended is written or kept again. A held shown thing

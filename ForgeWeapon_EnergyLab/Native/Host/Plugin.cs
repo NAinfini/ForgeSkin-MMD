@@ -10,9 +10,9 @@ namespace ForgeWeaponEnergyLab.Native;
 
 [BepInPlugin(Id, "Forge Weapon Energy Lab", Version)]
 [BepInDependency("dev.gtfomodding.gtfo-api", ">=0.6.1")]
-[BepInDependency("NAinfini.ForgeCore", ">=1.0.0")]
+[BepInDependency("NAinfini.ForgeCore", ">=1.0.1")]
 // MTFO marks the game as modded (achievements and public matchmaking off), so the guns stay out of official play.
-[BepInDependency("com.dak.MTFO")]
+[BepInDependency("com.dak.MTFO", ">=4.6.3")]
 internal sealed class Plugin : BasePlugin
 {
     internal const string Id = EnergyLab.PluginId;
@@ -34,6 +34,7 @@ internal sealed class Plugin : BasePlugin
             EnergyGameHooks.Subscribe();
             EnergyMuzzleFlash.Register();
             EnergyGearRegistry.Register();
+            Presentation.EnergyVfx.Register();
             EnergyNetwork.Register(EnergyController.Start(Id));
         }
         catch (System.Exception error)
@@ -149,14 +150,17 @@ internal static unsafe class NativeEnergyShotReady
     private static VirtualInvokeData* _slot;
     private static System.IntPtr _original;
     // The most recent archetype the trigger check ran for, with its gun and that gun's energy definition (null for a stock gun).
-    // A destroyed gun reads as null, which forces a new lookup.
+    // A destroyed gun, or a gun whose archetype is no longer this one (an archetype rebuilt for a living gun frees the old address for
+    // reuse by another gun's), forces a new lookup.
     private static System.IntPtr _self;
     private static BulletWeapon? _weapon;
     private static EnergyGear? _gear;
+    private static int _archetypeOffset; // BulletWeapon.m_archeType, read without a wrapper
 
     internal static void Install()
     {
         if (_method != null) return;
+        _archetypeOffset = ForgeCore.NativeObjects.FieldOffset<BulletWeapon>("m_archeType");
         var klass = Il2CppClassPointerStore<BWA_Auto>.NativeClassPtr;
         // The runtime fills a class's vtable when the class is initialized, which plugin Load precedes. Allocating an
         // instance always initializes the class first (the object is garbage afterwards; no constructor runs).
@@ -192,7 +196,7 @@ internal static unsafe class NativeEnergyShotReady
         try
         {
             // The gun this archetype belongs to is looked up once per archetype, not wrapped again on every held-trigger frame.
-            if (self != _self || _weapon == null)
+            if (self != _self || ForgeCore.NativeObjects.Gone(_weapon) || *(System.IntPtr*)(_weapon.Pointer + _archetypeOffset) != self)
             {
                 var weapon = new BWA_Auto(self).m_weapon;
                 _self = self; _weapon = weapon; _gear = EnergyGearRegistry.DefinitionOf(weapon);

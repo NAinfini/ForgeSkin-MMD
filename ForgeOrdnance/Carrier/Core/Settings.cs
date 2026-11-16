@@ -112,9 +112,25 @@ internal sealed class OrdnanceSettings
         return new OrdnanceSettings(global, levels, _declared);
     }
 
+    /// <summary>The same settings with the levels of a rundown package's own <c>Settings.forge</c> (<see cref="Parse"/> with
+    /// <c>levelsOnly</c>) added. A level these settings already set keeps its rules and the second one is reported.</summary>
+    public OrdnanceSettings WithLevelsOf(OrdnanceSettings package, string where, List<string> errors)
+    {
+        if (package._levels.Count == 0) return this;
+        var levels = new Dictionary<string, OrdnanceLevelRules>(_levels, StringComparer.Ordinal);
+        foreach (var (key, rules) in package._levels)
+        {
+            if (levels.ContainsKey(key)) { errors.Add(where + " Levels." + key + ": ignored; another Settings.forge already sets this level."); continue; }
+            levels[key] = rules;
+        }
+        return new OrdnanceSettings(_global, levels, _declared);
+    }
+
     /// <summary>Returns the settings. A field or entry that is wrong is reported in <paramref name="errors"/> and only that one is lost (a bad field keeps
-    /// its inherited value, a bad drop or loadout key is skipped); null only when the file is not a JSON object at all.</summary>
-    public static OrdnanceSettings? Parse(string json, List<string> errors)
+    /// its inherited value, a bad drop or loadout key is skipped); null only when the file is not a JSON object at all. With
+    /// <paramref name="levelsOnly"/> (a rundown package's own file, which must not change other rundowns' levels) only <c>Levels</c> is
+    /// read, each level over the default rules, and any other top-level field is reported and ignored.</summary>
+    public static OrdnanceSettings? Parse(string json, List<string> errors, bool levelsOnly = false)
     {
         const string file = "Settings.forge";
         JsonDocument document;
@@ -124,7 +140,11 @@ internal sealed class OrdnanceSettings
         {
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object) { errors.Add(file + ": must be a JSON object."); return null; }
-            var global = Read(root, new OrdnanceLevelRules(), RootFields, file, errors);
+            var global = new OrdnanceLevelRules();
+            if (!levelsOnly) global = Read(root, global, RootFields, file, errors);
+            else
+                foreach (var member in root.EnumerateObject())
+                    if (member.Name != "Levels") errors.Add(file + " " + member.Name + ": ignored; a rundown package's Settings.forge sets its own levels only (Levels).");
             var levels = new Dictionary<string, OrdnanceLevelRules>(StringComparer.Ordinal);
             if (root.TryGetProperty("Levels", out var levelsElement))
             {

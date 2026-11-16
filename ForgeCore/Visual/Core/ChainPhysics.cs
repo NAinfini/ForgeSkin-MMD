@@ -116,7 +116,6 @@ public sealed class ChainShape
 /// </summary>
 public sealed class ChainState
 {
-    public const int MaxBoxes = 12, MaxCapsules = 16;
     public const int MaxSteps = 24; // per update; the chain only follows the rest of a longer frame rigidly
     public const double Gap = 0.25; // s between updates after which the chain is put at rest
     public const double Jump = 0.5; // m the anchor or the body moved in one update after which the chain is put at rest
@@ -138,10 +137,10 @@ public sealed class ChainState
     readonly bool[] _rigid, _straight;
     readonly double[] _len, _dir, _w, _bendK, _bendD, _radius, _sideLen;
     readonly double[] _p, _q, _rm;
-    readonly double[] _box = new double[MaxBoxes * 15]; // per box: centre 3, axes 3x3, half sizes 3, in the anchor's frame
-    readonly double[] _world = new double[MaxBoxes * 15]; // the same in world space, per sub-step
+    double[] _box = Array.Empty<double>(); // per box: centre 3, axes 3x3, half sizes 3, in the anchor's frame; grown by AddBox
+    double[] _world = Array.Empty<double>(); // the same in world space, per sub-step
     int _boxes, _capsules;
-    readonly double[] _cap = new double[MaxCapsules * 7], _capFrom = new double[MaxCapsules * 7], _capSub = new double[MaxCapsules * 7]; // a, b, radius
+    double[] _cap = Array.Empty<double>(), _capFrom = Array.Empty<double>(), _capSub = Array.Empty<double>(); // a, b, radius; grown by Capsules
     readonly double[] _cur = new double[7], _from = new double[7], _sub = new double[7], _last = new double[7], _t = new double[16];
     readonly double[] _body = new double[12]; // the body: at the frame's start, now, this sub-step, the last one
     double _time, _acc, _f;
@@ -234,12 +233,12 @@ public sealed class ChainState
 
     /// <summary>A box of a rigid body that moves with the anchor: min and max in the body's frame `body`, taken into the anchor's frame
     /// (`anchor`, both at the same moment). A box that holds the anchor is cut back to it on its nearest face, so the chain starts
-    /// outside; one cut to nothing, or past MaxBoxes, is left out.</summary>
+    /// outside; one cut to nothing is left out.</summary>
     public void AddBox(double[] anchor, double[] body, double[] min, double[] max)
     {
-        if (_boxes >= MaxBoxes) return;
-        Pose(anchor, _sub);
         int o = _boxes * 15;
+        if (_box.Length < o + 15) { Array.Resize(ref _box, o + 15); Array.Resize(ref _world, o + 15); }
+        Pose(anchor, _sub);
         double cx = (min[0] + max[0]) / 2, cy = (min[1] + max[1]) / 2, cz = (min[2] + max[2]) / 2;
         // Centre: body -> world -> anchor's frame (rotation inverse, no scale).
         double wx = body[0] * cx + body[4] * cy + body[8] * cz + body[12] - _sub[0];
@@ -280,8 +279,20 @@ public sealed class ChainState
         _boxes++;
     }
 
-    /// <summary>How many capsules the chain is kept out of (at most MaxCapsules); set each with <see cref="SetCapsule"/> before every update.</summary>
-    public int Capsules { get => _capsules; set => _capsules = Math.Clamp(value, 0, MaxCapsules); }
+    /// <summary>How many capsules the chain is kept out of; set each with <see cref="SetCapsule"/> before every update. Setting a larger
+    /// number than before grows the arrays once.</summary>
+    public int Capsules
+    {
+        get => _capsules;
+        set
+        {
+            _capsules = Math.Max(value, 0);
+            if (_cap.Length >= _capsules * 7) return;
+            Array.Resize(ref _cap, _capsules * 7);
+            Array.Resize(ref _capFrom, _capsules * 7);
+            Array.Resize(ref _capSub, _capsules * 7);
+        }
+    }
 
     /// <summary>Capsule `i` now, in the world: the segment from a to b and its radius (a sphere when a is b). Each sub-step takes it
     /// where it was at that sub-step's time, from the last update's place to this one.</summary>

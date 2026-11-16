@@ -46,15 +46,14 @@ internal static class FrameBodyRig
     }
 
     internal const int LeftUpperArmLink = 4, RightUpperArmLink = 7, LeftHandLink = 6, RightHandLink = 9;
-    private const int ChestLink = 2;
 
     /// <summary>The suit's arms are not the body's arms scaled, so copied turns alone leave its hands off whatever the body grips: both
-    /// arms bend so each wrist lands where the body's does, carried over from the chest (one anchor, so the two hands stay where they are
-    /// on the item to each other and the held copy, which hangs from the right hand, stays in both).</summary>
+    /// arms bend as the body's do at the suit's own arm lengths, and while the pilot's left hand grips the held item the suit's left hand
+    /// grips it where the pilot's does against the right hand (ForgeVisual PoseCopy), so the held copy hanging from the right hand stays in both.</summary>
     internal static readonly PoseReach[] ArmReach =
     {
-        new(LeftUpperArmLink, LeftUpperArmLink + 1, LeftUpperArmLink + 2, ChestLink),
-        new(RightUpperArmLink, RightUpperArmLink + 1, RightUpperArmLink + 2, ChestLink),
+        new(LeftUpperArmLink, LeftUpperArmLink + 1, LeftUpperArmLink + 2),
+        new(RightUpperArmLink, RightUpperArmLink + 1, RightUpperArmLink + 2),
     };
 
     /// <summary>The shell's bones for ForgeVisual: the arms only line the skeletons up (the pilot's arms and hands are the game's own),

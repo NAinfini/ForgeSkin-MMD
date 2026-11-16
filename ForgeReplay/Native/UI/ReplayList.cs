@@ -13,8 +13,8 @@ namespace ForgeReplay;
 /// <summary>The REPLAYS screen on the menu bar (PLAN 2.1), on the game's settings page and made of its own pieces (ForgeUI <c>MenuScreen</c>): a row of
 /// filter tabs across the top (how it ended, the rundown choice, the files that cannot be read, the size on disk), under it two windows only as tall as
 /// their rows: the recordings (an entry of two or three lines each, newest first unless another sort is chosen) and the chosen recording (the run; the
-/// estimates and the file behind More) with play, star and More right under it. A recording of a rundown this game has not installed says
-/// so by name and its play button stays dim; a failure is one sentence with a way to the log and goes away when closed. Values keep the game's own menu text
+/// estimates and the file behind More) with play, star and More right under it. A recording this game cannot play is dimmed in the list with
+/// "unavailable" in its row, and its play button stays faded with the reason and what to do written under it; a failure is one sentence with a way to the log and goes away when closed. Values keep the game's own menu text
 /// colour; labels, alerts and warnings are the game's colours (<see cref="UIKitColors"/>). Nothing pops up: deleting the chosen recording, and playing when
 /// others are in the lobby (it leaves the lobby), are confirmed on the button itself (ForgeUI <c>AddConfirmButton</c>). After a replay the screen opens again.</summary>
 internal static class ReplayList
@@ -22,9 +22,9 @@ internal static class ReplayList
     // Two columns under the filter tabs: the list takes what the screen leaves beside the details, which keep their width (a table of four players).
     // Both are only as tall as their rows (MenuScreen fit); the details leave room under them for their buttons, clear of the game's version text.
     private const float MinListWidth = 1100f, DetailWidth = 800f, UnderDetails = 310f;
-    // The sort choices over the list: start, length, result, rundown (the ids of _sort), in the order they stand.
-    private static readonly int[] SortChoices = { 3, 4, 5, 1 };
-    private static readonly string[] SortKeys = { "list.start", "list.length", "list.result", "list.rundown" };
+    // The sort choices over the list: rundown, start, length, result (the ids of _sort), in the order the columns stand. The header and every entry line share the one grid (Columns).
+    private static readonly int[] SortChoices = { 1, 3, 4, 5 };
+    private static readonly string[] SortKeys = { "list.rundown", "list.start", "list.length", "list.result" };
     private const int StartColumn = 3;
     private const int Unreadable = 4;
     // The rundown choice open (its options stand in the list's place) and the details' More buttons shown.
@@ -97,10 +97,10 @@ internal static class ReplayList
 
     private static void Refresh()
     {
-        if (!Shown()) return;
         var now = ForgeCore.Frame.UnscaledTime;
-        if (now < _filesAt) return;
+        if (!_shown || now < _filesAt) return;
         _filesAt = now + 1f;
+        if (!Shown()) return;
         var files = Files();
         if (files == _files) return;
         _files = files;
@@ -128,6 +128,11 @@ internal static class ReplayList
         _built = screen;
         _lastBuilt = ForgeCore.Frame.UnscaledTime;
         if (Replayer.TakeFailure() is { } failed) screen.Toast(failed, NoticeTone.Alert, ProblemSeconds, UIText.Key("list.viewlog"), ViewLog);
+        if (Plugin.UnusableFolder is { } unusable)
+        {
+            Plugin.UnusableFolder = null;
+            screen.Toast(UIText.Key("list.folderunusable", unusable, Plugin.ReplayFolder), NoticeTone.Warn, ProblemSeconds, UIText.Key("list.viewlog"), ViewLog);
+        }
         var all = ReplayLibrary.List(Plugin.ReplayFolder);
         RundownNames.Learn(all);
         // The recordings the member rating has not counted yet are read in the background, one at a time, like the rows that wait for a read.
@@ -205,18 +210,17 @@ internal static class ReplayList
     // round. How many are kept is on the pointer over it rather than a line of its own.
     private static void SortRow(MenuScreen screen, MenuScreenWindow list)
     {
-        list.Columns(new[] { 18f, 40f, 58f, 76f });
-        var cells = new UIText[SortChoices.Length + 1];
-        cells[0] = UIText.Key("list.sortby");
+        list.Columns(Columns);
+        var cells = new UIText[SortChoices.Length];
         var current = -1;
         for (var i = 0; i < SortChoices.Length; i++)
         {
             var on = SortChoices[i] == _sort;
-            if (on) current = i + 1;
+            if (on) current = i;
             // ASCII v and ^: the game's menu font has no arrow or triangle and would draw a box.
-            cells[i + 1] = on ? UIText.Plain(_ui.Text(SortKeys[i]) + (_descending ? " v" : " ^")) : UIText.Key(SortKeys[i]);
+            cells[i] = on ? UIText.Plain(_ui.Text(SortKeys[i]) + (_descending ? " v" : " ^")) : UIText.Key(SortKeys[i]);
         }
-        list.AddHeader(column => { if (column >= 1) Sort(screen, SortChoices[column - 1]); }, current, cells);
+        list.AddHeader(column => { Sort(screen, SortChoices[column]); }, current, cells);
         var limit = Math.Max(0, Plugin.DiskLimitMb.Value);
         list.Tooltip(UIText.Key("list.title"), limit > 0 ? UIText.Key("list.keeplimit", ReplayLibrary.Keep, limit) : UIText.Key("list.keep", ReplayLibrary.Keep));
     }
@@ -270,41 +274,34 @@ internal static class ReplayList
         screen.Rebuild();
     }
 
-    // A list entry, two lines and a third for the grades: "Rundown · A1" (in the warning colour when this game cannot play it, a star when starred) and how it
-    // ended; when it started, how long, how many played and the team's kills and downs; then each member's grade in the player's colour, from the rating cache
-    // (no recording is read for the row). A file that cannot be read says so and why under its start.
-    private static readonly float[] TitleStops = { 74f }, InfoStops = { 30f, 48f, 64f }, GradeStops = { 25f, 50f, 75f };
-    private static readonly int[] ResultRight = { 1 }, NoRight = Array.Empty<int>();
+    // A list entry, two lines: "Rundown · A1" (a star when starred) and how it ended (dimmed whole with "unavailable" there when this game cannot play it); when it started,
+    // how long, how many played and the team's kills and downs. The members and their grades are in the details. A file that cannot be read says so and why under its start.
+    private static readonly float[] Columns = { 38f, 60f, 72f };
+    private static readonly int[] NoRight = Array.Empty<int>();
 
     private static List<MenuScreenWindow.MenuLine> Entry(ReplayEntry e)
     {
         var star = e.Starred ? Extra(_ui.Text("list.starmark")) + " " : "";
         if (e.Header == null)
-            return new() { new(new[] { star + Dim(System.IO.Path.GetFileNameWithoutExtension(e.Path)), Alert(_ui.Text(ShortKey(e))) }, TitleStops, ResultRight), new(new[] { When(e) }, InfoStops, NoRight) };
-        var title = RundownNames.Refusal(e) != null ? Warn(LevelName(e)) : LevelName(e);
+            return new() { new(new[] { star + Dim(System.IO.Path.GetFileNameWithoutExtension(e.Path)), "", "", Alert(_ui.Text(ShortKey(e))) }, Columns, NoRight), new(new[] { "", When(e) }, Columns, NoRight) };
         var people = e.Header.Players.Count <= 1 ? _ui.Text("list.solo") : _ui.Text("list.people", e.Header.Players.Count);
-        var lines = new List<MenuScreenWindow.MenuLine>
+        // A recording this game cannot play (its rundown or level is not installed) is dimmed whole and says so where the result stands.
+        if (RundownNames.Refusal(e) != null)
+            return new()
+            {
+                new(new[] { star + Dim(LevelName(e)), Dim(When(e)), Dim(Duration(e)), Warn(_ui.Text("list.unavailable")) }, Columns, NoRight),
+                new(new[] { Dim(people), Dim(Counts(e)) }, Columns, NoRight),
+            };
+        return new()
         {
-            new(new[] { star + title, Outcome(e) }, TitleStops, ResultRight),
-            new(new[] { When(e), Duration(e), Dim(people), Counts(e) }, InfoStops, NoRight),
+            new(new[] { star + LevelName(e), When(e), Duration(e), Outcome(e) }, Columns, NoRight),
+            new(new[] { Dim(people), Counts(e) }, Columns, NoRight),
         };
-        if (Grades(e) is { } grades) lines.Add(new(grades, GradeStops, NoRight));
-        return lines;
     }
 
     // A member's overall grade for the team table, — when the rating cache has none.
     private static string Grade(ReplayEntry e, int slot)
         => RatingStore.Table is { } table && RatingStore.OfRecording(e.Path) is { } ratings && ratings[slot] is { Grade: >= 0 } r ? Value(table.Grades[r.Grade].Name) : Dim("—");
-
-    // Each member's name and overall grade in the player's own colour; null when the rating cache has none for the recording.
-    private static string[]? Grades(ReplayEntry e)
-    {
-        if (e.Header == null || RatingStore.Table is not { } table || RatingStore.OfRecording(e.Path) is not { } ratings) return null;
-        var cells = new List<string>();
-        for (var slot = 0; slot < 4; slot++)
-            if (ratings[slot] is { } r) cells.Add(UIKitColors.Tint(MenuText.Plain(PlayerName.Plain(ReplayFeed.Holder(slot, uint.MaxValue, e.Header.Players, NoPresence, _ui.Text("player.slot", slot + 1)).Name)) + "  " + (r.Grade >= 0 ? table.Grades[r.Grade].Name : "—"), ReplayScreen.SlotColour(slot)));
-        return cells.Count == 0 ? null : cells.ToArray();
-    }
 
     // The members' ratings as text: the six dimension scores and the overall grade of each player, what the recording cannot say is — and a worked-out score is "about N".
     private static void RatingText(MenuScreenWindow details, ReplayEntry e)
@@ -382,23 +379,15 @@ internal static class ReplayList
     private static void Details(MenuScreen screen, ReplayEntry e)
     {
         var details = screen.AddWindow(UIText.Plain(LevelName(e) + "  " + (e.Header == null ? Alert(_ui.Text(ShortKey(e))) : Outcome(e))), DetailWidth, UnderDetails, fit: true);
-        // Why it cannot play first, in a few words: it is what the player came to the window to learn; the sentence is on the pointer over it.
-        var refusal = e.Header == null ? null : RundownNames.Refusal(e);
+        // Why it cannot play is written under the dimmed play button, one sentence of what is missing and what to do.
+        var why = Unplayable(e);
         if (e.Header == null)
         {
-            details.AddRow(UIText.Plain(Alert(_ui.Text("list.unplayablewhy", _ui.Text(ShortKey(e)))) + Dim("  (i)")));
-            details.Tooltip(UIText.Key("list.unplayable"), UIText.Key(e.OtherFormat ? "refuse.format" : "refuse.damaged"));
             details.AddField(UIText.Key("list.start"), When(e));
             details.AddField(UIText.Key("list.size"), Size(e.Path));
         }
         else
         {
-            if (refusal != null)
-            {
-                details.AddRow(UIText.Plain(Warn(MenuText.Plain(refusal)) + Dim("  (i)")));
-                details.Tooltip(UIText.Key("list.unplayable"), UIText.Key("missing.hint"));
-            }
-            else if (!CanStart()) details.AddRow(UIText.Plain(Warn(_ui.Text(Replayer.Starting ? "list.starting" : "list.inlevel"))));
             // The estimates and the file are pages of their own, opened from More; a row on top leads back to the run.
             if (_page != 0) details.AddRow(UIText.Plain(Extra(_ui.Text("list.back")) + "   " + Dim(_ui.Text(_page == 1 ? "list.estimates" : "list.pagefile"))), () => { _page = 0; screen.Rebuild(); });
             if (_page == 0) RunPage(details, e);
@@ -409,14 +398,15 @@ internal static class ReplayList
         details.Buttons(1.25f, 1f, 1f);
         if (e.Header == null)
         {
+            details.AddButton(UIText.Key("list.play"), () => { }, true, 0, false, UIText.Plain(why!));
             details.AddButton(UIText.Key("list.folder"), () => Reveal(e.Path), false, 1);
             DeleteButton(screen, details, e, 2);
             return;
         }
         // A replay is its own level, started from the lobby or the main menu; with others in the lobby the button asks first, in place: playing leaves the lobby.
-        var ready = refusal == null && CanStart();
+        var ready = why == null;
         if (ready && OthersInLobby()) details.AddConfirmButton("play:" + e.Path, UIText.Key("list.play"), UIText.Key("list.leaveplay"), UIText.Key("list.cancel"), () => Choose(e), true);
-        else details.AddButton(UIText.Key("list.play"), () => Choose(e), true, 0, ready);
+        else details.AddButton(UIText.Key("list.play"), () => Choose(e), true, 0, ready, why == null ? null : UIText.Plain(why));
         details.AddButton(UIText.Key(e.Starred ? "list.unstar" : "list.dostar"), () => Star(screen, e), false, 1);
         details.AddButton(UIText.Plain(_ui.Text("list.more") + (_more ? " ^" : " v")), () => { _more = !_more; screen.Rebuild(); }, false, 2);
         if (!_more) return;
@@ -607,7 +597,7 @@ internal static class ReplayList
     }
 
     private static string SlotName(ReplayHeader header, Analysis? analysis, int slot)
-        => PlayerName.Rich(ReplayFeed.Holder(slot, uint.MaxValue, header.Players, analysis?.Presence ?? NoPresence, _ui.Text("player.slot", slot + 1)).Name);
+        => UIKitColors.Tint(MenuText.Plain(PlayerName.Plain(ReplayFeed.Holder(slot, uint.MaxValue, header.Players, analysis?.Presence ?? NoPresence, _ui.Text("player.slot", slot + 1)).Name)), ReplayScreen.SlotColour(slot));
 
     /// <summary>The estimates of PLAN 5.6 (damage taken off the health bar, revives given, packs, supplies received, enemies woken, mines, tongues dodged), the
     /// players as columns.</summary>
@@ -794,6 +784,15 @@ internal static class ReplayList
             screen.Toast(UIText.Key("star.failed"), NoticeTone.Alert, ProblemSeconds, UIText.Key("list.viewlog"), ViewLog);
         }
         screen.Rebuild();
+    }
+
+    /// <summary>Why this recording cannot be played now, one sentence of what is missing and what to do; null when it can. The file cannot be
+    /// read (another version, damaged), its rundown or level is not installed, or this game is not where a replay starts (in a level, one starting).</summary>
+    private static string? Unplayable(ReplayEntry e)
+    {
+        if (e.Header == null) return _ui.Text(e.OtherFormat ? "refuse.format" : "refuse.damaged");
+        if (RundownNames.Refusal(e) is { } refusal) return refusal;
+        return CanStart() ? null : _ui.Text(Replayer.Starting ? "list.starting" : "list.inlevel");
     }
 
     // Only out of a level: on the main menu or in a lobby, with no replay playing or on its way.

@@ -9,8 +9,6 @@ using UnityEngine;
 
 namespace ForgeOrdnance;
 
-internal sealed record ItemParameters(ItemEntry[] Items);
-
 /// <summary>Built-in payload <c>Item</c>: pickups of item data blocks, spawned through the game's own item replication.
 /// <c>{ "Type": "Item", "Items": [ { "Item": 101 | "name", "Count": 1..4, "AmmoRatio": 0..1 }, ... ] }</c>, at most
 /// <see cref="ItemList.MaxPickups"/> pickups in all. They arrive in the drop pod: every peer plays the pod (<see cref="DropPod"/>);

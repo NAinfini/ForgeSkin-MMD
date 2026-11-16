@@ -84,11 +84,12 @@ public static class PlayerLooks
         catch (Exception e) { Plugin.Logger.ErrorOnce("visual-player-look-dress", "ForgeVisual player looks: " + provision.Id + " failed to wear a look: " + e.Message); return null; }
     }
 
-    // The models looks hang on bodies, by their root: not part of the game's body, so a hidden person keeps them and re-dressing the body leaves them on.
-    private static readonly Dictionary<IntPtr, Transform> Hung = new();
+    // The models looks hang on bodies, by their root: not part of the game's body, so the look's own hold keeps them and re-dressing the body leaves them on.
+    private static readonly Dictionary<IntPtr, (Transform Root, IntPtr Body)> Hung = new();
 
     /// <summary>Hangs a look's <paramref name="model"/> on <paramref name="body"/> (under the animator's object, keeping its local pose), so it moves,
-    /// shows and goes with the body. What hangs this way is not the game's body: <see cref="Persons.Hide(Player.PlayerAgent, string, PersonHideOptions?)"/> leaves it drawn, <see cref="Models.ShowOwnBody"/>
+    /// shows and goes with the body. What hangs this way is not the game's body: the look's own hold (<see cref="PersonHideOptions.Look"/>) leaves it drawn
+    /// while any other <see cref="Persons.Hide(Player.PlayerAgent, string, PersonHideOptions?)"/> (a suit worn over the person) hides it with the person, <see cref="Models.ShowOwnBody"/>
     /// draws it with the body, and a body dressed again in the game's clothes (a replay stand-in) keeps it (<see cref="Worn"/>).</summary>
     public static void Hang(GameObject model, Animator body)
     {
@@ -96,12 +97,12 @@ public static class PlayerLooks
         if (Hung.Count > 0)
         {
             Gone.Clear();
-            foreach (var (key, root) in Hung) if (root == null || root.WasCollected) Gone.Add(key);
+            foreach (var (key, hung) in Hung) if (hung.Root == null || hung.Root.WasCollected) Gone.Add(key);
             foreach (var key in Gone) Hung.Remove(key);
         }
         var place = model.transform;
         place.SetParent(body.transform, false);
-        Hung[place.Pointer] = place;
+        Hung[place.Pointer] = (place, body.Pointer);
     }
 
     private static readonly List<IntPtr> Gone = new();
@@ -111,8 +112,17 @@ public static class PlayerLooks
     {
         if (Hung.Count == 0) return false;
         for (var at = node; at != null; at = at.parent)
-            if (Hung.TryGetValue(at.Pointer, out var root) && root != null && !root.WasCollected) return true;
+            if (Hung.TryGetValue(at.Pointer, out var hung) && hung.Root != null && !hung.Root.WasCollected) return true;
         return false;
+    }
+
+    /// <summary>The roots of the looks hung on the body whose animator is <paramref name="body"/>, into <paramref name="into"/> (cleared first):
+    /// a hold over the whole person takes them wherever that animator sits against the person.</summary>
+    internal static void HungOn(IntPtr body, List<Transform> into)
+    {
+        into.Clear();
+        foreach (var hung in Hung.Values)
+            if (hung.Body == body && hung.Root != null && !hung.Root.WasCollected) into.Add(hung.Root);
     }
 
     internal static void Withdraw(PlayerLookProvision provision) => Router.Withdraw(provision);
