@@ -108,11 +108,21 @@ public static class PoseFingers
 /// <summary>
 /// The pose copy of a skeleton mapped onto the canonical humanoid (<see cref="ClipRig"/>), for a model with its own humanoid skeleton
 /// that follows a player's body (a character model, a stand-in): link <c>j</c> is canonical joint <c>j</c>, so a caller finds the model
-/// bone of a joint as <c>PoseTarget.Bone(j)</c>. The body joints but the upper chest (<c>spine2</c>) and the shoulders are required; the
-/// upper chest, the shoulders and the 30 finger joints are optional (a hand with only some of its finger joints copies none of them).
+/// bone of a joint as <c>PoseTarget.Bone(j)</c>. Only the hips need a bone: they are the copy's root, whose place and height the model
+/// takes from the body. Any other joint may have none: its link is left out and that part of the model keeps its rest pose on the bone
+/// above it. A finger joint is copied when its hand and the joints before it on that finger have bones.
 /// </summary>
 public static class HumanRig
 {
+    // Per body joint: the joints down its chain its frame may point at, nearest first. The optional joints (upper chest, shoulders)
+    // are no one's direction: a link that is not optional may not point at one.
+    private static readonly int[][] Down =
+    {
+        new[] { 7, 8, 18, 19 }, new[] { 2, 3 }, new[] { 3 }, Array.Empty<int>(), new[] { 5, 6 }, new[] { 6 }, Array.Empty<int>(),
+        new[] { 8, 18, 19 }, new[] { 18, 19 }, new[] { 18, 19 }, new[] { 11, 12, 13 }, new[] { 12, 13 }, new[] { 13 }, Array.Empty<int>(),
+        new[] { 15, 16, 17 }, new[] { 16, 17 }, new[] { 17 }, Array.Empty<int>(), new[] { 19 }, Array.Empty<int>(),
+    };
+
     // ClipRig joint -> humanoid body bone, the fingers after (both in Unity's thumb-to-little order).
     private static readonly BodyBone[] Body =
     {
@@ -121,56 +131,82 @@ public static class HumanRig
         BodyBone.RightShoulder, BodyBone.RightUpperArm, BodyBone.RightLowerArm, BodyBone.RightHand, BodyBone.Neck, BodyBone.Head,
     };
 
-    // Per body joint: the joint its frame points at (-1: none), and whether it may be missing.
-    private static readonly int[] Toward = { 7, 2, 3, -1, 5, 6, -1, 8, 18, 18, 11, 12, 13, -1, 15, 16, 17, -1, 19, -1 };
+    // Whether the body may lack a joint the model has (the upper chest, the shoulders); a joint the model has no bone for is always optional.
     private static readonly bool[] Optional = { false, false, false, false, false, false, false, false, false, true, true, false, false, false, true, false, false, false, false, false };
 
-    /// <summary>Both arms bend as the body's do, each hand placed from its own shoulder at the arm's own proportions.</summary>
+    /// <summary>Both arms bend as the body's do, each hand placed from its own shoulder at the arm's own proportions. A copy leaves out
+    /// the reach of an arm whose upper arm, forearm or hand has no bone (<c>PoseCopy</c>).</summary>
     public static readonly PoseReach[] ArmReach = { new(11, 12, 13), new(15, 16, 17) };
 
-    /// <summary>The links for <paramref name="bones"/> (the model bone of each <see cref="ClipRig"/> joint, null for none). Throws
-    /// <see cref="ArgumentException"/> naming a required joint without a bone.</summary>
-    public static PoseLink[] Links(IReadOnlyList<string?> bones)
+    /// <summary><see cref="Links(IReadOnlyList{string?}, IReadOnlyList{Vector3}?)"/> without rest positions.</summary>
+    public static PoseLink[] Links(IReadOnlyList<string?> bones) => Links(bones, null);
+
+    /// <summary>The links for <paramref name="bones"/> (the model bone of each <see cref="ClipRig"/> joint, null for none). The hips must
+    /// have one (throws <see cref="ArgumentException"/>): the model's root follows the body's hips. A joint without a bone is left out of the
+    /// copy, with the finger joints after it on its finger and the fingers of a hand without one; <see cref="Unposed"/> names them. Each
+    /// bone's frame points at the nearest joint down its chain that has a bone (a thigh at the foot when there is no shin), a hand's and a
+    /// finger joint's from the nearest above; with none it takes the body bone's turn from rest. <paramref name="rest"/>, when given, is
+    /// each bone's rest position in the model's space: a joint resting on the very point of the bone asked about gives no direction, and
+    /// the next one is taken.</summary>
+    public static PoseLink[] Links(IReadOnlyList<string?> bones, IReadOnlyList<Vector3>? rest)
     {
         if (bones.Count != ClipRig.Count) throw new ArgumentException("one bone per ClipRig joint, " + ClipRig.Count + " in all", nameof(bones));
-        // A joint without a bone gets a name no skeleton has, so the optional link is skipped and the names stay unique.
-        string Name(int j) => bones[j] ?? "\0" + ClipRig.Names[j];
+        if (rest != null && rest.Count != ClipRig.Count) throw new ArgumentException("one rest position per ClipRig joint, " + ClipRig.Count + " in all", nameof(rest));
+        if (bones[0] == null) throw new ArgumentException("the joint hip has no bone: the model's root follows the body's hips, so one bone must stand for them", nameof(bones));
+        var has = new bool[ClipRig.Count];
+        for (var j = 0; j < ClipRig.BodyCount; j++) has[j] = bones[j] != null;
+        // A finger joint needs its hand and the joints before it on its finger (parents come first in ClipRig).
+        for (var j = ClipRig.BodyCount; j < ClipRig.Count; j++) has[j] = bones[j] != null && has[ClipRig.Parent[j]];
+        // A joint without a bone gets a name no skeleton has, so its optional link is skipped and the names stay unique.
+        string Name(int j) => has[j] ? bones[j]! : "\0" + ClipRig.Names[j];
+        bool Points(int j, int at) => has[at] && (rest == null || (rest[at] - rest[j]).Length() >= ClipRig.ShortestBone);
         var links = new PoseLink[ClipRig.Count];
         for (var j = 0; j < ClipRig.BodyCount; j++)
         {
-            if (bones[j] == null && !Optional[j]) throw new ArgumentException("the joint " + ClipRig.Names[j] + " has no bone", nameof(bones));
-            links[j] = j switch
+            var optional = Optional[j] || !has[j];
+            int toward = -1, from = -1;
+            foreach (var at in Down[j]) if (Points(j, at)) { toward = at; break; }
+            // A hand points on from its forearm, else from its upper arm.
+            if (j is 13 or 17) from = Points(j, j - 1) ? j - 1 : Points(j, j - 2) ? j - 2 : -1;
+            links[j] = new PoseLink(Name(j), Body[j], toward, from, towardBody: j is 8 or 9 && toward == 18 ? BodyBone.Neck : null, optional: optional);
+        }
+        for (var j = ClipRig.BodyCount; j < ClipRig.Count; j++)
+        {
+            // From the joint before it on its finger, else the one before that, the hand last.
+            var from = -1;
+            for (var up = ClipRig.Parent[j]; from < 0; up = ClipRig.Parent[up])
             {
-                8 or 9 => new PoseLink(Name(j), Body[j], toward: 18, towardBody: BodyBone.Neck, optional: Optional[j]),
-                13 or 17 => new PoseLink(Name(j), Body[j], from: j - 1),
-                _ => new PoseLink(Name(j), Body[j], toward: Toward[j], optional: Optional[j]),
-            };
+                if (Points(j, up)) from = up;
+                if (up < ClipRig.BodyCount) break;
+            }
+            links[j] = new PoseLink(Name(j), (BodyBone)((int)BodyBone.LeftThumbProximal + j - ClipRig.BodyCount), from: from, optional: true);
         }
-        var whole = new bool[2];
-        for (var hand = 0; hand < 2; hand++)
-        {
-            whole[hand] = true;
-            for (var k = 0; k < PoseFingers.PerHand; k++) whole[hand] &= bones[ClipRig.BodyCount + hand * PoseFingers.PerHand + k] != null;
-        }
-        var fingers = PoseFingers.Links(ClipRig.BodyCount, 13, 17, bone =>
-        {
-            var j = ClipRig.BodyCount + (int)bone - (int)BodyBone.LeftThumbProximal;
-            return whole[(j - ClipRig.BodyCount) / PoseFingers.PerHand] ? Name(j) : "\0" + ClipRig.Names[j];
-        });
-        Array.Copy(fingers, 0, links, ClipRig.BodyCount, PoseFingers.Count);
         return links;
     }
 
-    /// <summary>The bones that wear the arms of a model on this rig on the first-person body (<c>Models.WearFirstPerson</c> with
-    /// <c>Descendants</c>): the hips line the skeletons up, each upper arm, forearm, hand and finger joint is worn on the game's and sized
-    /// by its own arm. Only whole hands list their fingers (as <see cref="Links"/>); the arm joints are required (throws
-    /// <see cref="ArgumentException"/> as <see cref="Links"/> does).</summary>
-    public static WearBone[] ArmWear(IReadOnlyList<string?> bones)
+    /// <summary>The joints <paramref name="links"/> (from <see cref="Links(IReadOnlyList{string?}, IReadOnlyList{Vector3}?)"/>) leave out
+    /// of the copy, by <see cref="ClipRig"/> name: those parts of the model keep their rest pose on the bone above them.</summary>
+    public static string[] Unposed(IReadOnlyList<PoseLink> links)
     {
-        var links = Links(bones);
+        var names = new List<string>();
+        for (var j = 0; j < links.Count && j < ClipRig.Count; j++) if (links[j].Model[0] == '\0') names.Add(ClipRig.Names[j]);
+        return names.ToArray();
+    }
+
+    /// <summary><see cref="ArmWear(IReadOnlyList{string?}, IReadOnlyList{Vector3}?)"/> without rest positions.</summary>
+    public static WearBone[] ArmWear(IReadOnlyList<string?> bones) => ArmWear(bones, null);
+
+    /// <summary>The bones that wear the arms of a model on this rig on the first-person body (<c>Models.WearFirstPerson</c> with
+    /// <c>Descendants</c>): the hips line the skeletons up, each upper arm, forearm, hand and finger joint that has a bone (as
+    /// <see cref="Links(IReadOnlyList{string?}, IReadOnlyList{Vector3}?)"/> says) is worn on the game's and sized by its own arm. Empty when
+    /// either upper arm has no bone: the two skeletons are lined up by both upper arms and the hips, so such a model wears no first-person arms.</summary>
+    public static WearBone[] ArmWear(IReadOnlyList<string?> bones, IReadOnlyList<Vector3>? rest)
+    {
+        var links = Links(bones, rest);
+        if (links[11].Model[0] == '\0' || links[15].Model[0] == '\0') return Array.Empty<WearBone>();
         var wear = new List<WearBone> { new(links[0].Model, BodyBone.Hips, worn: false) };
         foreach (var j in new[] { 11, 12, 13, 15, 16, 17 })
-            wear.Add(new WearBone(links[j].Model, Body[j], scale: j < 14 ? BodyMeasure.LeftArm : BodyMeasure.RightArm));
+            if (links[j].Model[0] != '\0') wear.Add(new WearBone(links[j].Model, Body[j], scale: j < 14 ? BodyMeasure.LeftArm : BodyMeasure.RightArm));
         for (var k = 0; k < PoseFingers.Count; k++)
         {
             var j = ClipRig.BodyCount + k;
@@ -466,14 +502,23 @@ internal static class PoseSolver
         return correction;
     }
 
-    /// <summary>The model's size against the body's (root height over root height). Null when it worked; otherwise why not (a root
-    /// below 0.1 m).</summary>
+    /// <summary>The model's size against the body's (root height over root height). Null when it worked; otherwise why not (the body's
+    /// root below 0.1 m). A model whose root rests on its floor or under it has no height to scale by: the ratio is 0, so its root keeps
+    /// its rest height and takes none of the body's rise and sway.</summary>
     internal static string? Ratio(float modelRootHeight, float bodyRootHeight, out float ratio)
     {
         ratio = 1f;
-        if (bodyRootHeight < 0.1f || modelRootHeight < 0.1f) return "the root (hips) stands at " + bodyRootHeight.ToString("0.###") + " m on the body and " + modelRootHeight.ToString("0.###") + " m on the model";
-        ratio = modelRootHeight / bodyRootHeight;
+        if (bodyRootHeight < 0.1f) return "the root (hips) stands at " + bodyRootHeight.ToString("0.###") + " m on the body";
+        ratio = Math.Max(0f, modelRootHeight) / bodyRootHeight;
         return null;
+    }
+
+    /// <summary>The reaches of <paramref name="reaches"/> a copy can bend: those whose three links are all copied (<paramref name="skip"/>).</summary>
+    internal static List<PoseReach> Reachable(IReadOnlyList<PoseReach> reaches, bool[] skip)
+    {
+        var kept = new List<PoseReach>(reaches.Count);
+        foreach (var r in reaches) if (!skip[r.Upper] && !skip[r.Lower] && !skip[r.End]) kept.Add(r);
+        return kept;
     }
 
     /// <summary>A limb's length on the model over its length on the body (upper joint to middle joint to end, each at rest in its own

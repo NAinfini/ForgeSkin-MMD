@@ -10,8 +10,8 @@ public sealed partial class UIKitMod
 {
     /// <summary>
     /// Adds a switch for enemy health bars: while it is <see cref="EnemyHealthBar.Active"/>, an enemy the local player hits gets a thin
-    /// bar over its head showing the health the game holds for it (on every machine the game applies every player's hits, so a
-    /// teammate's damage shows too). The piece each hit takes flashes and then shrinks away. Bars show only for enemies in sight (a wall
+    /// bar over its head showing the health the host holds for it (the host's ForgeCore reports every change to its clients, so a
+    /// teammate's damage shows too) less the local player's own hits the host has not settled yet. The piece each hit takes flashes and then shrinks away. Bars show only for enemies in sight (a wall
     /// between hides the bar), fade a few seconds after the last hit and go at once when the enemy dies. Damage numbers and kill marks are
     /// the hit feedback's (<see cref="AddHitFeedback"/>). The player can turn every bar off in ForgeUI's config
     /// (<c>EnemyHealthBars / Enabled</c>).
@@ -79,6 +79,8 @@ internal static class EnemyHealthBars
     private static readonly Transform?[]?[] Points = new Transform?[]?[EnemyBarBook.Capacity];
     private static readonly Renderer?[]?[] Skins = new Renderer?[]?[EnemyBarBook.Capacity];
     private static readonly float[] Size = new float[EnemyBarBook.Capacity];
+    // Each bar's enemy as ForgeCore's health reads name it (Combat.EnemyKey).
+    private static readonly long[] HealthKeys = new long[EnemyBarBook.Capacity];
     private static readonly Vector3[] Anchors = new Vector3[EnemyBarBook.Capacity];
     private static readonly int[] Due = new int[SightPerFrame];
     private static ConfigEntry<bool>? _enabled;
@@ -104,7 +106,7 @@ internal static class EnemyHealthBars
             ForgeCore.GameHooks.EnemyDespawned.Before(Gone);
             ForgeCore.GameHooks.EnemyDestroyed.Before(Gone);
         }
-        PatchGroups.Ensure(PatchGroup.LocalHits);
+        LocalHits.Ensure();
         _enabled ??= ForgeCore.Settings.Bind(Plugin.Id, "EnemyHealthBars", "Enabled", true,
             "Draws the enemy health bars that mods such as Forge Frames switch on: only for enemies you hit and can see. Turn off to hide them in every mod.");
         if (_view == null)
@@ -147,8 +149,9 @@ internal static class EnemyHealthBars
         Array.Clear(Skins);
     }
 
-    /// <summary>A hit of the local player as the game applied it: <paramref name="before"/> − <paramref name="after"/> health out of
-    /// <paramref name="max"/>; a drop to zero ends the bar at once.</summary>
+    /// <summary>A hit of the local player, as predicted when its request went out (or as the host settled it, for one that was not
+    /// predicted): <paramref name="before"/> − <paramref name="after"/> health out of <paramref name="max"/>; a drop to zero ends
+    /// the bar at once.</summary>
     internal static void LocalHit(Dam_EnemyDamageBase target, float before, float after, float max)
     {
         var style = Live;
@@ -166,6 +169,7 @@ internal static class EnemyHealthBars
     private static void Attach(int slot, Dam_EnemyDamageBase target)
     {
         Damage[slot] = target;
+        HealthKeys[slot] = ForgeCore.Combat.EnemyKey(target);
         Points[slot] = null;
         Skins[slot] = null;
         var owner = target.Owner;
@@ -223,7 +227,7 @@ internal static class EnemyHealthBars
         }
     }
 
-    /// <summary>Per frame, from the kit's element: synced health, trails and life of every bar, line of sight for a few of them.</summary>
+    /// <summary>Per frame, from the kit's element: the health (<see cref="ForgeCore.Combat.EnemyHealth"/>), trails and life of every bar, line of sight for a few of them.</summary>
     internal static bool Prepare(float now, float dt, out EnemyHealthBarStyle? style, out ClipTransform clip, out Vector3 eye)
     {
         clip = default;
@@ -244,7 +248,8 @@ internal static class EnemyHealthBars
                 Detach(i);
                 continue;
             }
-            var health = damage._Health_k__BackingField;
+            // The host's value: the game's own health of an enemy never changes on a client.
+            var health = ForgeCore.Combat.EnemyHealth(HealthKeys[i], damage);
             if (health <= 0f) { Book.Remove(bar.Key); Detach(i); continue; }
             var max = damage._HealthMax_k__BackingField;
             Book.Sync(i, max > 0f ? health / max : 0f);

@@ -153,6 +153,16 @@ internal static class NetChecks
         later.Flush();
         check(behind < 3 && veteran.Node.World == guess && fresh.Node.World == guess && guess.Number > 3, "epoch: a client that has seen higher numbers than the host's world guesses the number the host mints");
 
+        // A player who joins a level under way after a checkpoint reload builds that level in the world it was given.
+        fresh.Node.NoteWorld(NetWorldReason.Checkpoint);
+        later.Flush();
+        var dropIn = later.Join(3);
+        dropIn.Node.Open("later");
+        later.Settle();
+        var given = dropIn.Node.World;
+        dropIn.Node.NoteWorld(NetWorldReason.Build);
+        check(given.Reason == NetWorldReason.Checkpoint && given == fresh.Node.World && dropIn.Node.World == given, "epoch: a player who joins a level after a checkpoint reload builds it in the host's world");
+
         var late = Net.Dropped(Net.DropOutOfOrder);
         hostPos.Broadcast(new Ping { Sequence = 1 });
         hostPos.Broadcast(new Ping { Sequence = 2 });
@@ -202,6 +212,15 @@ internal static class NetChecks
         joinerMod.PlayerState<Ping>("act");
         hub.Settle();
         check(joinerPick.TryGet(1, out pick) && pick[0] == 7, "rows: a player who joins later gets the value");
+        // The joiner alone reads its session as ended and entered again: it holds nothing, while the others still count it compatible.
+        hub.Players.Remove(joiner);
+        joiner.Node.NoteSession();
+        joiner.Node.Tick(hub.Now);
+        hub.Players.Add(joiner);
+        joiner.Node.NoteSession();
+        var emptied = !joinerPick.TryGet(1, out _);
+        hub.Settle();
+        check(emptied && joinerPick.TryGet(1, out pick) && pick[0] == 7, "rows: a player who greets again after losing what it held is sent the values again");
         hub.Leave(host, 2);
         hub.Settle();
         check(!joinerPick.TryGet(1, out _) && !clientPick.TryGet(1, out _), "rows: the value of a player who left is forgotten");
@@ -330,6 +349,31 @@ internal static class NetChecks
         try { lossy.To(2, new byte[NetNode.ChunkBytes + 1]); }
         catch (ArgumentException) { refused = true; }
         check(refused, "budget: an unreliable body that does not fit one packet is refused where it is sent");
+
+        // What waits for one player holds nothing back from another on the same route, and each player still reads the route in
+        // the order it was sent.
+        var trio = new Hub();
+        var sender = trio.Join(1).Node.Open("fair");
+        var slowMod = trio.Join(2).Node.Open("fair");
+        var quickMod = trio.Join(3).Node.Open("fair");
+        var slow = new List<int>();
+        var quick = new List<int>();
+        var docs = sender.Bytes("docs", 1, (_, _) => { }, maxBytes: NetNode.QueueBytes);
+        slowMod.Bytes("docs", 1, (_, data) => slow.Add(data.Length), maxBytes: NetNode.QueueBytes);
+        quickMod.Bytes("docs", 1, (_, data) => quick.Add(data.Length), maxBytes: NetNode.QueueBytes);
+        trio.Settle();
+        const int Long = 1024 * 1024, Short = 100, Medium = 3 * NetNode.ChunkBytes;
+        docs.To(2, new byte[Long]);
+        docs.To(2, new byte[Short]);
+        docs.To(3, new byte[Short]);
+        docs.To(3, new byte[Medium]);
+        docs.To(3, new byte[Short + 1]);
+        trio.Step();
+        check(quick.Count >= 1 && quick[0] == Short && slow.Count == 0, "budget: a short message is not held behind a long body that waits for another player on the same route");
+        trio.Step();
+        check(quick.Count == 3 && quick[1] == Medium && quick[2] == Short + 1 && slow.Count == 0, "budget: a body that waits for one player is sent in turn with a long body to another, and that player's later message stays behind it");
+        for (var i = 0; i < 200 && slow.Count < 2; i++) trio.Step();
+        check(slow.Count == 2 && slow[0] == Long && slow[1] == Short, "budget: a player's message sent after its long body arrives after it");
     }
 
     private static void Table(Action<bool, string> check)

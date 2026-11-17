@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2
+
+Needs ForgeCore 1.0.2, which carries these fixes.
+
+- Fixed: an action started while crouching sank your body into the floor, and one after a jump left it floating; in the view from behind your body now stands on your feet.
+- Fixed: skin holograms on your gun (ForgeSkin) were drawn in the middle of the screen during the dance and other actions seen from behind.
+
 ## 1.0.1
 
 - Needs ForgeCore 1.0.1 and no other Forge package: ForgeUI, ForgeAudio and ForgeVisual are now part of ForgeCore; remove them when you update.

@@ -31,8 +31,14 @@ public static partial class Combat
         public Vector3 End { get; private set; }
         public bool HasHit { get; private set; }
         /// <summary>The damage receiver the hit landed on, or null.</summary>
-        public IDamageable? Receiver => HasHit && _hit.rayHit.collider != null
-            ? _hit.rayHit.collider.GetComponentInParent<IDamageable>() : null;
+        public IDamageable? Receiver
+        {
+            get
+            {
+                var collider = HasHit ? _hit.rayHit.collider : null;
+                return collider != null ? collider.GetComponentInParent<IDamageable>() : null;
+            }
+        }
 
         /// <summary>Traces the held gun's shot along the player's own camera: from the look camera's position along its forward.</summary>
         public void Trace(BulletWeapon weapon, in BulletProfile profile)
@@ -183,14 +189,16 @@ public static partial class Combat
                 var collider = candidate.collider;
                 var actual = collider?.GetComponentInParent<IDamageable>();
                 if (collider == null || actual == null || ReceiverIdentity(actual) != identity) continue;
+                var along = candidate.distance;
                 if (exitsContainingColliders)
                 {
                     var centre = origin + direction * distance;
                     if (Vec.SqrLength(collider.ClosestPoint(centre) - centre) >= 0.00000001f) continue;
-                    candidate.distance = distance - candidate.distance;
+                    along = distance - along;
+                    candidate.distance = along;
                 }
-                if (candidate.distance >= nearest) continue;
-                nearest = candidate.distance;
+                if (along >= nearest) continue;
+                nearest = along;
                 hit = candidate;
             }
             return float.IsFinite(nearest);

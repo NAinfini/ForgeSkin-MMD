@@ -28,6 +28,14 @@ public sealed class OwnBodyView : IDisposable
     // The local body's animator object is at scale 1.2 and the same body of a bot at 1 (upper arm 39.6 against 33 cm, forearm 34.8 against 29, read in the game): normally only its shadow shows, so nobody sees it. Drawn beside other players it would stand a fifth taller than they do.
     private readonly Transform? _body;
     private readonly Vector3 _bodyScale;
+    // The local body's animator moves its own object by the clips' root motion: the game turns that off only on the bodies it places from the
+    // network (PlayerLocomotion.UpdateMovementFromSync), and nothing in it handles OnAnimatorMove. So the local body's object drifts from the
+    // player's feet with crouch and jump clips (down while crouched, up after a jump), which only its shadow ever showed. While the body is
+    // shown it stands on the player's feet with root motion off, as other players' bodies do; both come back as they were.
+    private readonly Animator? _animator;
+    private readonly Transform? _root;
+    private readonly Vector3 _rootAt;
+    private readonly bool _rootMotion;
     // The game's effect meshes on the rig's bones (FX_NanoSwarm_Looping_Head_01 and so on, a cloud of black shards round each body part): not body, the game alone decides when they show.
     private const string RigEffect = "FX_";
 
@@ -43,15 +51,17 @@ public sealed class OwnBodyView : IDisposable
         if (model != null)
         {
             var head = new HashSet<IntPtr>();
-            if (model.m_gfxHead != null)
-                foreach (var part in model.m_gfxHead)
+            var heads = model.m_gfxHead;
+            if (heads != null)
+                foreach (var part in heads)
                 {
                     if (part == null) continue;
                     if (options.KeepHead) foreach (var r in part.GetComponentsInChildren<Renderer>(true)) head.Add(r.Pointer);
                     else if (options.HeadAndArms) Part(part);
                 }
-            if (options.HeadAndArms && model.m_gfxArms != null)
-                foreach (var part in model.m_gfxArms)
+            var arms = options.HeadAndArms ? model.m_gfxArms : null;
+            if (arms != null)
+                foreach (var part in arms)
                     if (part != null) Part(part);
             foreach (var r in model.GetComponentsInChildren<Renderer>(true))
                 if (!head.Contains(r.Pointer)) Draw(r, options, mask);
@@ -62,6 +72,17 @@ public sealed class OwnBodyView : IDisposable
         if (body != null && (model == null || !body.IsChildOf(model.transform)))
             foreach (var r in animator!.GetComponentsInChildren<Renderer>(true))
                 if (PlayerLooks.Worn(r.transform)) Draw(r, options, mask);
+        if (body != null)
+        {
+            _animator = animator;
+            _root = body;
+            _rootAt = body.localPosition;
+            _rootMotion = animator!.applyRootMotion;
+            animator.applyRootMotion = false;
+            var at = body.position;
+            at.y = agent.Position.y;
+            body.position = at;
+        }
         HeldOff.HoldAll(agent.FPItemHolder, _first);
         // A look cut for first person is whole again, as the game's head and arm parts are.
         _whole = options.HeadAndArms;
@@ -71,7 +92,7 @@ public sealed class OwnBodyView : IDisposable
         {
             _body = body;
             _bodyScale = _body.localScale;
-            _body.localScale = Vector3.one;
+            _body.localScale = new Vector3(1f, 1f, 1f);
         }
         _showing = true;
     }
@@ -110,6 +131,8 @@ public sealed class OwnBodyView : IDisposable
         if (!_showing) return;
         _showing = false;
         if (_body != null && !_body.WasCollected) _body.localScale = _bodyScale;
+        if (_root != null && !_root.WasCollected) _root.localPosition = _rootAt;
+        if (_animator != null && !_animator.WasCollected) _animator.applyRootMotion = _rootMotion;
         foreach (var (r, mode, layer, off, enabled) in _drawn)
         {
             if (r == null || r.WasCollected) continue;

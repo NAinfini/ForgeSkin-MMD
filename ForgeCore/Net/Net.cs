@@ -132,7 +132,9 @@ internal sealed class NetNode
     private readonly Dictionary<ulong, Peer> _peers = new();
     private readonly ulong[] _members = new ulong[8], _roster = new ulong[8], _added = new ulong[8], _removed = new ulong[8];
     private readonly List<ulong> _gone = new(4);
-    private readonly Queue<Bulk> _bulk = new();
+    // The waiting bodies, oldest first. A player's bodies leave in that order; the players take turns (<see cref="DrainBulk"/>).
+    private readonly List<Bulk> _bulk = new();
+    private int _bulkTurn;
     private readonly List<(NetChannel.IPart Part, ulong To)> _resync = new(), _resyncing = new();
     private int _memberCount, _addedCount, _removedCount;
     private long _queuedBytes;
@@ -292,7 +294,9 @@ internal sealed class NetNode
         if (_host == 0) return;
         if (IsHost) { Mint(reason); return; }
         if (_world.Number == 0) return;
-        if (_world.Reason == reason && !_observed) { _observed = true; return; }
+        // A player who joins a level under way was given the world its host is in. After a checkpoint reload that world still
+        // carries the number the level was built under, so this player's own build of that level is the event behind it too.
+        if (!_observed && (_world.Reason == reason || reason == NetWorldReason.Build && _world.Reason == NetWorldReason.Checkpoint)) { _observed = true; return; }
         _predicted = true;
         _askedAt = _now;
         SetWorld(Next(reason), true);
@@ -465,13 +469,19 @@ internal sealed class NetNode
         peer.Answered = true;
         // Answer first, so the other side has judged this one before the state a matching mod sends below arrives. An answer is
         // never answered, so they cannot loop.
-        if (!answer) SendHello(sender, true);
+        if (!answer)
+        {
+            SendHello(sender, true);
+            // The answer carries everything a greeting does, so this player is not greeted as well: a greeting it gets after
+            // it judged this one would have it send its state a second time (see NetChannel.Judge).
+            if (!peer.Greeted) { peer.Greeted = true; peer.GreetedAt = _now; }
+        }
         var listed = new HashSet<NetChannel>();
         foreach (var (name, format, content, held) in cells)
         {
             if (!_byName.TryGetValue(name, out var channel)) continue;
             listed.Add(channel);
-            Guard(channel, c => c.Judge(sender, format, content, held));
+            Guard(channel, c => c.Judge(sender, format, content, held, !answer));
         }
         foreach (var channel in _channels)
             if (!listed.Contains(channel)) Guard(channel, c => c.Silent(sender));
@@ -535,26 +545,56 @@ internal sealed class NetNode
         }
         route.Queued++;
         _queuedBytes += body.Length;
-        _bulk.Enqueue(new Bulk { Route = route, To = to, Head = head, Body = body, Stamp = _world });
+        _bulk.Add(new Bulk { Route = route, To = to, Head = head, Body = body, Stamp = _world });
     }
 
-    private void Done(Bulk item)
+    /// <summary>Whether a body of <paramref name="route"/> is still waiting for <paramref name="to"/>. While one is, that player's
+    /// next message of the route waits behind it, so the player reads the route in the order it was sent; the route's messages to
+    /// every other player are not held.</summary>
+    internal bool Waiting(NetChannel.Route route, ulong to)
     {
-        _bulk.Dequeue();
+        foreach (var item in _bulk)
+            if (item.To == to && ReferenceEquals(item.Route, route)) return true;
+        return false;
+    }
+
+    private void Done(int index)
+    {
+        var item = _bulk[index];
+        _bulk.RemoveAt(index);
         item.Route.Queued--;
         _queuedBytes -= item.Body.Length;
+    }
+
+    /// <summary>The body the next part is taken from: the oldest waiting body of the next player in turn, counted from the body served
+    /// last. One player's bodies therefore leave whole and in order, and a long body to one player does not hold the others' back.</summary>
+    private int NextBulk()
+    {
+        var count = _bulk.Count;
+        for (var step = 0; step < count; step++)
+        {
+            var index = (_bulkTurn + step) % count;
+            var to = _bulk[index].To;
+            var oldest = true;
+            for (var earlier = 0; earlier < index && oldest; earlier++) oldest = _bulk[earlier].To != to;
+            if (oldest) return index;
+        }
+        return 0;
     }
 
     private void DrainBulk()
     {
         while (_bulk.Count != 0 && _tokens > 0)
         {
-            var item = _bulk.Peek();
+            var index = NextBulk();
+            var item = _bulk[index];
+            // A body that ends here leaves the list, so the body after it takes its place: the turn stays on this index.
+            _bulkTurn = index;
             var scope = item.Route.Scope;
             if (!IsMember(item.To) || scope != NetScope.Session && (item.Stamp.Number != _world.Number || scope == NetScope.Checkpoint && item.Stamp.Checkpoint != _world.Checkpoint))
             {
                 // Its player left or its world ended while it waited.
-                Done(item);
+                Done(index);
                 Net.Drop(Net.DropBulkVoid);
                 continue;
             }
@@ -569,8 +609,8 @@ internal sealed class NetNode
             Array.Copy(item.Body, item.Offset, packet, at, size);
             Send(item.Route.Event, packet, item.To, NetDelivery.Reliable);
             item.Offset += size;
-            if (item.Offset < item.Body.Length) continue;
-            Done(item);
+            if (item.Offset < item.Body.Length) _bulkTurn = index + 1;
+            else Done(index);
         }
         if (_resync.Count == 0 || _queuedBytes > QueueBytes / 2) return;
         // State whose body was dropped on a full queue: each part sends that player what it is owed (the whole table, the value, the copy).

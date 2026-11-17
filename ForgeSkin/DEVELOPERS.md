@@ -1,9 +1,18 @@
 # ForgeSkin for developers
 
 A standalone mod: it depends on ForgeCore and BepInExPack_GTFO only. Game events that other packages also watch come from
-ForgeCore `GameHooks` (gear parts spawned, gear spawn completed, enemy damage, reload start and end, dry fire, unwield,
+ForgeCore `GameHooks` (gear parts spawned, gear spawn completed, the local player's hit requests on enemies (`EnemyHitSent`: made where
+the shot or swing happens, host or client, in its own frame; a gun's shot is a hit when one is sent in its frame or the next, else
+a Miss, which gives Accuracy and Miss the same on every machine, and the item that sent the latest one is credited with the
+settlements below), reload start and end, dry fire, unwield,
 flashlight, glue fire, throw, resource pack, player revived, item spawned, game state, the synced guns' fire, a player's health
-arriving) and ForgeCore `GameEvents` (local player down); only methods no other package patches are ForgeSkin's own Harmony
+arriving), ForgeCore `GameEvents` (local player down) and ForgeCore `Combat` for the local player's hits and kills on enemies, the
+same on host and client. The game settles a client's hits on the host only, so what shows follows `Combat.OwnHitPredicted` (the hit
+as predicted in its own frame: the Kill and Hit events, kill sounds and the kill and damage counters on screen, credited to the item
+in hand) and `Combat.OwnHitCorrected` (the difference once the host settled it or 3 s passed without: the counters take it, and only
+a kill or hit that never showed raises its event then), and what is saved follows `Combat.OwnHitSettled` (the host's settlement:
+wear with kills counts only these). A prediction no host will settle (`Confirmable` false) shows its Hit and counts nothing. An
+explosion carries no source agent in the game, so a mine's kills are nobody's, on host and client alike. Only methods no other package patches are ForgeSkin's own Harmony
 patches in `Native/Hooks.cs` (fire animation, melee attack, mine and sentry placed, the placer's mine-spawned callback, item used, equip, aim, the spawn-complete
 overrides of melee, mine, sentry and scanner, item layer, first-person rendering). Each patch class installs on its own and
 skips a target whose function start ForgeCore refuses (`Hooks.Unsupported`); one that fails logs `skin-hook-unavailable` and
@@ -71,19 +80,27 @@ arriving through `GameHooks.HealthSetReceived` falling to 0 or rising from it). 
 
 A character skin is a skin document with `character` (target `character`); its format is defined only in `Core/Character.cs`
 (the header has a full example) and checked by `SkinPack.Validate` (`bad-character-*`) and, when the model is read,
-`CharacterRig.Matches` (the descriptor's hashes) and `CharacterRig.Check` (the bone map against the model's rest pose, ForgeCore
-`RigMap.Check`). A character pack is its own Thunderstore mod depending on ForgeSkin, found as gun packs are. `Native/Characters.cs`
+`CharacterRig.Matches` (the descriptor's hashes) and `CharacterRig.Check` (only what cannot work: no bone for `hip`, a mapped or
+spring bone the skeleton lacks, a capsule on an unmapped joint, materials unlike the descriptor's). Of the 50 joints only `hip` is
+required, the pose copy's root; a joint left out of `bones` keeps its rest pose on the bone above it, so a model without fingers,
+without an arm or with unlike sides is a character too. `CharacterRig.Links` and `CharacterRig.Arms` (ForgeCore `HumanRig.Links` and
+`HumanRig.ArmWear` on the map and the model's rest positions) are the one rule of what each joint does, for the plugin and the
+editor's preview. A character pack is its own Thunderstore mod depending on ForgeSkin, found as gun packs are. `Native/Characters.cs`
 wears it, all through ForgeCore: the model is built once by `ImportedModels` (format 2, `Skin.BuildCharacter`, its pictures decoded
 over earlier frames with `ImportedModels.Prepare`), hung on the body's animator with `PlayerLooks.Hang`, scaled to the body's height
 times the author's `height` (`Characters.Fit`: `CharacterRig.Stature` against the body's bind-pose head and feet; spring radii,
 capsule radii and gravity scale with it), drawn on the layer of the body's first active mesh (the lobby figure keeps inactive spares
-on a layer its camera does not draw), posed by `Models.CopyPose` over `HumanRig.Links` and `HumanRig.ArmReach` with `Follow`, its spring
+on a layer its camera does not draw), posed by `Models.CopyPose` over `CharacterRig.Links` and `HumanRig.ArmReach` with `Follow`, its spring
 chains bound with `Chains.Bind` at rest (capsules on the mapped joints), and the original person hidden with `Persons.Hide`
 (`Look = true`). The local player wears their own pick, a teammate the character entry of their look (same pack and content, else
 the original person), a bot always the original; who wears what is put right twice a second only after something changed
 (`Characters.Dirty`). A model that cannot be built or posed leaves the original person and logs `skin-character-failed` once.
+What a model has no bone for is never silent: `skin-character-part-skipped` once per skin names the joints left in their rest pose,
+a model without both upper arms (the game's own first-person arms show) and a height that cannot be measured (no head, or a head
+not above the feet: the model shows at its own size); ForgeCore logs an arm that does not reach its grip
+(`visual-pose-copy-limb-does-not-reach`) and hips resting on the model's floor (`visual-pose-copy-root-does-not-rise`).
 The local player also sees the model's own arms in first person: a second instance of the model worn on the game's first-person arms
-with `Models.WearFirstPerson` (`HumanRig.ArmWear`, `Hide = BodyParts.Arms`, `Descendants`, the `hide` materials as `LeaveOut`), so its
+with `Models.WearFirstPerson` (`CharacterRig.Arms`, `Hide = BodyParts.Arms`, `Descendants`, the `hide` materials as `LeaveOut`), so its
 hands and fingers are the game's on the grip; when it cannot be built the game's own arms stay (ForgeCore logs why). The author's
 `height` does not touch these arms: each bone sits on the game's first-person bone, scaled to the game's arm lengths
 (`WearSolver`), which is what keeps the hands on the grip.
@@ -172,6 +189,23 @@ values, only where the author allowed them.
 `<id>~edge`) when it builds the pack; they count toward the 8 code effects. `SkinPack.Validate` checks `flicker`, `opacity`,
 `scanlines` and `edgeGlow` in 0..1 and `color2` as an RGB vector (`bad-vector`).
 
+## Sight reticles
+
+A holographic sight's lens (`Unlit/HolographicSight_3Layers`, also the thermal `Unlit/HolographicSight_Thermal`) draws up to three
+reticle layers additively, picture x colour: `_Reticule<L>`, `_ReticuleColor<L>` (`[HDR]`), `_ReticuleScale<L>`,
+`_ReticuleOffset<L>` (projection depth) and `_Fade<L>` (0 not drawn), L = A, B, C. A skin sets them with the texture channels
+`reticleA`..`reticleC` of the lens material's override (`TextureChannels.Property`) and `params.reticles` keyed by the same
+channels: `color` (sRGB) and `intensity` (`ColourSpace.Glow`, the property's own units, alpha kept; `intensity` alone scales
+the game's colour), `scale`, `offset`, `visible` (`_Fade<L>` 1 or 0); left out keeps the game's. `pack.build` stores a reticle
+picture with its colour multiplied by its alpha, so a picture on a transparent background shows only its lines whether the
+shader reads alpha or not, and the plugin clamps it (a layer scaled below 1 shows it once). `SkinPack.Validate` rejects
+reticle values under another channel, non-finite numbers and reticles on an attachment's material (`bad-reticle`). In game
+`SkinnedGear.Reticles` writes only what the material's shader has and logs the rest once (`skin-reticle-skipped`); a wear stage
+keeps the reticle. Teammates get it through the pack and its hash like every other material value (nothing on the wire), but
+see it only through the sight, which in practice is the player aiming it. `assets.apply` writes the same values into the game
+files (a layer the material has no picture slot for is reported), and the Skins export writes them as properties (an
+intensity without a colour is reported, `reticleIntensity`). Folder matching never assigns a reticle channel.
+
 ## Charms
 
 An attachment's `charm` hangs its model and screen on a rope generated in code, from the attachment's origin (its -Y the
@@ -204,9 +238,13 @@ synced.
 
 The editor's 人物模型 tab (`Editor/src/renderer/character/`) reads a skinned `.glb` with three.js, matches its bones to the
 canonical humanoid with the site's own matcher (`Web/src/forge/animation-bone-match.ts`: `matchHumanBones` for the body,
-`matchHumanFingers` for the 30 finger joints) and holds the match to ForgeCore's rig check through the backend:
-`character.check { joints }` (canonical joint to rest position, game axes) returns the joints of `CharacterRig.Required` it lacks,
-`RigMap.Check`'s findings as kinds the editor words itself, whether the body faces backwards, and which hands keep their fingers.
+`matchHumanFingers` for the 30 finger joints; a VRM file's own humanoid comes first and the matcher fills only the joints it
+does not name, on import and on 重新自动匹配 alike, `autoMatch` in `model.ts`; a joint neither recognises stays empty, a bone serves one joint, and the author
+may give any joint a bone or leave it out) and asks the backend how the game will take the match:
+`character.check { joints }` (canonical joint to rest position, game axes) returns the joints of `CharacterRig.Required` it lacks
+(the hip: the only thing that blocks), the joints the game leaves in their rest pose, whether the model wears its own
+first-person arms, which hands reach for the grip, and, for the author only, `RigMap.Check`'s findings as kinds the editor
+words itself and whether the body faces backwards.
 Spring bones are previewed like charms: `springs.simulate { chain, nodes, strands?, frames }` runs ForgeCore's linked
 `ChainPhysics.cs` with the document's own `SpringChain` (its `Spec()` is the preset with the author's values) on the anchor bone's
 path for a preview motion (`viewport/motion.ts`, shared with the charm preview) and returns node positions per frame;
@@ -214,8 +252,11 @@ path for a preview motion (`viewport/motion.ts`, shared with the charm preview) 
 
 The motion row under the preview plays moves the way the game does. A clip plays on a hidden canonical body, the skeleton the
 action file carries, and the model copies that body's pose every frame (`character/clips.ts`).
-`character.links { bones, fingers }` returns, per canonical joint, the link ForgeCore's `HumanRig.Links` gives (`toward`, `from`)
-and whether `PoseSolver.Skipped` leaves it out; it also returns `HumanRig.ArmReach` as `[upper, lower, end]`. The copy is
+`character.links { descriptor, bones, fingers }` returns, per canonical joint, the link the plugin copies with (`CharacterRig.Links`
+on the model's own rest positions: `toward`, `from`) and whether `PoseSolver.Skipped` leaves it out; it also returns the reaches of
+`HumanRig.ArmReach` the game keeps as `[upper, lower, end]`. `character.check { joints }` says how the game will take a match:
+`missing` (the required joints without a bone, the only thing that stops export), `unposed`, `reach`, `arms` and the rest-pose
+`notes` the panel words for the author. The copy is
 the site's port of `PoseCopy`, `Web/src/shared/render/imported-skin-pose.ts` (`createSkinPose`; its optional `reach` bends those
 limbs as `LimbReach.Bend` does). While a move plays, the springs run through the same frames (`simulate(motion, clip)` in
 `character/model.ts`). With no move or preview motion they run 8 s held still from the bound pose, so hair and skirts drop under
@@ -225,6 +266,88 @@ The clips are listed in `character/motions.json`: game player actions by name in
 clips from `Mods/ForgeEmote/Assets/Clips`. `pnpm ts Tools/Models/stage-skin-motions.ts` copies them into the
 editor's `motions` folder beside `character` (not in Git), and the editor bundles that folder. `build-editor-release.ps1` runs the copy before
 packaging. A clip that has not been copied is hidden from the row.
+
+## Weapon inspect motions
+
+The inspect key plays a motion from a table: `Core/inspect-motions.json` is embedded in the plugin, and
+`BepInEx/config/ForgeSkin.inspect.json`, when present, is read over it with the same shape. A motion says what to show, not
+where in metres; the plugin solves the rest for the gun in hand when the look starts (`Core/InspectMotion.cs`, `InspectLook`).
+
+- `gun`: keys `{ "t": seconds, "turn", "tilt", "roll", "at": [x, y], "fill", "spin", "flip", "rise" }`. A key with only `t` is the
+  game's own pose; the first key (at 0) and the last are. `turn` swings the muzzle to the view's right, `tilt` raises it, `roll`
+  turns the gun about its bore with the top going right, all in degrees from the gun held level and pointing ahead (at most 180;
+  not from the game's pose this frame, which is lowered when the game relaxes the gun at idle). `at` is where the centre
+  of the gun's bounds should sit in the view (-1..1 of the half width and height, default the middle; a preference the solve weighs,
+  not a pin), `fill` the share of the half view the shown part stays inside (default 0.95).
+- `rise` alone (metres up) lifts the gun in both hands. The free-gun track: `spin` (degrees about the gun's side axis) and `flip`
+  (degrees about the bore), with `rise` a toss, free the gun from the grip hand. The hand stays where the key's held pose puts it
+  and the gun turns about its bounds centre, so the hand takes the gun back without a jump when the track returns to zero or a whole
+  turn. They are interpolated as numbers (up to 1080 degrees), so one key can spin twice; a game's-pose key takes the whole turn
+  nearest its neighbour, so a gun spun round is not wound back, and an interrupted look fades the rest of the spin.
+- `hand`: the off hand's keys `{ "t", "on", "along" }`, first and last `grip`. `on` is `grip` (the game's own grip), `away`
+  (lowered out of the view), `under` (its grip slid along the gun; without `along` it stays at its own place), `side` (the gun's left
+  side), `top`, `muzzle` (under the front end) or `mag` (under the magazine node, or along the bottom); `along` is 0 at the back of
+  the bounds and 1 at the front. Between keys the hand moves on a smooth step, following the gun.
+
+The shipped motions are the wrist roll in two beats and back: the gun's left face, muzzle to the left and level, top rolled a little
+right; then it turns to its right side with the muzzle still up and to the left: pistols, revolvers and compact guns all the way
+over in the wrist (the gun upside down, the back of the grip hand toward the viewer, the elbow swung out), rifles, shotguns, machine
+guns and long guns in both hands a third of a turn the other way (roll -90 from +30), enough to show the right side and top, since
+nobody rolls a machine gun over in one hand; then the game's pose. Only the revolver adds a beat, two turns about its
+centre (`spin` 720) before it goes back. Pistols, revolvers and compact guns drop the off hand out of view; rifles, shotguns,
+machine guns and long guns keep it under the gun throughout and slide it toward the receiver for the right face (`along` 0.45, 0.3
+for machine guns, 0.35 for long guns).
+
+How a key is solved: the gun's bounds are every drawn mesh under it (parts, attachments, a skin's models), in the gun's own space,
+except a mesh whose box alone makes the bounds more than twice as wide or tall as all the other meshes together (a sling or rope
+with a placeholder box, such as the Köning's `rope`); that mesh is logged once. The gun's body cannot be left out by this rule, since
+its other parts span about as much. The shown part is the box ahead of and above the grip hand (receiver to muzzle); the stock behind
+it and the grip and magazine below it may leave the view. The grip hand (the right hand) and its elbow are placed by a sweep (coarse,
+then fine round the best) of places within 0.3 m of where the game holds it and its arm's reach, and of elbow swivels from 20
+degrees tucked in to 90 swung out (the game's two-bone IK bends toward a goal the look moves for the whole look). A place where the
+wrist would have to turn about the forearm more than 80 degrees or bend more than 75 from its rest pose is ruled out; among the
+rest, the frame rules come first (below, a margin of 0.1 inside them), then the narrowest item camera view the shown part needs
+(three times as much past the game's view), the hand's distance from where the game holds it, the swivel, the centre's distance
+from `at`, and each place the off hand touches about that key being out of its arm's reach. A key's view is never narrower than the
+game's and at most 75 degrees (vertical); between two keys of the motion the view widens per frame as far as the gun needs, so the
+gun and hands draw smaller while the world's camera is untouched.
+
+What a key aims for (`InspectShot`, the hand's place is a bound of the sweep): at least 65% of the gun's length (33 points on its bounds' centre line, back
+to front) in the view (the length and not the drawn area, which a stock at the eye would fill); the outline of its bounds covering at
+most 75% of the view (the outline is about twice the gun's own silhouette); the shown part's nearest corner at least 0.15 m from the
+eye, or as far as the game's own hold has it (a compact gun's receiver sits under 0.1 m there; the stock may pass the eye as it does
+in that hold); the bounds centre and the shown part in the view; the grip hand in the lower right of the view (at least 0.2 of the
+half width right of the middle and not above it, in the game's view, or as far as the game's own hold is) and from 0.08 m nearer to
+0.18 m farther than the game holds it (0.12 left the right side of machine guns and long guns under 0.1 m from the eye), so the gun runs up and left from a hand where the game holds it and is not pushed out to
+fit. Between two keys of the motion the grip point moves on a straight line, so the hand stays in that place while the gun turns
+over in it, and the gun turns with the grip hand's wrist, which goes between the keys' wrist turns the short way in its forearm's
+frame (`InspectArm.Wrist`; the short way in view space wound a compact gun's forearm a whole turn round while the arm swung). To and from the game's pose the back of the gun moves on a straight line (so the stock leaves the eye without swinging
+nearer); every way is bowed off it forward, down or out by the least bow that keeps the rules below.
+
+What no frame may do: leave more than half of the gun's length out of the view, or bring the shown part nearer than 0.12 m (or than
+the game's own hold has it); frames on the way from and to the game's pose are held to the poorer of the game's pose and these, give
+or take 0.05 of a share and 0.02 m. Nor may a joint jump or wind: from one frame to the next no hand's twist about its forearm or
+its wrist's bend, and not the grip elbow's swivel, moves more than 15 degrees (an off hand dropping out of view bends about 10 a frame;
+a wrist limit flipping across its half turn, as an off hand under a rifle rolled over does, jumps 160), and neither forearm's twist,
+wound on from the first frame, goes more than 5 degrees past the wrist's 80-degree limit. Every frame is sampled at 60 a second, with
+both hands' reach; a look that breaks one anywhere
+in these hands is not played and is logged once as `skin-inspect-unframed` with the time and the rule. The shipped table passes on
+all 70 pairs of hands measured in game (hip and relaxed), so this is the last word on a faulty override file. The press only
+measures (the log line gives its milliseconds); the solve (10 to 75 ms, the revolver's spin the most) runs on a worker thread on
+that copy of the measures, and the look starts on the first tick after it is done if the same gun is still in the hands. The off hand's places are points of the gun's bounds (the `side` and `top` hands are its
+grip hand turned about the bore), so one motion fits every gun of a kind, and its wrist is kept within the same limits. One-handed
+guns use the same roles: the right hand holds the grip, the left hand, which supports it in the game's pose, is the one that lets go.
+Fingers are not posed: the grip hand stays closed while the gun is free. A finger pose would use ForgeCore's joint player on the
+first-person body's animator with the finger masks (`Models.BindJoints`, `JointMask.RightFingers` and `LeftFingers`); it is not
+built.
+
+`gear` maps an offline gear id to its motions (repeated presses take the next); `fallback` picks motions for any other gun by its
+measured length in metres (`upTo`, the last entry without it). A later file replaces motions by name and gun entries by id; its
+`fallback`, when given, replaces the whole list. A faulty file is not used at all and logged once as `skin-inspect-failed`. Each
+look writes one line to `forgeskin.log`: the gun, its motion, its bounds, the item camera, each key's item view in degrees and each
+key's elbow swivel. Teammates see a motion by its name's FNV-1a 32 hash, so a motion only one player's table has is not shown on
+that body; on their screens (and in a replay) the right wrist turns with the motion's roll and turn and the off hand stays on the
+gun; the free-gun track (spin, flip, toss) is first-person only.
 
 ## Other packages on the same gun
 
@@ -256,7 +379,7 @@ The pack reader (`Core/`) is compiled into `ForgeSkin.Plugin.dll`; the zip holds
   (a mod manager puts it in `plugins/NAinfini-ForgeSkin/ForgeSkin/`); the editor installs there, and `active.json` there
   picks the skin per target. ForgeSkin 1.1.0 and earlier used `BepInEx/plugins/ForgeSkin/skins`; the editor moves what it
   finds there (`Backend/OldSkinMove.cs`), the plugin only reads the new folder and, while skins are left
-  in the old one, says so in the picker (a player's state, not an error). Both go at 1.4.0 (`Docs/forge-skin/PLAN.md` §6).
+  in the old one, says so in the picker (a player's state, not an error).
 - Or ship a mod folder directly under `BepInEx/plugins` with a `forgeskin.forge` marker (`SkinPacks.Marker`) listing its packs,
   one path per line relative to that folder; blank lines and `#` comments are skipped.
 - Or call `ForgeSkin.Plugin.SkinPacks.Register(path)` from your plugin's `Load`.
@@ -409,15 +532,22 @@ The script, all under `<Output>` (default `artifacts/forge-skin-release`):
 `-SkipMake` stops after step 4; `-PluginOnly` skips step 3 too. The installer is not code-signed. Nothing is uploaded; the upload steps and the fixed update
 feed (`ForgeSkin-update` release of NAinfini/GTFO-Forge-Mods) are in `Mods/Release/README.md`.
 
-In a checkout the backend installs the plugin from `artifacts/forge-skin-release/publish/plugin` (`Install.PluginSource`),
-so run the script, at least with `-PluginOnly` (steps 1, 2 and 4 only; `-BepInEx` defaults to `GTFO_BEPINEX_PATH`, else the
-Forge-Multiplayer r2modman profile), after changing the plugin or when `artifacts/` was cleaned. The script stages `publish/plugin` in a sibling folder and swaps it in whole, so an interrupted run
-leaves no half folder. Installing into a profile deletes the
+In a checkout the backend installs the plugin from `artifacts/forge-skin-release/publish/plugin` (`Install.PluginSource`).
+The development editor never installs on its own (nor do the editors `docs-shots.mjs` and `gallery-thumbs.mjs` start); an
+install the user asks for (the profile menu's 从源码构建并安装插件, or 应用 when the profile's plugin is missing or differs) first runs
+this script with `-PluginOnly` (steps 1, 2 and 4 only; `-BepInEx` defaults to `GTFO_BEPINEX_PATH`, else the Forge-Multiplayer
+r2modman profile) and the ForgeCore zip it last used, which it leaves in `artifacts/forge-skin-release/thunderstore/`
+(`Editor/src/main/main.ts` `stageDevPlugin`); without one the editor says to run the script once with `-ForgeCore`. A packaged
+editor installs on its own (at start, on a profile change, after the game closes) only into a profile the user picked in the
+profile menu (`prefs.profileChosen`), from its own `resources/publish/plugin`. The script stages `publish/plugin` in a sibling
+folder and swaps it in whole, so an interrupted run leaves no half folder. Installing into a profile deletes the
 `ForgeSkin.Format.dll` and `NVorbis.dll` that 1.0.3 and earlier left in `BepInEx/plugins/ForgeSkin/`. When the mod manager
 installed the plugin (a `ForgeSkin.Plugin.dll` elsewhere under `BepInEx/plugins`), the editor keeps that copy and deletes
 its own `ForgeSkin.Plugin.dll` and `lang/` from `plugins/ForgeSkin/`, so one copy loads. ForgeCore and ForgeSkin follow the
-editor, by content and not by version number: every ForgeCore in the profile (a folder under `BepInEx/plugins` holding
-`ForgeCore.dll`) and the plugin the game loads (the managed copy, else `plugins/ForgeSkin/`) whose files differ from the
-shipped build are overwritten in place with it; a profile without ForgeCore gets the shipped package in
+editor: every ForgeCore in the profile (a folder under `BepInEx/plugins` holding `ForgeCore.dll`) and the plugin the game
+loads (the managed copy, else `plugins/ForgeSkin/`) whose files differ from the shipped build are overwritten in place with
+it, except a copy straight from the store that is newer (`Install.NewerFromStore`: its package folder's Thunderstore
+`manifest.json` `version_number` equals the DLL's file version, and that version is above the shipped DLL's), which stays
+and is reported (`plugin.install` `newer`, profile `pluginNewer`); a profile without ForgeCore gets the shipped package in
 `BepInEx/plugins/NAinfini-ForgeCore/ForgeCore/`, where a mod manager puts it. Uninstalling removes only the
 editor's own plugin copy and its `lang/`; the skins folder and a managed copy stay.

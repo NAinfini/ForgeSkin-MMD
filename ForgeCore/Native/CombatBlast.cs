@@ -42,9 +42,8 @@ public static partial class Combat
     {
         var offset = Enemies.AimPoint(enemy) - centre;
         var distance = offset.magnitude;
-        var health = enemy.Damage.Health;
-        ExplosionDamage(enemy.Damage, damage, centre, (distance > 0.01f ? offset / distance : Vec.Up) * force);
-        if (enemy.Alive && enemy.Damage.Health == health)
-            Plugin.Logger.ErrorOnce("core-area-damage-no-damage", "a " + damage + " area blast left a " + enemy.EnemyData?.name + " at " + health + " health.");
+        var settled = ExplosionDamage(enemy.Damage, damage, centre, (distance > 0.01f ? offset / distance : Vec.Up) * force);
+        if (enemy.Alive && settled.HealthAfter == settled.HealthBefore)
+            Plugin.Logger.ErrorOnce("core-area-damage-no-damage", "a " + damage + " area blast left a " + enemy.EnemyData?.name + " at " + settled.HealthBefore + " health.");
     }
 }

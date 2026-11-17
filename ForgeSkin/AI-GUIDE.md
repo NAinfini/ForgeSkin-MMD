@@ -84,7 +84,7 @@ with no change to this interface.
 
 **Colours** are lists of numbers 0 to 1 whose length is fixed by the field; a wrong length fails the check (`bad-vector`).
 Three numbers (sRGB, as the colour pickers show them): an attachment effect's `color` (`attachments/…/effects/…/color`), `charm.color`, `hologram.color2`,
-`params.emissiveColor`, and a player colour's `default` and each `palette` entry. Four numbers (sRGB and alpha): `attachments/…/material/color`
+`params.emissiveColor`, a sight reticle layer's `params.reticles/<reticleA|reticleB|reticleC>/color`, and a player colour's `default` and each `palette` entry. Four numbers (sRGB and alpha): `attachments/…/material/color`
 (its fourth number is the hologram's or model's alpha), `params.tint`, a livery layer's `color`, and every colour of a code effect
 (`codeEffects/…/colors`, sRGB with alpha).
 
@@ -136,7 +136,8 @@ the counts and **Keep missing parts and channels as they are**); a part (**Textu
 
 Part rows, layer rows and attachment rows are `role="option"` elements that carry `aria-selected`; skin cards are
 `role="button"`; each texture slot is a `role="group"` named after its channel (**Albedo**, **Normal**, **Metal/Smooth**,
-**Emissive**).
+**Emissive**; on a holographic sight's lens also **Reticle layer A** to **C**, channels `reticleA`..`reticleC`, set with
+`setTexture` like the others).
 
 ## 5. Files: answering dialogs and drops
 

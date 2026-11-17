@@ -44,11 +44,13 @@ public sealed class PersonHide : IDisposable
     private readonly List<Transform> _looks = new();
     private float _next;
     // The person's ghost (PlayerSyncModelData.m_ghostRenderers: the copy of the person the game draws in its ghost material while
-    // m_ghostEnabled is on, as in the elevator ride), part of the person wherever it hangs; and for a look, the look's own ghost.
+    // m_ghostEnabled is on: a teammate in the level, off in the elevator ride and for the local player), part of the person wherever it
+    // hangs; and for a look, the look's own ghost and the ghost material it wears now.
     private readonly PlayerSyncModelData? _model;
     private readonly Renderer[] _ghosts = Array.Empty<Renderer>();
     private readonly List<(GameObject Node, SkinnedMeshRenderer Renderer)> _lookGhosts = new();
-    private bool _ghostOn;
+    private Material? _ghostMaterial;
+    private bool _ghostOn, _ghostMissing;
 
     internal PersonHide(PlayerAgent? agent, Transform? body, string label, PersonHideOptions options)
     {
@@ -71,13 +73,13 @@ public sealed class PersonHide : IDisposable
         if (ghosts == null || ghosts.Length == 0) return;
         _ghosts = new Renderer[ghosts.Length];
         for (var i = 0; i < _ghosts.Length; i++) _ghosts[i] = ghosts[i];
-        if (options.Look && _model!.m_ghostMaterial is { } material) LookGhosts(agent != null ? agent.transform : body!, material, _ghosts[0] != null ? _ghosts[0].gameObject.layer : -1);
+        if (options.Look) LookGhosts(agent != null ? agent.transform : body!, _ghosts[0] != null ? _ghosts[0].gameObject.layer : -1);
     }
 
-    // A look hung on the body is drawn in the ghost as the person is: each of its skinned meshes gets a twin on the same bones wearing the
-    // game's own ghost material of this person (its colours and fades included) on the layer the game draws that ghost on (the elevator's
-    // camera draws only some layers), shown while the game shows the person's ghost.
-    private void LookGhosts(Transform root, Material material, int layer)
+    // A look hung on the body is drawn in the ghost as the person is: each of its skinned meshes gets a twin on the same bones, on the layer
+    // the game draws that ghost on, shown while the game shows the person's ghost and then wearing the game's ghost material of this person
+    // as it is at that moment (Dress).
+    private void LookGhosts(Transform root, int layer)
     {
         foreach (var source in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
         {
@@ -90,9 +92,7 @@ public sealed class PersonHide : IDisposable
             ghost.bones = source.bones;
             ghost.rootBone = source.rootBone;
             ghost.localBounds = source.localBounds;
-            var slots = source.sharedMaterials;
-            for (var i = 0; i < slots.Length; i++) slots[i] = material;
-            ghost.sharedMaterials = slots;
+            ghost.sharedMaterials = source.sharedMaterials; // one slot per submesh; Dress puts the ghost material in each
             ghost.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             ghost.receiveShadows = false;
             ghost.enabled = false;
@@ -100,14 +100,41 @@ public sealed class PersonHide : IDisposable
         }
     }
 
-    /// <summary>Every frame: the look's ghost shows while the game shows the person's.</summary>
+    /// <summary>Every frame: the look's ghost shows while the game shows the person's, in the person's ghost material of now.</summary>
     internal void Ghost()
     {
         if (_lookGhosts.Count == 0 || _model == null || _model.WasCollected) return;
         var on = _model.m_ghostEnabled;
+        if (!on) _ghostMissing = false;
+        // The game makes the ghost material anew, destroying the old one, each time it dresses the person (EquipVanityItemsFromBackpack:
+        // the agent's setup and every level's generation, after the look was worn): a twin left on the destroyed one draws Unity's flat
+        // missing-material colour over the look and misses the game's colour changes (downed red).
+        else if (_ghostMissing) on = false;
+        else if (!_ghostOn || _ghostMaterial == null) on = Dress();
         if (on == _ghostOn) return;
         _ghostOn = on;
         foreach (var (_, ghost) in _lookGhosts) if (ghost != null && !ghost.WasCollected) ghost.enabled = on;
+    }
+
+    // Puts the person's current ghost material on every twin; false (the twins stay off, said once) when the game has none.
+    private bool Dress()
+    {
+        var material = _model!.m_ghostMaterial;
+        if (material == null)
+        {
+            _ghostMissing = true;
+            Plugin.Logger.ErrorOnce("person-ghost-material-missing", "The game shows the ghost of a person " + _label + " holds but has no ghost material for it; the look's ghost is not drawn.");
+            return false;
+        }
+        _ghostMaterial = material;
+        foreach (var (_, ghost) in _lookGhosts)
+        {
+            if (ghost == null || ghost.WasCollected) continue;
+            var slots = ghost.sharedMaterials;
+            for (var i = 0; i < slots.Length; i++) slots[i] = material;
+            ghost.sharedMaterials = slots;
+        }
+        return true;
     }
 
     private void DropLookGhosts()

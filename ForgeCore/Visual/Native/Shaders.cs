@@ -116,7 +116,12 @@ internal static class Shaders
     private static bool Load()
     {
         if (Alive(_particle) && Alive(_marker) && Alive(_outline) && Alive(_procedural) && Alive(_toonForward) && Alive(_toonDeferred) && Alive(_toonOverlay) && Alive(_litCutout)) return true;
-        if (_tried) return false;
+        if (_tried)
+        {
+            // A failed load nulls them all (Forget, logged where it failed); a shader set but no longer alive was unloaded after it loaded.
+            if (_particle is not null) Plugin.Logger.ErrorOnce("visual-forgevisual-shaders-lost", "ForgeVisual's shaders loaded but one of them has been unloaded since; its sprites, particles, ground marks, beams, outlines, toon and cut-out surfaces are no longer drawn.");
+            return false;
+        }
         _tried = true;
         try
         {

@@ -84,6 +84,7 @@ internal static class Modules
         (PlayerFlinch, new[] { new Target("Dam_PlayerDamageLocal", "Hitreact") }),
         ("GameHooks.EnemyBulletReceived", new[] { new Target("Dam_EnemyDamageBase", "ReceiveBulletDamage") }),
         ("GameHooks.EnemyMeleeReceived", new[] { new Target("Dam_EnemyDamageBase", "ReceiveMeleeDamage") }),
+        ("GameHooks.EnemyHitSent", new[] { new Target("Dam_EnemyDamageBase", "BulletDamage"), new Target("Dam_EnemyDamageBase", "MeleeDamage") }),
         (Language, new[] { new Target("Localization.GameDataTextLocalizationService", "SetCurrentLanguage") }),
         (ExpeditionSelected, new[] { new Target("RundownManager", "MasterSelectActiveExpedition"), new Target("RundownManager", "SetActiveExpedition") }),
         (HoldPointShut, new[] { new Target("Interact_Timed", "SetActive") }),

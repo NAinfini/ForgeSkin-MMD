@@ -3,7 +3,7 @@
   "schemaVersion": "1.0.0",
   "library": "ForgeCore",
   "packageName": "NAinfini-ForgeCore",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "parts": [
     {
       "id": "core",
@@ -284,6 +284,16 @@
                   "module": "GameHooks.EnemyMeleeReceived",
                   "type": "Dam_EnemyDamageBase",
                   "method": "ReceiveMeleeDamage"
+                },
+                {
+                  "module": "GameHooks.EnemyHitSent",
+                  "type": "Dam_EnemyDamageBase",
+                  "method": "BulletDamage"
+                },
+                {
+                  "module": "GameHooks.EnemyHitSent",
+                  "type": "Dam_EnemyDamageBase",
+                  "method": "MeleeDamage"
                 },
                 {
                   "module": "GameHooks.WeakDoorState",
@@ -1006,7 +1016,7 @@
             },
             {
               "id": "AddEnemyHealthBars(string, EnemyHealthBarStyle?)",
-              "summary": "Adds a switch for enemy health bars: while it is Active, an enemy the local player hits gets a thin bar over its head showing the health the game holds for it (on every machine the game applies every player's hits, so a teammate's damage shows too). The piece each hit takes flashes and then shrinks away. Bars show only for enemies in sight (a wall between hides the bar), fade a few seconds after the last hit and go at once when the enemy dies. Damage numbers and kill marks are the hit feedback's (AddHitFeedback). The player can turn every bar off in ForgeUI's config (EnemyHealthBars / Enabled).",
+              "summary": "Adds a switch for enemy health bars: while it is Active, an enemy the local player hits gets a thin bar over its head showing the health the host holds for it (the host's ForgeCore reports every change to its clients, so a teammate's damage shows too) less the local player's own hits the host has not settled yet. The piece each hit takes flashes and then shrinks away. Bars show only for enemies in sight (a wall between hides the bar), fade a few seconds after the last hit and go at once when the enemy dies. Damage numbers and kill marks are the hit feedback's (AddHitFeedback). The player can turn every bar off in ForgeUI's config (EnemyHealthBars / Enabled).",
               "name": "AddEnemyHealthBars",
               "parameters": [
                 {

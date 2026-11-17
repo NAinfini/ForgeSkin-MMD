@@ -20,7 +20,7 @@ public static partial class Combat
         {
             if (!_watching)
             {
-                GameHooks.EnemyBulletReceived.Around(call => Session.IsHost && call.Receiver.Owner != null && call.Receiver.Owner.Alive, BulletSettled);
+                GameHooks.EnemyBulletReceived.Around(call => Session.IsHost && call.Receiver.Owner is { } enemy && enemy.Alive, BulletSettled);
                 _watching = true;
             }
             _killed += value;

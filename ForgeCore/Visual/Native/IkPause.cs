@@ -112,7 +112,7 @@ internal sealed class IkPause
         _heldRight = Any(covered, ClipRig.RightShoulder, ClipRig.RightHand);
         _heldAim = Touches(Spine, covered);
         if (_heldLeft) { _left = _sync.m_leftArmWeightTarget; _sync.SetLeftArmWeight(0f); }
-        if (_heldRight) { _right = _sync.m_rightArmSolver != null ? _sync.m_rightArmSolver.IKPositionWeight : 0f; _sync.SetRightArmWeight(0f); }
+        if (_heldRight) { var arm = _sync.m_rightArmSolver; _right = arm != null ? arm.IKPositionWeight : 0f; _sync.SetRightArmWeight(0f); }
         if (_heldAim) { _aim = _sync.m_aimWeightTarget; _look = _sync.m_lookWeightTarget; _sync.SetAimWeight(0f); _sync.SetLookWeight(0f); }
     }
 

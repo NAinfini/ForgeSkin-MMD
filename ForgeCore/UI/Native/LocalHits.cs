@@ -7,76 +7,135 @@ using UnityEngine;
 namespace ForgeUI;
 
 /// <summary>
-/// The local player's hits on enemies, read where the game applies them on this machine (<c>Dam_EnemyDamageBase.BulletDamage</c> /
-/// <c>MeleeDamage</c>: the health before and after the call is the hit's damage; a drop to zero is the local player's kill) and the
-/// game's own weak-spot indicator (<c>Dam_EnemyDamageLimb.ShowHitIndicator</c>), handed to the enemy health bars
-/// (<see cref="EnemyHealthBars"/>) and the hit feedback (<see cref="HitFeedbacks"/>). Nothing is read while neither wants them.
+/// The local player's hits on enemies, handed to the enemy health bars (<see cref="EnemyHealthBars"/>) and the hit feedback
+/// (<see cref="HitFeedbacks"/>), the same on host and client. Everything shows in the frame of the hit, from ForgeCore's prediction
+/// of this machine's own hit request (<see cref="ForgeCore.Combat.OwnHitPredicted"/>: the marker, the damage number, the piece
+/// the bar loses, a kill's mark) and the game's own weak-spot indicator (<c>Dam_EnemyDamageLimb.ShowHitIndicator</c>, which runs on
+/// the shooter's machine). The host's settlement, about one round trip later on a client, only corrects it: the number changes by
+/// the difference, a kill that was not predicted shows then, one that did not happen gives the enemy its bar back; a request the
+/// host never settled is taken back after 3 s. Nothing is read while neither wants them.
 /// </summary>
 internal static class LocalHits
 {
-    // The hit in progress on this machine: the damage base and its health before the game's call.
-    private static IntPtr _hitBase;
-    private static float _hitBefore;
+    // Where the local player last hit each enemy (the number and the kill mark show there), the enemy and the frame a weak spot
+    // of it was last hit, by the enemy's key in ForgeCore's prediction book. An entry goes with the enemy's kill or the level's end.
+    private struct Recent { public Vector3 At; public Dam_EnemyDamageBase? Enemy; public int CriticalFrame; }
+    private static readonly Dictionary<long, Recent> Hits = new();
+
+    // The local player's latest predicted hit, for the game's own hit indicator of the same call (IndicatorPatch).
+    private static IntPtr _lastEnemy;
+    private static int _lastFrame = -1;
+    private static bool _lastDead;
 
     private static bool Wanted => EnemyHealthBars.WantsLocalHits || HitFeedbacks.WantsLocalHits;
 
-    private static void Before(Dam_EnemyDamageBase target, Agent? source)
+    // The game's frame number, read in one place: a hit and its weak-spot indicator are of one frame.
+    private static int CurrentFrame => Time.frameCount;
+
+    private static void Predicted(ForgeCore.OwnPrediction hit)
     {
-        _hitBase = IntPtr.Zero;
-        if (source == null || target == null || !Wanted) return;
-        var local = ForgeCore.Players.Local;
-        if (local == null || local.Pointer != source.Pointer) return;
-        _hitBase = target.Pointer;
-        _hitBefore = target._Health_k__BackingField;
+        var frame = CurrentFrame;
+        _lastEnemy = hit.Enemy.Pointer;
+        _lastFrame = frame;
+        // A client's copy of the enemy never loses health, so the game's own indicator learns here that this hit takes the last.
+        _lastDead = hit.Confirmable && !ForgeCore.Session.IsHost && hit.Before - hit.Damage <= 0f;
+        if (!Wanted) return;
+        Hits.TryGetValue(hit.Key, out var recent);
+        recent.At = hit.Position;
+        recent.Enemy = hit.Enemy;
+        Hits[hit.Key] = recent;
+        // Without a host that settles hits nobody knows what the enemy has left: no bar.
+        if (hit.Confirmable) EnemyHealthBars.LocalHit(hit.Enemy, hit.Before, hit.Before - hit.Damage, hit.Enemy.HealthMax);
+        HitFeedbacks.LocalHit(hit.Key, hit.Damage, hit.Position, recent.CriticalFrame == frame);
+        if (hit.Kill) HitFeedbacks.LocalKill(true, hit.Position);
     }
 
-    private static void After(Dam_EnemyDamageBase target, Vector3 at)
+    private static void Settled(ForgeCore.OwnHit hit)
     {
-        if (_hitBase == IntPtr.Zero || target == null || target.Pointer != _hitBase) return;
-        _hitBase = IntPtr.Zero;
-        float before = _hitBefore, after = target._Health_k__BackingField, max = target._HealthMax_k__BackingField;
-        if (before <= 0f || after >= before) return;
-        EnemyHealthBars.LocalHit(target, before, after, max);
-        HitFeedbacks.LocalHit((long)target.Pointer, before - after, at, after <= 0f);
+        if (!Wanted) return;
+        var known = Hits.TryGetValue(hit.Key, out var recent);
+        if (hit.Killed) Hits.Remove(hit.Key);
+        var target = hit.Enemy;
+        // A hit that was not predicted (an explosion, fire, one past the book) shows now, whole. A client hears it a round trip
+        // late: an enemy another player killed meanwhile gets no bar again.
+        if (hit.Unmatched > 0 && target != null && (hit.Killed || target.Owner is { Alive: true }))
+            EnemyHealthBars.LocalHit(target, hit.Health + hit.Damage, hit.Health, hit.HealthMax);
+        if (!HitFeedbacks.Adjust(hit.Key, hit.DamageDelta) && hit.Unmatched > 0 && known) HitFeedbacks.LocalHit(hit.Key, hit.DamageDelta, recent.At, false);
+        if (hit.ShowKill) HitFeedbacks.LocalKill(known, recent.At);
+        if (hit.KillDelta < 0 && known) Lives(hit.Key, recent.Enemy);
     }
 
-    [PatchGroup(PatchGroup.LocalHits)]
-    [HarmonyPatch]
-    private static class HitPatch
+    // A request the host never settled, taken back; key 0 is the world's end, which clears everything by itself.
+    private static void TakenBack(ForgeCore.OwnCorrection change)
     {
-        private static IEnumerable<System.Reflection.MethodBase> TargetMethods()
-        {
-            // Declared only: the base class Dam_SyncedDamageBase has its own overloads of both names (no limb parameter), which the
-            // limbs never call for an enemy and which make a name-only lookup ambiguous.
-            yield return AccessTools.DeclaredMethod(typeof(Dam_EnemyDamageBase), nameof(Dam_EnemyDamageBase.BulletDamage));
-            yield return AccessTools.DeclaredMethod(typeof(Dam_EnemyDamageBase), nameof(Dam_EnemyDamageBase.MeleeDamage));
-        }
+        if (change.Key == 0 || !Wanted) return;
+        HitFeedbacks.Adjust(change.Key, change.DamageDelta);
+        if (change.KillDelta < 0 && Hits.TryGetValue(change.Key, out var recent)) Lives(change.Key, recent.Enemy);
+    }
 
-        // Parameter 1 is the source agent and 2 the hit point in both methods.
-        private static void Prefix(Dam_EnemyDamageBase __instance, Agent __1)
-        {
-            try { Before(__instance, __1); }
-            catch (Exception error) { _hitBase = IntPtr.Zero; Plugin.Error("ui-reading-local-players-hit-failed", "Reading the local player's hit failed: " + error); }
-        }
+    // A predicted kill did not happen: the enemy gets its bar back, and the game's death indicator may show again when it does die.
+    private static void Lives(long key, Dam_EnemyDamageBase? enemy)
+    {
+        if (ForgeCore.NativeObjects.Gone(enemy) || enemy.Owner is not { Alive: true }) return;
+        enemy.DeathIndicatorShown = false;
+        var health = ForgeCore.Combat.EnemyHealth(key, enemy);
+        if (health > 0f) EnemyHealthBars.LocalHit(enemy, health, health, enemy.HealthMax);
+    }
 
-        private static void Postfix(Dam_EnemyDamageBase __instance, Vector3 __2)
+    private static bool _watching;
+
+    /// <summary>Puts the hit reads on: the predictions of this machine's hit requests, the settlements and the indicator patch.</summary>
+    internal static void Ensure()
+    {
+        PatchGroups.Ensure(PatchGroup.LocalHits);
+        if (_watching) return;
+        _watching = true;
+        ForgeCore.Combat.HearOwnPredictions(static hit =>
         {
-            try { After(__instance, __2); }
-            catch (Exception error) { _hitBase = IntPtr.Zero; Plugin.Error("ui-reading-local-players-hit-failed", "Reading the local player's hit failed: " + error); }
-        }
+            try { Predicted(hit); }
+            catch (Exception error) { Plugin.Error("ui-reading-local-players-hit-failed", "Reading the local player's hit failed: " + error); }
+        });
+        ForgeCore.Combat.HearOwnHits(static hit =>
+        {
+            try { Settled(hit); }
+            catch (Exception error) { Plugin.Error("ui-reading-local-players-hit-failed", "Reading the local player's hit failed: " + error); }
+        });
+        ForgeCore.Combat.HearOwnCorrections(static change =>
+        {
+            try { TakenBack(change); }
+            catch (Exception error) { Plugin.Error("ui-reading-local-players-hit-failed", "Reading the local player's hit failed: " + error); }
+        });
     }
 
     [PatchGroup(PatchGroup.LocalHits)]
     [HarmonyPatch(typeof(Dam_EnemyDamageLimb), nameof(Dam_EnemyDamageLimb.ShowHitIndicator))]
-    private static class WeakSpotPatch
+    private static class IndicatorPatch
     {
+        // The limb asks its indicator with "will die" worked out from this machine's copy of the enemy's health, which never drops
+        // on a client: the prediction of the same call (the limb sends the request first) says it instead, so the game's own death
+        // indicator shows with the hit that is predicted to kill and, as in the game, nothing shows for a hit on the dead.
+        private static void Prefix(Dam_EnemyDamageLimb __instance, ref bool __1)
+        {
+            if (!_lastDead || _lastFrame != CurrentFrame) return;
+            try
+            {
+                var target = __instance.m_base;
+                if (target != null && target.Pointer == _lastEnemy) __1 = true;
+            }
+            catch (Exception error) { Plugin.Error("ui-reading-local-players-weak-spot-hit", "Predicting the game's death indicator failed: " + error); }
+        }
+
         private static void Postfix(Dam_EnemyDamageLimb __instance, bool __0)
         {
             if (!__0 || !HitFeedbacks.WantsLocalHits) return;
             try
             {
                 var target = __instance.m_base;
-                if (target != null) HitFeedbacks.Critical((long)target.Pointer);
+                if (target == null) return;
+                var key = ForgeCore.Combat.EnemyKey(target);
+                Hits.TryGetValue(key, out var recent);
+                Hits[key] = recent with { CriticalFrame = CurrentFrame };
+                HitFeedbacks.Critical(key);
             }
             catch (Exception error) { Plugin.Error("ui-reading-local-players-weak-spot-hit", "Reading the local player's weak-spot hit failed: " + error); }
         }
@@ -85,6 +144,8 @@ internal static class LocalHits
     /// <summary>The level ended (<see cref="ForgeCore.GameEvents.LevelEnded"/>).</summary>
     internal static void LevelEnded()
     {
+        Hits.Clear();
+        _lastFrame = -1;
         if (EnemyHealthBars.Used) EnemyHealthBars.Clear();
         HitFeedbacks.Clear();
     }

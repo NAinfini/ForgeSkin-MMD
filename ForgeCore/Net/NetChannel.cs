@@ -141,8 +141,8 @@ public sealed class NetChannel
     public event Action<ulong, string>? Refused;
 
     /// <summary>Raised when a player's copy matches this one and holds none of this mod's state: it answered for the first time,
-    /// joined again, or the content changed on either side. ForgeCore has already sent that player this mod's rows, tables,
-    /// readiness and checkpoint copies; the handler sends whatever else the mod keeps for a newcomer. It can fire more than once for
+    /// joined again, greeted again after losing what it held, or the content changed on either side. ForgeCore has already sent
+    /// that player this mod's rows, tables, readiness and checkpoint copies; the handler sends whatever else the mod keeps for a newcomer. It can fire more than once for
     /// one player, so what it sends must be safe to repeat.</summary>
     public event Action<ulong>? PeerSynced;
 
@@ -207,8 +207,11 @@ public sealed class NetChannel
 
     /// <summary>This mod's cell of <paramref name="sender"/>'s handshake. A player is sent this mod's state when its verdict becomes
     /// compatible, and only then: a verdict is forgotten when the player leaves, when either side's content or formats change and
-    /// while either side holds its content, so a compatible player always holds what it was sent.</summary>
-    internal void Judge(ulong sender, ulong format, ulong content, bool held)
+    /// while either side holds its content, so a compatible player always holds what it was sent. One case is not seen from here:
+    /// the other side alone lost its verdict of this player (its session was read as ended and entered again, its member list
+    /// dropped this player for a moment, or it never took the answer), so it refused what it was sent since and holds nothing. It
+    /// then greets again, and a <paramref name="greeting"/> from a player already compatible sends it this mod's state again.</summary>
+    internal void Judge(ulong sender, ulong format, ulong content, bool held, bool greeting)
     {
         var peer = Info(sender);
         // Either side's content is still unknown: neither is judged. The side that holds greets again when it knows.
@@ -224,7 +227,7 @@ public sealed class NetChannel
         var contentMatches = content == ContentHash;
         if (formatMatches && contentMatches)
         {
-            if (peer.State == PeerState.Compatible) return;
+            if (peer.State == PeerState.Compatible && !greeting) return;
             peer.State = PeerState.Compatible;
             foreach (var part in _parts) part.Sync(sender);
             Raise(PeerSynced, sender);
@@ -435,24 +438,37 @@ public sealed class NetChannel
         if (_node.Host == 0) return;
         if (body.Length > route.MaxBytes) throw new ArgumentException(ModId + " message " + route.Name + " takes at most " + route.MaxBytes + " bytes, not " + body.Length + ".");
         var size = HeadSize(route);
-        if (route.Chunked && (body.Length > NetNode.ChunkBytes || route.Queued != 0))
-        {
-            var head = new byte[size];
-            WriteHead(route, head);
-            var copy = owned ?? body.ToArray();
-            if (to != 0) { if (Compatible(to)) _node.Enqueue(route, to, head, copy); return; }
-            for (var i = 0; i < _node.MemberCount; i++)
-                if (_node.Member(i) != except && Compatible(_node.Member(i))) _node.Enqueue(route, _node.Member(i), head, copy);
-            return;
-        }
         if (to != 0 && !Compatible(to)) return;
+        // A body waits for the send budget when it is long, or when an earlier body of this route still waits for the same
+        // player (it must not overtake it). What waits for one player holds nothing back from another.
+        var held = route.Chunked && route.Queued != 0;
+        if (route.Chunked && (held || body.Length > NetNode.ChunkBytes))
+        {
+            var large = body.Length > NetNode.ChunkBytes;
+            byte[]? head = null, copy = null;
+            var direct = false;
+            // One pass for a named player, one per member otherwise.
+            for (var i = to != 0 ? -1 : 0; i < (to != 0 ? 0 : _node.MemberCount); i++)
+            {
+                var member = to != 0 ? to : _node.Member(i);
+                if (to == 0 && (member == except || !Compatible(member))) continue;
+                if (!large && !_node.Waiting(route, member)) { direct = true; continue; }
+                if (head == null) { head = new byte[size]; WriteHead(route, head); copy = owned ?? body.ToArray(); }
+                _node.Enqueue(route, member, head, copy!);
+            }
+            if (!direct) return;
+        }
         var packet = new byte[size + (route.Chunked ? 1 : 0) + body.Length];
         WriteHead(route, packet);
         if (route.Chunked) packet[size++] = PartWhole;
         body.CopyTo(packet.AsSpan(size));
         if (to != 0) { _node.Send(route.Event, packet, to, route.Delivery); return; }
         for (var i = 0; i < _node.MemberCount; i++)
-            if (_node.Member(i) != except && Compatible(_node.Member(i))) _node.Send(route.Event, packet, _node.Member(i), route.Delivery);
+        {
+            var member = _node.Member(i);
+            if (member == except || !Compatible(member) || held && _node.Waiting(route, member)) continue;
+            _node.Send(route.Event, packet, member, route.Delivery);
+        }
     }
 
     /// <summary>The host as a recipient, or 0 when this player is the host, there is none or it is not compatible.</summary>

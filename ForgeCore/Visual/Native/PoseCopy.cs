@@ -287,17 +287,28 @@ public sealed class PoseCopy
             rotation[i] = BodyConvert.N(pose[i].rotation);
         }
         if (PoseSolver.Ratio(target.RootRest.Y, position[0].Y, out var ratio) is { } why) { PoseTarget.Error(label, why); return null; }
+        if (ratio <= 0f)
+            Plugin.Logger.ErrorOnce("visual-pose-copy-root-does-not-rise", "ForgeVisual pose copy " + label + ": the model's root (hips) rests at " + target.RootRest.Y.ToString("0.###") + " m, on its floor or under it, so there is no height to scale the body's by; the model keeps its rest height and does not rise, sink or sway with the body.");
         var corrections = PoseSolver.Correct(links, position, rotation, toward, target.Unframe);
         var correction = new Quaternion[links.Count];
         for (var i = 0; i < links.Count; i++) correction[i] = BodyConvert.U(corrections[i]);
         var world = target.Root.lossyScale.y / Math.Max(1e-4f, body.lossyScale.y);
-        var scale = ratio * world;
-        var reaches = new PoseReach[reach.Count];
-        var limb = new float[reach.Count];
+        var scale = (ratio > 0f ? ratio : 1f) * world;
+        // A limb with a link left out cannot be bent onto the body's: its bones keep their copied turns.
+        var reachable = PoseSolver.Reachable(reach, skip);
+        if (reachable.Count < reach.Count)
+        {
+            var left = "";
+            foreach (var r in reach)
+                if (skip[r.Upper] || skip[r.Lower] || skip[r.End]) left += (left.Length > 0 ? ", " : "") + links[r.End].Body;
+            Plugin.Logger.ErrorOnce("visual-pose-copy-limb-does-not-reach", "ForgeVisual pose copy " + label + ": the limb ending at " + left + " lacks a bone on the model or the body, so it is not bent to where the body's ends; its bones only turn as the body's do, and what the body holds in that hand stays at the body's own hand.");
+        }
+        var reaches = new PoseReach[reachable.Count];
+        var limb = new float[reaches.Length];
         var at = target.RestAt;
         for (var i = 0; i < reaches.Length; i++)
         {
-            var r = reaches[i] = reach[i];
+            var r = reaches[i] = reachable[i];
             limb[i] = PoseSolver.LimbScale(at[r.Upper], at[r.Lower], at[r.End], position[r.Upper], position[r.Lower], position[r.End], ratio) * world;
         }
         return new PoseCopy(body, animator, target, source, active.ToArray(), correction, position[0], ratio, scale, reaches, limb);
@@ -323,7 +334,7 @@ public sealed class PoseCopy
     public bool Apply()
     {
         var root = _target.Root;
-        if (_animator is { WasCollected: true } || _body == null || _body.WasCollected || root == null || root.WasCollected) return false;
+        if (_animator != null && ForgeCore.NativeObjects.Gone(_animator) || ForgeCore.NativeObjects.Gone(_body) || ForgeCore.NativeObjects.Gone(root)) return false;
         var turn = root.rotation * Quaternion.Inverse(_body.rotation);
         Turn = turn;
         var bones = _target.Bones;
@@ -333,7 +344,7 @@ public sealed class PoseCopy
         // The holding hand first: the item goes with it, and the other hand reaches the item there.
         var carried = false;
         Vector3 hand = default, bodyHand = default;
-        if (_holding >= 0 && _socket != null && !_socket.WasCollected)
+        if (_holding >= 0 && !ForgeCore.NativeObjects.Gone(_socket))
         {
             var end = _reach[_holding].End;
             Reach(_holding, turn, bones, default, 0f);
@@ -426,7 +437,7 @@ public sealed class PoseCopy
     {
         if (!_moved) return;
         _moved = false;
-        if (_socket == null || _socket.WasCollected) return;
+        if (ForgeCore.NativeObjects.Gone(_socket)) return;
         _socket.localPosition = _socketPosition;
         _socket.localRotation = _socketRotation;
     }
@@ -481,12 +492,17 @@ public sealed class PoseCopy
         return found.ToArray();
     }
 
-    // How many of the body's solvers solve this frame: those whose late update runs and that are set up.
+    // How many of the body's solvers solve this frame: those whose late update runs and that are set up. A solver the game destroyed
+    // (its wrapper stays) solves no more and leaves the list: the copy goes on with the rest, and in this library's late update with
+    // none, where a body that is gone too stops it.
     private void Begin(int frame)
     {
         _frame = frame; _done = 0; _expected = 0;
+        var gone = false;
         foreach (var ik in _solvers)
-            if (!ik.WasCollected && ik.isActiveAndEnabled && ik.GetIKSolver().initiated) _expected++;
+            if (ForgeCore.NativeObjects.Gone(ik)) gone = true;
+            else if (ik.isActiveAndEnabled && ik.GetIKSolver().initiated) _expected++;
+        if (gone) _solvers = Array.FindAll(_solvers, ik => !ForgeCore.NativeObjects.Gone(ik));
     }
 
     // A solver of the body solved: once every one that solves this frame has, the copy is applied (again, should one more solve after).
@@ -538,7 +554,7 @@ public sealed class PoseCopy
         _following = false;
         if (_solved != null)
             foreach (var ik in _solvers)
-                if (!ik.WasCollected && ik.GetIKSolver() is { } solver && solver.OnPostUpdate is { } after)
+                if (!ForgeCore.NativeObjects.Gone(ik) && ik.GetIKSolver() is { } solver && solver.OnPostUpdate is { } after)
                     solver.OnPostUpdate = Il2CppSystem.Delegate.Remove(after, _solved)?.Cast<IKSolver.UpdateDelegate>();
         _solvers = Array.Empty<IK>();
         _solved = null;

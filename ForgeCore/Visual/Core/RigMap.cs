@@ -40,7 +40,7 @@ public sealed class RigMap
     // Joints a standing body's bones must point about the way the canonical rig's do: a skeleton that does not is mapped wrong or lying on
     // its side. The arms are free: arms down, out or between are all fine.
     private static readonly (int From, int To)[] Standing = { (0, 7), (1, 2), (2, 3), (4, 5), (5, 6) };
-    private const float StandingLimitDegrees = 60f, ShortestBone = 0.005f;
+    private const float StandingLimitDegrees = 60f;
 
     /// <summary>What is wrong with a skeleton's rest pose against the canonical rig, one sentence each, empty when it fits (game axes,
     /// root space; one entry per <see cref="ClipRig"/> joint). Called once at bind, and by a character model's own check of its map.</summary>
@@ -51,7 +51,7 @@ public sealed class RigMap
             foreach (var to in JointRetarget.Toward[j])
             {
                 if (!present[j] || !present[to]) continue;
-                if ((rest[to] - rest[j]).Length() < ShortestBone) wrong += " " + ClipRig.Names[j] + " and " + ClipRig.Names[to] + " rest on one point.";
+                if ((rest[to] - rest[j]).Length() < ClipRig.ShortestBone) wrong += " " + ClipRig.Names[j] + " and " + ClipRig.Names[to] + " rest on one point.";
                 break;
             }
         if (shape != RigShape.Body) return wrong;

@@ -41,7 +41,11 @@ public static partial class Combat
             var look = camera.transform;
             start = GunPose.RaisedMuzzle(look.position, look.right, look.up, look.forward);
         }
-        else start = itemCamera == null ? muzzle.position : camera.ViewportToWorldPoint(itemCamera.WorldToViewportPoint(muzzle.position));
+        else
+        {
+            var at = muzzle.position;
+            start = itemCamera == null ? at : camera.ViewportToWorldPoint(itemCamera.WorldToViewportPoint(at));
+        }
         var toMuzzle = start - eye;
         var squared = toMuzzle.x * toMuzzle.x + toMuzzle.y * toMuzzle.y + toMuzzle.z * toMuzzle.z;
         if (squared <= 0.0001f) return start;

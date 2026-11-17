@@ -18,6 +18,7 @@ internal static class Program
         FileHashChecks.Run(Check);
         ProgressionChecks.Run(Check, errors);
         LobbyChecks.Run(Check);
+        PredictionChecks.Run(Check);
         AnimationChecks.Run(Check, args);
         ProceduralChecks.Run(Check);
         ChainChecks.Run(Check);

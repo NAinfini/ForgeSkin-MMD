@@ -152,12 +152,14 @@ public static partial class Combat
         {
             if (!Physics.Raycast(start + direction * travelled, direction, out hit, range - travelled,
                     LayerManager.MASK_BULLETWEAPON_RAY, QueryTriggerInteraction.UseGlobal)) { hit = default; return false; }
-            if (hit.collider != null && !IsPartOf(hit.collider, shooter))
+            var collider = hit.collider;
+            var distance = hit.distance;
+            if (collider != null && !IsPartOf(collider, shooter))
             {
-                hit.distance += travelled;
+                hit.distance = distance + travelled;
                 return true;
             }
-            travelled += hit.distance + 0.01f;
+            travelled += distance + 0.01f;
             if (travelled >= range) { hit = default; return false; }
         }
         hit = default;

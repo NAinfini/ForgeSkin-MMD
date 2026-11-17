@@ -15,6 +15,8 @@ public static class ClipRig
     public const int Count = 50;
     /// <summary>The joints before the fingers: a clip may have only these.</summary>
     public const int BodyCount = 20;
+    /// <summary>Two joints resting nearer than this are on one point: neither gives the other a direction.</summary>
+    internal const float ShortestBone = 0.005f;
     /// <summary>The hip's height when the canonical body stands at rest.</summary>
     public const float HipHeight = 1.04f;
 
@@ -190,11 +192,16 @@ public sealed partial class JointClip
         return new JointClip(rate, joints, local, hip);
     }
 
+    /// <summary><see cref="FromTurns(float, int, Quaternion[], Vector3[])"/> named <paramref name="name"/> (<c>ModId/clip</c>), as
+    /// <see cref="Read(byte[], string)"/> names a file's: a clip a mod builds in code is then recorded and found again by <see cref="Find"/>.</summary>
+    public static JointClip FromTurns(float rate, int joints, Quaternion[] turns, Vector3[] hips, string name) => Register(FromTurns(rate, joints, turns, hips), name);
+
     /// <summary>Reads a clip file (<see cref="Read(byte[])"/>) and names the clip <paramref name="name"/>.</summary>
-    public static JointClip Read(byte[] file, string name)
+    public static JointClip Read(byte[] file, string name) => Register(Read(file), name);
+
+    private static JointClip Register(JointClip clip, string name)
     {
         if (string.IsNullOrEmpty(name)) throw new ArgumentException("A clip name is not empty.", nameof(name));
-        var clip = Read(file);
         clip.Name = name;
         Named[name] = clip;
         return clip;

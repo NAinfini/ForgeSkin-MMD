@@ -143,8 +143,8 @@ internal sealed class EnemyBarBook
         return slot;
     }
 
-    /// <summary>The health the game holds now for a bar's enemy (every machine applies every player's hits), read each frame so
-    /// teammates' damage shows too.</summary>
+    /// <summary>The health the host holds now for a bar's enemy less the local player's open hits, read each frame so teammates'
+    /// damage shows too.</summary>
     public void Sync(int slot, float fraction)
     {
         if (Bars[slot].Used) Bars[slot].Fraction = Ease.Clamp01(fraction);

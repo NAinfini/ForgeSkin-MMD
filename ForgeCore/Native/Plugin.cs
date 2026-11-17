@@ -12,7 +12,7 @@ namespace ForgeCore;
 [BepInDependency("dev.gtfomodding.gtfo-api", ">=0.6.1")]
 internal sealed class Plugin : BasePlugin
 {
-    internal const string Id = "NAinfini.ForgeCore", Version = "1.0.1"; // package-version: NAinfini-ForgeCore
+    internal const string Id = "NAinfini.ForgeCore", Version = "1.0.2"; // package-version: NAinfini-ForgeCore
 
     internal static ModLog Logger { get; private set; } = null!;
 
@@ -42,6 +42,7 @@ internal sealed class Plugin : BasePlugin
         AppDomain.CurrentDomain.ProcessExit += static (_, _) => Store.Flush();
         Net.Node = new NetNode(new GtfoTransport(), Id) { Clock = static () => Time.time };
         Net.Notice = message => { if (ForgeCore.Log.Developer) own.LogInfo(message); };
+        OwnHits.Open();
         // Before any dependent mod subscribes, so the world has moved on when their own handlers of the same events run.
         LevelAPI.OnBuildStart += static () => Net.Node!.NoteWorld(NetWorldReason.Build);
         Patches.CheckTargets();

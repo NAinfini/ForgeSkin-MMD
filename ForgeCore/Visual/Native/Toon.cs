@@ -166,21 +166,28 @@ public sealed class ToonDress : IDisposable
         {
             if (!_toon[i]) { if (over != null) over[i] = Toon.Nothing()!; continue; }
             var toon = Toon.From(_lit[i], mode);
-            if (toon == null) { Clear(); return false; }
+            if (toon == null) return Missing(mode == ToonLighting.Forward ? "ForgeVisual/ToonForward" : "ForgeVisual/ToonDeferred");
             _made.Add(toon);
             Unknown.AddRange(Toon.Apply(toon, _parameters[i]));
             drawn[i] = toon;
             if (over == null) continue;
             var overlay = Toon.Overlay(toon);
-            if (overlay == null) { Clear(); return false; }
+            if (overlay == null) return Missing("ForgeVisual/ToonOverlay");
             _made.Add(overlay);
             over[i] = overlay;
         }
-        if (over != null && Array.Exists(over, m => m == null)) { Clear(); return false; }
+        if (over != null && Array.Exists(over, m => m == null)) return Missing("ForgeVisual/LitCutout");
         _renderer.sharedMaterials = drawn;
         if (over != null) Overlay(over);
         Lighting = mode;
         return true;
+    }
+
+    private bool Missing(string shader)
+    {
+        Clear();
+        Plugin.Logger.ErrorOnce("visual-toon-shader-missing", "ForgeVisual's toon shader " + shader + " is not loaded; toon surfaces draw lit.");
+        return false;
     }
 
     // The same mesh again under the renderer, drawn with the overlay materials after the game's lighting.

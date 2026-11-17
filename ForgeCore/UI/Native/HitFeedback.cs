@@ -161,7 +161,7 @@ internal static class HitFeedbacks
             Plugin.Error("ui-hit-feedback-not-added-name-already", feedback.Id + ": hit feedback not added: the name is already taken.");
             return null;
         }
-        PatchGroups.Ensure(PatchGroup.LocalHits);
+        LocalHits.Ensure();
         _enabled ??= ForgeCore.Settings.Bind(Plugin.Id, "HitFeedback", "Enabled", true,
             "Shows the damage numbers, hit marker and kill marks that mods such as Forge Frames switch on. Turn off to hide them in every mod.");
         if (_view == null)
@@ -206,33 +206,50 @@ internal static class HitFeedbacks
     /// <summary>Whether the local player's hits are wanted now.</summary>
     internal static bool WantsLocalHits => Live is { LocalHits: true };
 
-    internal static void Pulse(HitKind kind) => Book.Pulse(kind, ForgeCore.Frame.GameTime, Time.frameCount);
+    // The game's frame number, read in one place: a hit's number, pulse and weak-spot mark of one frame are matched by it.
+    private static int CurrentFrame => Time.frameCount;
+
+    internal static void Pulse(HitKind kind) => Book.Pulse(kind, ForgeCore.Frame.GameTime, CurrentFrame);
 
     internal static void Number(long key, float amount, HitKind kind, float x, float y, float z, bool world)
     {
         if (amount <= 0f || float.IsNaN(amount)) return;
-        Book.Numbers.Add(key, ForgeCore.Frame.GameTime, amount, kind, x, y, z, world, Time.frameCount);
+        Book.Numbers.Add(key, ForgeCore.Frame.GameTime, amount, kind, x, y, z, world);
     }
 
     internal static void Killed(Vector3 at) => Book.Killed(ForgeCore.Frame.GameTime, at.x, at.y + 0.2f, at.z);
 
-    /// <summary>A hit of the local player on an enemy, as the game applied it: <paramref name="drop"/> health taken at
-    /// <paramref name="at"/>, <paramref name="killed"/> when it took the last.</summary>
-    internal static void LocalHit(long key, float drop, Vector3 at, bool killed)
+    /// <summary>A hit of the local player on an enemy, shown in the frame its request goes out (or, for one that was not
+    /// predicted, when the host settles it): the marker flashes and <paramref name="amount"/> rises from where it landed
+    /// (<paramref name="at"/>), <paramref name="critical"/> for a weak spot hit in this frame.</summary>
+    internal static void LocalHit(long key, float amount, Vector3 at, bool critical)
     {
         if (!WantsLocalHits) return;
-        // The number keeps the hit's colour (a weak spot turns it critical); the kill shows in the marker, the mark and the confirmation.
-        Number(key, drop, HitKind.Hit, at.x, at.y, at.z, true);
-        Pulse(killed ? HitKind.Kill : HitKind.Hit);
-        if (killed) Killed(at);
+        // The number keeps the hit's colour (a weak spot turns it critical); a kill shows in the marker, the mark and the confirmation.
+        Number(key, amount, critical ? HitKind.Critical : HitKind.Hit, at.x, at.y, at.z, true);
+        Pulse(critical ? HitKind.Critical : HitKind.Hit);
     }
 
-    /// <summary>The hit just applied on <paramref name="key"/> was on a weak spot (the game's own hit indicator says so).</summary>
+    /// <summary>What an enemy's number showed turned out different by <paramref name="delta"/> (the host settled another amount, or
+    /// the hit never landed). False when the enemy has no number now.</summary>
+    internal static bool Adjust(long key, float delta) => WantsLocalHits && Book.Numbers.Adjust(key, delta, HitKind.Hit);
+
+    /// <summary>The local player's kill, predicted or settled: the marker, and the mark where the enemy was hit last
+    /// (<paramref name="at"/>, when <paramref name="known"/>).</summary>
+    internal static void LocalKill(bool known, Vector3 at)
+    {
+        if (!WantsLocalHits) return;
+        if (known) Killed(at);
+        Pulse(HitKind.Kill);
+    }
+
+    /// <summary>The local player's hit was on a weak spot (the game's own hit indicator says so): the marker flashes at once and the
+    /// enemy's number turns critical.</summary>
     internal static void Critical(long key)
     {
         if (!WantsLocalHits) return;
-        Book.Numbers.MarkCritical(key, Time.frameCount);
         Pulse(HitKind.Critical);
+        Book.Numbers.Adjust(key, 0f, HitKind.Critical);
     }
 
     internal static void Clear() => Book.Clear();

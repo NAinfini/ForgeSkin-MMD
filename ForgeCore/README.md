@@ -24,7 +24,7 @@ Report bugs on [GitHub](https://github.com/NAinfini/GTFO-Forge-Mods/issues), or 
 
 - Cockpit pieces for vehicles and suits: hiding the game's HUD while piloting (and putting it back), moving the chat, a wide segmented armour bar, arcs beside the crosshair, a ring of contacts out of sight with a turn-around hint, ability slots, a hull damage disc, hit-direction flashes and a faint helmet visor with struts and cracks, plus the game's objectives, prompts, subtitles, inventory and teammates (with infection and ammunition) redrawn in the same style.
 - Hit-direction flashes and the visor shade are merged by priority and drawn in one full-screen pass (colour flash, corner shade, low-health pulse, blur, colour split).
-- Enemy health bars for the enemies you hit and can see: each hit's lost piece flashes and shrinks, a small damage number rises (a burst adds up into one), and a kill leaves a short mark and a small confirmation by the crosshair.
+- Enemy health bars for the enemies you hit and can see: each hit's lost piece flashes and shrinks, a small damage number rises (a burst adds up into one), and a kill leaves a short mark and a small confirmation by the crosshair. In multiplayer a client sees them in the frame of the hit and the host's result corrects them a moment later; the host and every client need this ForgeCore version, otherwise a client shows only basic hit feedback.
 - A wheel in the middle of the screen: hold the mod's key, point at a slot and let go to choose it. Choices waiting for you, such as a teammate's offer, glow.
 
   ![The wheel, as Forge Emote uses it](https://raw.githubusercontent.com/NAinfini/GTFO-Forge-Mods/main/ForgeEmote/docs/images/wheel.jpg)

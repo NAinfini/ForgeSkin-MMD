@@ -168,6 +168,7 @@ public static partial class SurfaceLook
     }
 
     /// <summary>Whether <paramref name="renderer"/> draws at all, shadow included (a removed part); the same switch as
-    /// <see cref="Models.HideRenderers"/>. An invisible part is <see cref="SetShadowOnly"/> instead.</summary>
-    public static void SetDrawn(Renderer renderer, bool drawn) => renderer.forceRenderingOff = !drawn;
+    /// <see cref="Models.HideRenderers"/>, written under whatever holds it off (a view from behind, an action hiding the held item):
+    /// it shows again only when they let go. An invisible part is <see cref="SetShadowOnly"/> instead.</summary>
+    public static void SetDrawn(Renderer renderer, bool drawn) => HeldOff.SetUnder(renderer, !drawn);
 }

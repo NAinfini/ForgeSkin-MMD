@@ -31,7 +31,6 @@ internal sealed class FloatingNumbers
         /// <summary>A place in the world (projected every frame) when <see cref="World"/>, else HUD units from the screen's middle.</summary>
         public float X, Y, Z;
         public bool World;
-        public int Frame;
     }
 
     private readonly Number[] _numbers;
@@ -49,7 +48,7 @@ internal sealed class FloatingNumbers
     public ref readonly Number this[int slot] => ref _numbers[slot];
 
     /// <summary>Adds <paramref name="amount"/>; returns the slot it went to.</summary>
-    public int Add(long key, float now, float amount, HitKind kind, float x, float y, float z, bool world, int frame)
+    public int Add(long key, float now, float amount, HitKind kind, float x, float y, float z, bool world)
     {
         if (key != 0)
             for (var i = 0; i < _numbers.Length; i++)
@@ -58,7 +57,6 @@ internal sealed class FloatingNumbers
                 if (!n.Used || n.Key != key || now - n.Last > MergeSeconds) continue;
                 n.Amount += amount;
                 n.Last = now;
-                n.Frame = frame;
                 if (kind > n.Kind) n.Kind = kind;
                 return i;
             }
@@ -69,18 +67,25 @@ internal sealed class FloatingNumbers
             slot = 0;
             for (var i = 1; i < _numbers.Length; i++) if (_numbers[i].Born < _numbers[slot].Born) slot = i;
         }
-        _numbers[slot] = new Number { Key = key, Used = true, Amount = amount, Born = now, Last = now, Kind = kind, X = x, Y = y, Z = z, World = world, Frame = frame };
+        _numbers[slot] = new Number { Key = key, Used = true, Amount = amount, Born = now, Last = now, Kind = kind, X = x, Y = y, Z = z, World = world };
         return slot;
     }
 
-    /// <summary>The hit of <paramref name="frame"/> on <paramref name="key"/> was on a weak spot: its number turns critical.</summary>
-    public void MarkCritical(long key, int frame)
+    /// <summary>Changes the number of <paramref name="key"/> hit last by <paramref name="delta"/> and raises its kind to
+    /// <paramref name="kind"/>, without renewing its life: what was shown turned out different. One left with nothing goes. False
+    /// when the key has no number.</summary>
+    public bool Adjust(long key, float delta, HitKind kind)
     {
+        var slot = -1;
         for (var i = 0; i < _numbers.Length; i++)
-        {
-            ref var n = ref _numbers[i];
-            if (n.Used && n.Key == key && n.Frame == frame && n.Kind == HitKind.Hit) n.Kind = HitKind.Critical;
-        }
+            if (_numbers[i].Used && _numbers[i].Key == key && (slot < 0 || _numbers[i].Last > _numbers[slot].Last)) slot = i;
+        if (key == 0 || slot < 0) return false;
+        ref var n = ref _numbers[slot];
+        n.Amount += delta;
+        if (kind > n.Kind) n.Kind = kind;
+        // Under half a tenth it would read 0.0.
+        if (n.Amount < 0.05f) n = default;
+        return true;
     }
 
     /// <summary>Frees numbers past their life.</summary>
