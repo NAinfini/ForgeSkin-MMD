@@ -51,17 +51,16 @@ function SettingsMenu() {
   const dataDir = useStore((s) => s.dataDir);
   const game = useStore((s) => s.game);
   const autoApply = useStore((s) => s.prefs.autoApply);
-  const { setPrefs, toast, refreshGame, refreshProfiles, chooseGameDir } = useStore.getState();
+  const { setPrefs, refreshGame, refreshProfiles, chooseGameDir, checkUpdate, startUpdate } = useStore.getState();
   const [version, setVersion] = useState('');
   const [checking, setChecking] = useState(false);
   const [edition, setEdition] = useState<'dev' | 'installed' | 'portable'>('installed');
   useEffect(() => void window.forge.version().then(setVersion), []);
   useEffect(() => void window.forge.edition().then(setEdition), []);
-  const check = async () => {
+  const updateVersion = useStore((s) => (s.update || s.updateReady ? null : s.updateVersion));
+  const check = () => {
     setChecking(true);
-    const r = await window.forge.checkUpdate().finally(() => setChecking(false));
-    // A found update announces itself (the same message at start and on a manual check).
-    if (r !== 'downloading') toast(r === 'error' ? 'error' : 'ok', t(`topBar.update.${r}`));
+    void checkUpdate(true).finally(() => setChecking(false));
   };
   const gameState = !game ? t('topBar.k6') : !game.found ? t('topBar.k7') : game.running ? t('topBar.k8') : t('topBar.k9');
   return (
@@ -122,9 +121,14 @@ function SettingsMenu() {
                 </Button>
               </Group>
             </Section>
-            <Button variant="default" size="xs" leftSection={<IconRefresh size={14} />} loading={checking} onClick={() => void check()}>
+            <Button variant="default" size="xs" leftSection={<IconRefresh size={14} />} loading={checking} onClick={check}>
               {t('topBar.checkUpdate', { v0: version })}
             </Button>
+            {updateVersion && (
+              <Button size="xs" color="flare" leftSection={<IconDownload size={14} />} onClick={startUpdate}>
+                {t('topBar.update.getVersion', { v0: updateVersion })}
+              </Button>
+            )}
           </Stack>
         </Popover.Dropdown>
       </Popover>

@@ -8,6 +8,7 @@ import { loadImage } from './frames';
 import { addLivery, isProjected, liveryLayer, moveLivery, removeLivery, setFinish, updateLivery } from './livery';
 import { attachedOf, call, type DynamicLayer, type Methods, type LiveryKind, type SkinDocument, type TextureChannel } from './protocol';
 import { allFinite, currentItem, materialOf, uid, useStore, type Selection } from './store';
+import { wake } from './viewport/DrawLoop';
 import { decalPose, meshesOf } from './viewport/liveryGpu';
 import { drawnMeshes, gearSurfaceAt, viewRefs } from './viewport/refs';
 import { setView, type ViewName } from './viewport/Viewport';
@@ -41,6 +42,7 @@ const isNum = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
 const isVec = (n: number) => (v: unknown) => Array.isArray(v) && v.length === n && v.every(isNum);
 
 const frames = async (n = 2) => {
+  wake();
   for (let i = 0; i < n; i++) await new Promise((r) => (requestAnimationFrame(r), setTimeout(r, 250))); // a window that draws no frames must not hang the call
 };
 

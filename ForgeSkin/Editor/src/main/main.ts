@@ -5,7 +5,6 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import squirrelStartup from 'electron-squirrel-startup';
-import { updateElectronApp, UpdateSourceType } from 'update-electron-app';
 import { Backend } from './backend';
 import { dataDir, edition, moveData, moveInstallData } from './dataDir';
 
@@ -391,27 +390,24 @@ function registerIpc() {
   ipcMain.on('win:toggleMaximize', () => (win?.isMaximized() ? win.unmaximize() : win?.maximize()));
   ipcMain.on('win:close', () => win?.close());
   ipcMain.handle('win:isMaximized', () => !!win?.isMaximized());
-  // 检查更新: the same check the installed copy runs at start and hourly; a found update downloads and then offers the
-  // restart as usual. A development run has no update feed.
-  ipcMain.handle(
-    'update:check',
-    () =>
-      new Promise<'dev' | 'portable' | 'latest' | 'downloading' | 'error'>((done) => {
-        if (edition !== 'installed') return done(edition);
-        const off = () => {
-          autoUpdater.off('update-available', found);
-          autoUpdater.off('update-not-available', latest);
-          autoUpdater.off('error', failed);
-        };
-        const found = () => (off(), done('downloading'));
-        const latest = () => (off(), done('latest'));
-        const failed = (e: Error) => (off(), updateLog(`check failed: ${e.message}`), done('error'));
-        autoUpdater.on('update-available', found);
-        autoUpdater.on('update-not-available', latest);
-        autoUpdater.on('error', failed);
-        autoUpdater.checkForUpdates();
-      }),
-  );
+  // 检查更新: only reads the feed and says which version it holds; nothing is downloaded until the user asks for it
+  // (update:download). A development run has no update feed.
+  ipcMain.handle('update:check', async (): Promise<UpdateCheck> => {
+    if (edition === 'dev') return { state: 'dev' };
+    try {
+      const { version } = await feedPackage();
+      return newer(version, app.getVersion()) ? { state: edition === 'portable' ? 'portable' : 'available', version } : { state: 'latest' };
+    } catch (e) {
+      updateLog(`check failed: ${String(e)}`);
+      return { state: 'error' };
+    }
+  });
+  // The user chose to update: Squirrel checks the same feed, downloads the package and stages it for the next start.
+  ipcMain.handle('update:download', () => {
+    if (edition !== 'installed') return;
+    autoUpdater.setFeedURL({ url: FEED });
+    autoUpdater.checkForUpdates();
+  });
   ipcMain.handle('app:version', () => app.getVersion());
   ipcMain.handle('card:draw', (_e, job: unknown) => drawCard(job).catch(() => null));
   ipcMain.on('card:done', (_e, id: number, result: unknown) => {
@@ -425,6 +421,32 @@ const updateLog = (message: string) => appLog('update', message);
 // RELEASES and .nupkg (the repository has other packages' releases, so its "latest" is not ours).
 const FEED = 'https://github.com/NAinfini/GTFO-Forge-Mods/releases/download/ForgeSkin-update';
 
+/** What a check found: `available` (an installed copy can download `version`) and `portable` (a newer `version` exists,
+ *  fetched by hand) carry the version. */
+type UpdateCheck = { state: 'dev' | 'latest' | 'error' } | { state: 'available' | 'portable'; version: string };
+
+/** The newest package in the feed: its file name, version and size, from the last line of RELEASES. */
+async function feedPackage(): Promise<{ name: string; version: string; size: number }> {
+  const r = await net.fetch(`${FEED}/RELEASES`);
+  if (!r.ok) throw new Error(`RELEASES: HTTP ${r.status}`);
+  const [, url, size] = (await r.text())
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .split(/\r?\n/)
+    .pop()!
+    .split(' ');
+  const name = decodeURIComponent(url.split('/').pop()!);
+  const version = /-(\d+(?:\.\d+)*)-full\.nupkg$/i.exec(name)?.[1];
+  if (!version) throw new Error(`RELEASES: no version in ${name}`);
+  return { name, version, size: Number(size) || 0 };
+}
+/** True when version `a` is above `b`, part by part. */
+function newer(a: string, b: string): boolean {
+  const [x, y] = [a, b].map((v) => v.split('.').map(Number));
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  return false;
+}
+
 // The download takes minutes and Squirrel reports no progress: the window shows a bar from the package's size in the
 // feed's RELEASES and the size of the file Update.exe is writing into <install>/packages/. Unknown sizes show a moving bar.
 let watching = false;
@@ -434,15 +456,9 @@ async function watchDownload() {
   let file: string | null = null;
   let total = 0;
   try {
-    const feed = `${FEED}/RELEASES`;
-    const [, url, size] = (await (await net.fetch(feed)).text())
-      .replace(/^\uFEFF/, '')
-      .trim()
-      .split(/\r?\n/)
-      .pop()!
-      .split(' ');
-    file = join(dirname(process.execPath), '..', 'packages', decodeURIComponent(url.split('/').pop()!));
-    total = Number(size) || 0;
+    const found = await feedPackage();
+    file = join(dirname(process.execPath), '..', 'packages', found.name);
+    total = found.size;
   } catch (e) {
     updateLog(`progress: no package size: ${String(e)}`);
   }
@@ -595,17 +611,13 @@ app.whenReady().then(async () => {
   registerIpc();
   startBackend();
   createWindow();
-  // An installed copy checks the update feed (FEED) at start and hourly, downloads a
-  // newer one in the background and offers to restart into it, in the window (update:ready, update:restart) rather than
-  // a system dialog. The bundled plugin updates with it.
+  // Nothing updates on its own: the window asks which version the feed holds when it starts (update:check) and offers it;
+  // only the user's click downloads it (update:download), and the window then offers the restart (update:ready,
+  // update:restart). The bundled plugin updates with it.
   ipcMain.handle('update:restart', () => autoUpdater.quitAndInstall());
   autoUpdater.on('update-available', () => void watchDownload());
-  if (edition === 'installed')
-    updateElectronApp({
-      updateSource: { type: UpdateSourceType.StaticStorage, baseUrl: FEED },
-      logger: { log: updateLog, info: updateLog, warn: updateLog, error: updateLog },
-      onNotifyUser: () => send('update:ready'),
-    });
+  autoUpdater.on('update-downloaded', () => send('update:ready'));
+  autoUpdater.on('error', (e) => updateLog(`update failed: ${e.message}`));
 });
 
 app.on('before-quit', () => {

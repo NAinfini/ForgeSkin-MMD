@@ -42,6 +42,7 @@ function StatusBar({ onLog }: { onLog: () => void }) {
   const progress = useStore((s) => (s.busy || s.previewLoading ? s.progress : null));
   const update = useStore((s) => s.update);
   const updateReady = useStore((s) => s.updateReady);
+  const updateVersion = useStore((s) => (s.update || s.updateReady ? null : s.updateVersion));
   const undo = useStore((s) => s.undo.length);
   const redo = useStore((s) => s.redo.length);
   const { undoEdit, redoEdit } = useStore.getState();
@@ -71,6 +72,11 @@ function StatusBar({ onLog }: { onLog: () => void }) {
           <span>{update.total ? t('app.updating', { v0: Math.floor((update.received / update.total) * 100) }) : t('app.updatingUnknown')}</span>
           <Progress w={120} size="xs" value={update.total ? (update.received / update.total) * 100 : 100} animated={!update.total} striped={!update.total} />
         </Group>
+      )}
+      {updateVersion && (
+        <Button size="compact-xs" variant="light" color="flare" onClick={useStore.getState().startUpdate}>
+          {t('topBar.update.getVersion', { v0: updateVersion })}
+        </Button>
       )}
       {updateReady && (
         <Tooltip label={t('app.updateReady')}>

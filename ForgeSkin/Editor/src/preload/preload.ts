@@ -49,7 +49,11 @@ const api = {
   toggleMaximize: (): void => ipcRenderer.send('win:toggleMaximize'),
   close: (): void => ipcRenderer.send('win:close'),
   isMaximized: (): Promise<boolean> => ipcRenderer.invoke('win:isMaximized'),
-  checkUpdate: (): Promise<'dev' | 'portable' | 'latest' | 'downloading' | 'error'> => ipcRenderer.invoke('update:check'),
+  /** Which version the update feed holds; downloads nothing. `available`: an installed copy can download `version`
+   *  (downloadUpdate); `portable`: a newer `version` exists, fetched by hand. */
+  checkUpdate: (): Promise<{ state: 'dev' | 'latest' | 'error' } | { state: 'available' | 'portable'; version: string }> => ipcRenderer.invoke('update:check'),
+  /** Downloads the update the check found (onUpdateProgress, then onUpdateReady). */
+  downloadUpdate: (): Promise<void> => ipcRenderer.invoke('update:download'),
   version: (): Promise<string> => ipcRenderer.invoke('app:version'),
   onMaximized: (cb: (maximized: boolean) => void) => subscribe('win:maximized', cb),
   /** A found update downloading: bytes so far and in all (0 when unknown); received -1 means it failed, = total done. */

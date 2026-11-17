@@ -11,6 +11,7 @@ import { attachedOf } from '../protocol';
 import { Attachments } from './Attachments';
 import { LiveryTool } from './LiveryTool';
 import { CodeEffects } from './CodeEffects';
+import { DrawLoop } from './DrawLoop';
 import { PartMeshes } from './PartMeshes';
 import { ModalTransform, modalState, newGesture, placeOnSurface, selectedTarget, type Target } from './ModalTransform';
 import { ATTACHMENT_EVENT, gearSurfaceAt, Loading, outlinedMeshes, pathChain, pickAt, quiet, SCENE_EVENT, selectedObjects, useSceneVersion, viewRefs, type Pick } from './refs';
@@ -389,6 +390,7 @@ export function Viewport() {
     <Canvas
       gl={{ preserveDrawingBuffer: true, antialias: true, alpha: true }}
       dpr={[1, 2]}
+      frameloop="demand"
       onCreated={({ gl }) => {
         if (import.meta.env.DEV) Object.assign(window, { sfGl: gl });
         // A lost GPU context does not come back on its own here: log it, save, and reload (the autosave reopens). A canvas
@@ -401,6 +403,7 @@ export function Viewport() {
         });
       }}
     >
+      <DrawLoop />
       <CameraRig />
       <Gizmo />
       <Picking />

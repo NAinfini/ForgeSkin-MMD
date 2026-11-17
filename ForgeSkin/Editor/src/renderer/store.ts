@@ -255,7 +255,9 @@ interface State {
   prefs: Prefs;
   logs: LogLine[];
   progress: { text: string; done: number; total: number } | null;
-  /** A new version downloading in the background (total 0 when its size is unknown). */
+  /** A newer version the update feed holds that this installed copy can download; nothing is downloaded until startUpdate. */
+  updateVersion: string | null;
+  /** That version downloading, after the user asked for it (total 0 when its size is unknown). */
   update: { received: number; total: number } | null;
   /** A new version is downloaded; restarting installs it. */
   updateReady: boolean;
@@ -277,6 +279,10 @@ interface State {
 
   init(): Promise<void>;
   loadAll(): Promise<void>;
+  /** Asks which version the update feed holds and offers a newer one; a check the user asked for also says when there is none. */
+  checkUpdate(asked: boolean): Promise<void>;
+  /** Downloads the version the check found. */
+  startUpdate(): void;
   log(line: string): void;
   toast(kind: NotifyKind, text: string, action?: NotifyAction): void;
   fail(e: unknown, fallback?: string): void;
@@ -377,11 +383,11 @@ type Set = (p: Partial<State>) => void;
 function subscribe(f: Window['forge'], set: Set, get: () => State) {
   f.onLog((line) => get().log(line));
   f.onUpdateProgress((received, total) => {
-    if (!get().update) get().toast('info', t('topBar.update.downloading'));
+    if (received < 0) get().toast('error', t('topBar.update.failed'));
     set({ update: received < 0 || (total > 0 && received >= total) ? null : { received, total } });
   });
   f.onUpdateReady(() => {
-    set({ update: null, updateReady: true });
+    set({ update: null, updateReady: true, updateVersion: null });
     get().toast('ok', t('app.updateReady'), { label: t('app.restartUpdate'), run: () => void f.restartToUpdate() });
   });
   f.onEvent((event, data) => {
@@ -435,6 +441,7 @@ export const useStore = create<State>((set, get) => ({
   installed: [],
   logs: [],
   progress: null,
+  updateVersion: null,
   update: null,
   updateReady: false,
   fileEpoch: 0,
@@ -457,6 +464,7 @@ export const useStore = create<State>((set, get) => ({
     if (!initialised) {
       initialised = true;
       subscribe(f, set, get);
+      void get().checkUpdate(false);
     }
     set({ dataDir: await f.dataDir() });
     const notice = sessionStorage.getItem(DATA_NOTICE);
@@ -485,6 +493,19 @@ export const useStore = create<State>((set, get) => ({
       .flatMap(([w, list]) => list.map((k) => ({ w, k })))
       .sort((a, b) => b.k.modified.localeCompare(a.k.modified))[0];
     if (newest) await get().openWork(newest.w, newest.k.id);
+  },
+  async checkUpdate(asked) {
+    const r = await window.forge.checkUpdate();
+    if (r.state === 'available') {
+      set({ updateVersion: r.version });
+      get().toast('info', t('topBar.update.available', { v0: r.version }), { label: t('topBar.update.get'), run: () => get().startUpdate() });
+    } else if (r.state === 'portable') get().toast('info', t('topBar.update.portable', { v0: r.version }));
+    else if (asked) get().toast(r.state === 'error' ? 'error' : 'ok', t(`topBar.update.${r.state}`));
+  },
+  startUpdate() {
+    if (get().update || get().updateReady) return;
+    set({ update: { received: 0, total: 0 } });
+    void window.forge.downloadUpdate();
   },
   log(line) {
     const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });

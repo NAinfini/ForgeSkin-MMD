@@ -41,7 +41,7 @@ Forge provides the editor and this base mod; the skins themselves are mods their
 
 - **Get skins**: find skin mods on Thunderstore and install them with your mod manager, like any other mod (they list
   ForgeSkin as a dependency), then pick them in the lobby with the SKINS button.
-- **Make or change skins**: the ForgeSkin editor, for Windows. Download the installer (`Setup.exe`, updates itself) or the
+- **Make or change skins**: the ForgeSkin editor, for Windows. Download the installer (`Setup.exe`; it tells you when a new version is out and updates when you click Update) or the
   portable zip from the latest release: https://github.com/NAinfini/GTFO-Forge-Mods/releases/latest. Its built-in tutorial
   (the book button) walks through a first gun skin and a character.
 - **Share skins**: in the editor, **Export** → **Export as Thunderstore skin mod…** makes a zip ready for Thunderstore;
@@ -49,7 +49,7 @@ Forge provides the editor and this base mod; the skins themselves are mods their
 - **A single skin file**: a `.forgeskin` someone sent you goes into `BepInEx/ForgeSkin/skins/` of your profile.
 - **Source**: https://github.com/NAinfini/GTFO-Forge-Mods.
 
-下载编辑器：https://github.com/NAinfini/GTFO-Forge-Mods/releases/latest （安装版 `Setup.exe` 会自动更新，也有免安装 zip）。
+下载编辑器：https://github.com/NAinfini/GTFO-Forge-Mods/releases/latest （安装版 `Setup.exe` 启动时只检查有没有新版本，点「更新」才下载；也有免安装 zip）。
 皮肤由作者各自发布在 Thunderstore，用模组管理器安装；自己做的皮肤在编辑器里点 **导出** → **导出为 Thunderstore 皮肤模组…**，
 再自己上传到 Thunderstore。单个 `.forgeskin` 皮肤文件放进档案的 `BepInEx/ForgeSkin/skins/`。装好后在大厅点 SKINS 选用。
 

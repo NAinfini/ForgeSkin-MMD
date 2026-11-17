@@ -565,8 +565,9 @@ body {
   right: 14px;
   bottom: 14px;
 }
-/* Toasts stand above the view's bottom controls (camera switch, events) and the status bar instead of covering them. */
-.toasts {
+/* Toasts stand above the view's bottom controls (camera switch, events) and the status bar instead of covering them. Only the
+   bottom containers: a top one given a bottom too would stretch down the window and take every click under it. */
+.toasts[data-position^='bottom'] {
   bottom: 88px;
 }
 .overlay.tools {
