@@ -44,7 +44,7 @@ import { motionMatrix, MOTION_SECONDS, PREVIEW_FPS, SETTLE_SECONDS } from '../vi
 import { hash, THUMB_EVENT } from '../viewport/thumbnails';
 import type { CharmMotion } from '../viewport/refs';
 import type { ImportReply } from './import-worker';
-import { COLLIDER_JOINTS, COLLIDER_RADIUS, matchOf, useCharacter, type BoneRow, type Capsule, type ColliderJoint, type RigCheck, type Spring, type SpringKind } from './state';
+import { COLLIDER_JOINTS, COLLIDER_RADIUS, matchOf, useCharacter, type BoneRow, type Capsule, type CharacterState, type ColliderJoint, type RigCheck, type Spring, type SpringKind } from './state';
 
 /** Every canonical joint, body then fingers (the site's rig, the same table as ForgeCore's ClipRig). */
 export const BODY_JOINTS = HumanJoints;
@@ -927,6 +927,33 @@ export function strandsFrom(name: string): string[][] {
   };
   const kids = bone.children.filter(isBone);
   return kids.length >= 2 ? kids.map(down) : [down(bone)];
+}
+
+const SPRING_NAME: Record<SpringKind, 'hair' | 'skirt' | 'tail'> = { longHair: 'hair', shortHair: 'hair', skirt: 'skirt', tail: 'tail' };
+/** A set's name on screen: its kind and a number among the sets of that kind (头发 1, 裙摆 1). */
+export function springLabel(springs: { id: string; kind: SpringKind }[], id: string): string {
+  const kind = springs.find((x) => x.id === id)?.kind ?? 'longHair';
+  const same = springs.filter((x) => SPRING_NAME[x.kind] === SPRING_NAME[kind]);
+  return `${t(`character.springName.${SPRING_NAME[kind]}`)} ${same.findIndex((x) => x.id === id) + 1}`;
+}
+
+/** The bones a new set can start at, as dots on the figure: the top of each run of bones that neither the match nor a set uses and
+ * that has something below it to swing. */
+export function looseRoots(s: Pick<CharacterState, 'auto' | 'picked' | 'springs' | 'bones'>): string[] {
+  const used = new Set([...Object.values(matchOf(s)), ...s.springs.flatMap((x) => x.strands.flat())]);
+  return s.bones
+    .filter((b) => !used.has(b.name) && (b.parent < 0 || used.has(s.bones[b.parent]!.name)))
+    .map((b) => b.name)
+    .filter((name) => strandsFrom(name).some((x) => x.length >= 2));
+}
+
+/** Makes the bones under `name` swing as a new set and selects it. */
+export function addSpring(name: string) {
+  // A strand moves from its second bone on: one bone alone has nothing to swing.
+  const strands = strandsFrom(name).filter((x) => x.length >= 2);
+  if (!strands.length) return void useStore.getState().toast('info', t('character.springTooShort'));
+  const id = `${name}-${Date.now().toString(36)}`;
+  useCharacter.setState((x) => ({ springs: [...x.springs, { id, kind: guessKind(name, strands), strands }], spring: id, hover: null }));
 }
 
 /** A starting preset from the bones' names and length. */

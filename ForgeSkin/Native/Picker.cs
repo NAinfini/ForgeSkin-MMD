@@ -27,8 +27,14 @@ sealed class Picker : PickerSource
     public static void Register()
     {
         _ui = UIKit.Mod(ForgeSkinPlugin.Guid);
-        _ui.AddLobbyButton("Skins", LobbyArea.Below, LobbyWidth.Half, UIText.Key("lobby.button"), Instance.Toggle);
+        // On the player's own bar, and for the host on each bot's bar (the host picks what a bot wears, as the game has the host pick its loadout).
+        var button = _ui.AddLobbyButton("Skins", LobbyArea.Below, LobbyWidth.Half, UIText.Key("lobby.button"), Instance.Toggle,
+            visible: bar => bar.m_player is { } player && (player.IsBot ? SNetwork.SNet.IsMaster : player.IsLocal));
+        if (button != null) button.WithoutApparel = true;
     }
+
+    // Whose skins the open picker shows and picks: -1 the local player's, else the bot in that slot (Looks.ChooseBot).
+    static int _bot = -1;
 
     // A pick or reload changed what the open picker shows.
     public static void Changed()
@@ -40,6 +46,7 @@ sealed class Picker : PickerSource
     {
         if (!UIKit.IsShowing(this))
         {
+            _bot = bar.m_player is { IsBot: true } bot ? bot.PlayerSlotIndex() : -1;
             _keys.Clear();
             // The character first (only with a character pack installed), then the gear by name.
             _keys.AddRange(Skins.Candidates.Keys.OrderBy(k => k != CharacterSkin.Target).ThenBy(Name, StringComparer.CurrentCultureIgnoreCase));
@@ -83,7 +90,7 @@ sealed class Picker : PickerSource
 
     string? Key(int slot) => slot >= 0 && slot < _keys.Count ? _keys[slot] : null;
     static List<Skin> SkinsOf(string key) => Skins.Candidates.GetValueOrDefault(key) ?? new();
-    static Skin? Worn(string key) => Skins.Targets.TryGetValue(key, out var id) ? Skins.ById.GetValueOrDefault(id) : null;
+    static Skin? Worn(string key) => _bot >= 0 ? Looks.BotPick(_bot, key) : Skins.Targets.TryGetValue(key, out var id) ? Skins.ById.GetValueOrDefault(id) : null;
     static string Title(Skin skin) => skin.Doc.Name.Length > 0 ? skin.Doc.Name : skin.Doc.Id;
 
     // A card's line under the name: the author.
@@ -290,7 +297,7 @@ sealed class Picker : PickerSource
         if (skin == null)
         {
             // Skins for every gear (not chosen here) stay on under the original look.
-            var globals = Skins.Globals.Count(Skins.ById.ContainsKey);
+            var globals = _bot >= 0 ? 0 : Skins.Globals.Count(Skins.ById.ContainsKey); // a bot wears none of them
             return new PickerInfo
             {
                 Title = T("picker.original"),
@@ -308,7 +315,9 @@ sealed class Picker : PickerSource
         if (!Skins.Enabled) return T("picker.off");
         var skins = SkinsOf(key);
         _mine = null;
-        Skins.Choose(key, entry > 0 && entry <= skins.Count ? skins[entry - 1].Doc.Id : "");
+        var id = entry > 0 && entry <= skins.Count ? skins[entry - 1].Doc.Id : "";
+        if (_bot >= 0) Looks.ChooseBot(_bot, key, id);
+        else Skins.Choose(key, id);
         return null;
     }
 

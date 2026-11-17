@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Checkbox, CloseButton, ScrollArea, TextInput, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Checkbox, CloseButton, ScrollArea, Select, TextInput, Tooltip } from '@mantine/core';
 import {
   IconArrowBackUp,
   IconBox,
@@ -8,6 +8,10 @@ import {
   IconDeviceDesktop,
   IconEye,
   IconEyeOff,
+  IconFlame,
+  IconHandFinger,
+  IconHandGrab,
+  IconHandStop,
   IconListTree,
   IconMovie,
   IconPaperclip,
@@ -16,9 +20,10 @@ import {
   IconSearch,
   IconSphere,
   IconTrash,
+  IconViewfinder,
   type Icon as TablerIcon,
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { attachedOf, attachmentMaterial, type Attachment, CHANNELS, type CodeEffect, type DynamicLayer } from '../protocol';
 import { attachmentName, editorOf, materialOf, partTransformOf, pendingKey, useItem, useStore, sameSelection, type Selection } from '../store';
 import { AttachmentAddMenu, PartAddMenu } from './AddMenu';
@@ -29,7 +34,8 @@ import { updateCodeEffect } from '../codeFx';
 import { FEATURE, Info } from './Features';
 import { hiddenMeshes, partTarget, useSceneVersion } from '../viewport/refs';
 import { focusSelection } from '../viewport/Viewport';
-import { partLabel, t } from '../i18n';
+import { HOLD_COLOR } from '../viewport/HoldPointMarks';
+import { localName, partLabel, t } from '../i18n';
 import { pieceChanged, pieceLabel } from '../pieces';
 
 /** A row's hover: the pointer over it shows the thing in the 3D view, and the pointer over the thing in the 3D view marks
@@ -423,10 +429,163 @@ function PartTree({ query }: { query: string }) {
           </div>
         );
       })}
+      <HoldPoints query={query} />
     </ScrollArea>
   );
 }
 
+const HOLD_ICON = { rightHand: IconHandStop, leftHand: IconHandGrab, muzzle: IconFlame, sight: IconViewfinder } as const;
+
+const HOLD_ORDER = ['rightHand', 'leftHand', 'muzzle', 'sight'] as const;
+
+/** The gun's hold points (where each hand grips, where shots leave, the aim line), the last group of the parts list: each selects
+ * its node, moved like any piece. */
+function HoldPoints({ query }: { query: string }) {
+  const listed = useStore((s) => s.preview?.points) ?? [];
+  const doc = useStore((s) => s.doc);
+  const selection = useStore((s) => s.selection);
+  const [open, setOpen] = useState(true);
+  const q = query.trim().toLowerCase();
+  const points = HOLD_ORDER.flatMap((point) => listed.filter((p) => p.point === point)).filter(
+    (p) => !q || t('leftRail.holdTitle').toLowerCase().includes(q) || t(`leftRail.hold.${p.point}`).toLowerCase().includes(q),
+  );
+  if (!points.length) return null;
+  const expanded = open || !!q;
+  return (
+    <div>
+      <div className="part" role="option" aria-selected={false} onClick={() => setOpen(!expanded)}>
+        <ActionIcon className="twist" variant="subtle" color="gray" size="sm" data-open={expanded || undefined} aria-label={expanded ? t('leftRail.collapse') : t('leftRail.expand')}>
+          <IconChevronRight size={13} />
+        </ActionIcon>
+        <IconHandGrab size={14} className="kind-icon" />
+        <span className="label">{t('leftRail.holdTitle')}</span>
+        <span onClick={(e) => e.stopPropagation()}>
+          <Info label={t('leftRail.holdInfo')} />
+        </span>
+        {!expanded && <span className="kids">{points.length}</span>}
+      </div>
+      {expanded &&
+        points.map((p) => {
+          const Icon = HOLD_ICON[p.point];
+          const row = (
+            <PartRow
+              key={p.point}
+              className="part child sub"
+              target={{ kind: 'part', id: p.part, sub: p.path }}
+              role="option"
+              aria-selected={selection?.kind === 'part' && selection.id === p.part && selection.sub === p.path}
+              onClick={() => useStore.getState().select({ kind: 'part', id: p.part, sub: p.path })}
+            >
+              <Icon size={13} className="kind-icon" style={{ color: HOLD_COLOR[p.point] }} />
+              <span className="label" title={p.path}>
+                {t(`leftRail.hold.${p.point}`)}
+                {pieceChanged(doc, p.part, p.path) && <span className="moved" title={t('leftRail.k22')} />}
+              </span>
+              <span className="row-actions">
+                {pieceChanged(doc, p.part, p.path) && (
+                  <Tooltip label={t('leftRail.holdReset')}>
+                    <ActionIcon variant="subtle" color="gray" size="sm" aria-label={t('leftRail.holdReset')} onClick={(e) => (e.stopPropagation(), resetPiece(p.part, p.path))}>
+                      <IconArrowBackUp size={13} />
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </span>
+            </PartRow>
+          );
+          return p.point === 'rightHand' || p.point === 'leftHand' ? (
+            <Fragment key={p.point}>
+              {row}
+              <HandShape side={p.point === 'rightHand' ? 'right' : 'left'} />
+              <HandFingers side={p.point === 'rightHand' ? 'right' : 'left'} />
+            </Fragment>
+          ) : (
+            row
+          );
+        })}
+    </div>
+  );
+}
+
+/** How a hand's fingers hold the gun: the gun's own grip, or the grip of another of the game's guns (the skin's `hands`). */
+function HandShape({ side }: { side: 'left' | 'right' }) {
+  const item = useItem();
+  const catalog = useStore((s) => s.catalog);
+  const chosen = useStore((s) => s.doc.hands?.[side]);
+  const key = side === 'left' ? 'handLeft' : 'handRight';
+  const own = item?.[key];
+  if (!own) return null;
+  const guns = new Map<string, string[]>();
+  // The grips of the guns a player holds (a sentry gun's parts name grips too, which no hand takes).
+  for (const c of catalog) if (c[key] && (c.slot === 'main' || c.slot === 'special' || c[key] === own)) guns.set(c[key], [...(guns.get(c[key]) ?? []), localName(c)]);
+  const label = (names: string[]) => (names.length > 2 ? t('leftRail.handGuns', { v0: names.slice(0, 2).join(t('leftRail.handJoin')), v1: names.length }) : names.join(t('leftRail.handJoin')));
+  const data = [...guns].map(([value, names]) => ({ value, label: value === own ? t('leftRail.handOwn') : label(names) })).sort((a, b) => +(b.value === own) - +(a.value === own));
+  const set = (value: string) =>
+    useStore.getState().edit((d) => {
+      const hands = { ...d.hands };
+      if (value === own) delete hands[side];
+      else hands[side] = value;
+      d.hands = Object.keys(hands).length ? hands : null;
+    });
+  return (
+    <div className="part child sub hand-shape" style={{ ['--depth' as string]: 1 }}>
+      <IconHandFinger size={13} className="kind-icon" />
+      <span className="hand-pick">
+        <span className="dim">
+          {t('leftRail.handShapeLabel')}
+          {chosen && <span className="moved" title={t('leftRail.k22')} />}
+        </span>
+        <Select
+          size="xs"
+          value={chosen ?? own}
+          data={data}
+          allowDeselect={false}
+          comboboxProps={{ width: 260, position: 'bottom-start' }}
+          aria-label={t(`leftRail.handShape.${side}`)}
+          onChange={(v) => v && set(v)}
+        />
+      </span>
+      <span className="row-actions">
+        {chosen && (
+          <Tooltip label={t('leftRail.handReset')}>
+            <ActionIcon variant="subtle" color="gray" size="sm" aria-label={t('leftRail.handReset')} onClick={() => set(own)}>
+              <IconArrowBackUp size={13} />
+            </ActionIcon>
+          </Tooltip>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** A hand's fingers once they were moved (in the 3D view, by the dots on the hand): the way back to the hand shape (the skin's
+ *  `hands.leftFingers` / `rightFingers`). */
+function HandFingers({ side }: { side: 'left' | 'right' }) {
+  const key = side === 'left' ? 'leftFingers' : 'rightFingers';
+  const moved = useStore((s) => !!s.doc.hands?.[key]);
+  const reset = () =>
+    useStore.getState().edit((d) => {
+      const hands = { ...d.hands };
+      delete hands[key];
+      d.hands = Object.keys(hands).length ? hands : null;
+    });
+  if (!moved) return null;
+  return (
+    <div className="part child sub hand-shape" style={{ ['--depth' as string]: 1 }}>
+      <IconHandFinger size={13} className="kind-icon" />
+      <span className="dim">
+        {t('leftRail.fingers')}
+        <span className="moved" title={t('leftRail.k22')} />
+      </span>
+      <span className="row-actions" style={{ marginLeft: 'auto' }}>
+        <Tooltip label={t('leftRail.fingerReset')}>
+          <ActionIcon variant="subtle" color="gray" size="sm" aria-label={t('leftRail.fingerReset')} onClick={reset}>
+            <IconArrowBackUp size={13} />
+          </ActionIcon>
+        </Tooltip>
+      </span>
+    </div>
+  );
+}
 export function LeftRail() {
   const item = useItem();
   const [query, setQuery] = useState('');

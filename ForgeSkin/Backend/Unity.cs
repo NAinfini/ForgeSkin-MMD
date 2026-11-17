@@ -18,6 +18,7 @@ public sealed class Node
     public List<MaterialRef> Materials = new();
     public bool Active = true;
     public string? Part; // catalog part id on part roots
+    public string? Point; // which of the gear's hold points this node is (Assembly.Points), else null
 
     public void ResetRoot(string part)
     {
@@ -52,6 +53,11 @@ public sealed class MeshData
     public Vector2[]? Uv0;
     public Vector4[]? Colors; // vertex colours; GTFO/BlendHS reads its layer masks from them
     public List<int[]> SubMeshes = new(); // triangle indices per submesh, absolute vertex indices
+    // A skinned mesh: per vertex four bone weights and four indices into the renderer's bones, and per bone the matrix from mesh space
+    // into that bone's space at bind (as System.Numerics takes it: Vector3.Transform(vertex, BindPoses[bone])).
+    public float[]? BoneWeights;
+    public int[]? BoneIndices;
+    public Matrix4x4[]? BindPoses;
 }
 
 public sealed class MaterialData
@@ -226,6 +232,15 @@ public static class Unity
         if (Channel(2, out int td) is { } t && td == 4) mesh.Tangents = Enumerable.Range(0, count).Select(i => new Vector4(t[i * 4], t[i * 4 + 1], t[i * 4 + 2], t[i * 4 + 3])).ToArray();
         if (Channel(3, out int cd) is { } col && cd == 4) mesh.Colors = Enumerable.Range(0, count).Select(i => new Vector4(col[i * 4], col[i * 4 + 1], col[i * 4 + 2], col[i * 4 + 3])).ToArray();
         if (Channel(4, out int ud) is { } u) mesh.Uv0 = Enumerable.Range(0, count).Select(i => new Vector2(u[i * ud], u[i * ud + 1])).ToArray();
+        if (Channel(12, out int wd) is { } weights && Channel(13, out int id) is { } bones && wd == 4 && id == 4)
+        {
+            mesh.BoneWeights = weights;
+            mesh.BoneIndices = Array.ConvertAll(bones, b => (int)b);
+            // Unity writes column vectors (e<row><column>); System.Numerics takes row vectors, so the matrix is transposed.
+            mesh.BindPoses = f["m_BindPose.Array"].Children.Select(b => new Matrix4x4(
+                b["e00"].AsFloat, b["e10"].AsFloat, b["e20"].AsFloat, b["e30"].AsFloat, b["e01"].AsFloat, b["e11"].AsFloat, b["e21"].AsFloat, b["e31"].AsFloat,
+                b["e02"].AsFloat, b["e12"].AsFloat, b["e22"].AsFloat, b["e32"].AsFloat, b["e03"].AsFloat, b["e13"].AsFloat, b["e23"].AsFloat, b["e33"].AsFloat)).ToArray();
+        }
 
         bool wide = f["m_IndexFormat"].AsInt == 1;
         var ib = f["m_IndexBuffer.Array"].AsByteArray;

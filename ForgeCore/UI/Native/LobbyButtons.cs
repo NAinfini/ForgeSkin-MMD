@@ -216,7 +216,7 @@ internal static class LobbyButtons
             var button = buttons[i];
             if (!Registered.Contains(button.Id, button)) continue;
             bool visible;
-            try { visible = shown && (button.Visible?.Invoke(bar) ?? (bar.m_player != null && bar.m_player.IsLocal)); }
+            try { visible = (shown || button.WithoutApparel) && (button.Visible?.Invoke(bar) ?? (bar.m_player != null && bar.m_player.IsLocal)); }
             catch (Exception error)
             {
                 Plugin.Error("ui-lobby-button-visibility-check-failed", "Lobby button '" + button.Id + "' visibility check failed: " + error);

@@ -74,6 +74,8 @@ sealed partial class SkinnedGear
     readonly List<AmmoScreen> _screens = new();
     readonly List<Transform> _faceCamera = new();
     readonly List<PartPose> _poses = new();
+    // The grip animations the gun's parts gave its hands, while a skin's hand shapes stand in for them.
+    (string Left, string Right)? _ownHands;
     readonly List<(GameObject Root, string Id, Material Template)> _roots = new(); // attachment roots
     bool _equipped; // first wield seen: diagnostics logged
     bool _flashlight, _aiming; // edges for FlashlightOn/Off and AimEnd
@@ -302,7 +304,7 @@ sealed partial class SkinnedGear
     // A first-person item only exists for the local player. A third-person one waits for its owner, which can be set
     // long after the parts spawn (gear is built while the level generates); looked at a few times a second, for as long as
     // it exists (icon renders and lobby previews never get one and are gone soon). The owner decides whose choices it wears:
-    // the local player's own, a teammate's synced look (their gear in hand and the sentry they placed), and a bot's none.
+    // the local player's own, a teammate's synced look (their gear in hand and the sentry they placed), and a bot's the look the host picked for it.
     static void ResolvePending(float now)
     {
         _nextPending = now + 0.25f;
@@ -317,14 +319,7 @@ sealed partial class SkinnedGear
                 agent = item.Owner;
                 var player = agent?.Owner;
                 if (player == null) continue;
-                if (player.IsBot)
-                {
-                    Pending.RemoveAt(i);
-                    Reported.Remove(holder.Pointer);
-                    if (Noting(holder)) ForgeSkinPlugin.Info($"{item.PublicName} [{View(item)}]: skipped, bot {player.NickName} wears the original look");
-                    continue;
-                }
-                if (!player.IsLocal) owner = player.Lookup;
+                if (player.IsBot || !player.IsLocal) owner = Looks.Key(player); // a bot's by its slot (on the host's machine its player is a local one): the host picks what it wears
             }
             Pending.RemoveAt(i);
             Track(new SkinnedGear(holder, item, owner: owner, ownerAgent: owner != 0 ? agent : null));
@@ -601,7 +596,7 @@ sealed partial class SkinnedGear
             // An attachment's model takes its own override where the attachment is built (Attach).
             foreach (var m in doc.Materials) if (m.Attached() == null) overrides[m.Material] = (weapon, m);
         }
-        if (overrides.Count == 0 && (doc == null || doc.Attachments.Count == 0 && doc.Parts.Count == 0 && doc.Sounds.Count == 0))
+        if (overrides.Count == 0 && (doc == null || doc.Attachments.Count == 0 && doc.Parts.Count == 0 && doc.Sounds.Count == 0 && doc.Hands == null))
         {
             ForgeSkinPlugin.Info($"{_label}: skipped, no active skin for {key}");
             return;
@@ -654,6 +649,16 @@ sealed partial class SkinnedGear
                 ForgeSkinPlugin.Info($"{_label}: pose {p.Part}/{p.Path ?? "."} written, now {pose.Describe()}");
                 if (p.Visible == false) hidden++;
             }
+        if (weapon != null && _holder != null && doc!.Hands is { } hands)
+        {
+            if (!(string.IsNullOrEmpty(hands.Left) && string.IsNullOrEmpty(hands.Right)))
+            {
+                _ownHands = (_holder.m_animLeftHand, _holder.m_animRightHand);
+                GunMount.SetHandShapes(_holder, hands.Left, hands.Right);
+                ForgeSkinPlugin.Info($"{_label}: hand shapes left {hands.Left ?? "(own)"} right {hands.Right ?? "(own)"}, the gun's own {_ownHands.Value.Left} / {_ownHands.Value.Right}");
+            }
+            if (_item != null) FingerPose.Set(_item, hands, _label);
+        }
         int codeEffects = weapon != null ? AddCodeEffects(weapon, doc!) : 0;
         ForgeSkinPlugin.Note($"{_label}: {key}, skin {weapon?.Doc.Id ?? "-"}, {_swaps.Count} renderers, " +
                              $"{attachments} attachments, {_screens.Count} screens, {sounds} sounds, {_layerCount} layers, {_poses.Count} part poses ({hidden} hidden), {codeEffects} code effects");
@@ -714,6 +719,9 @@ sealed partial class SkinnedGear
         // Last first: of two entries on one node, the first one saw the vanilla pose.
         for (int i = _poses.Count - 1; i >= 0; i--) _poses[i].Revert();
         _poses.Clear();
+        if (_ownHands is { } own && _holder != null && !_holder.WasCollected) GunMount.SetHandShapes(_holder, own.Left, own.Right);
+        _ownHands = null;
+        FingerPose.Clear(_itemPointer);
         foreach (var (renderer, original, mine) in _swaps)
         {
             if (renderer == null || original == null) continue;

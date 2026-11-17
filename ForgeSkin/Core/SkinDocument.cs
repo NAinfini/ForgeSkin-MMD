@@ -24,6 +24,9 @@ public sealed class SkinDocument
     public List<Attachment> Attachments { get; set; } = new();
     public List<PartTransform> Parts { get; set; } = new();
     public List<SkinSound> Sounds { get; set; } = new();
+    // A gun skin's hand shapes; null: the gun's own.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public HandShapes? Hands { get; set; }
     // Live code effects (CodeEffect.cs); null: none.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<CodeEffect>? CodeEffects { get; set; }
@@ -139,6 +142,25 @@ public sealed class SkinTarget
     public string? Key() => Weapon == CharacterSkin.Target ? CharacterSkin.Target : GearId is { } gear ? GearKey(gear) : ItemId is { } item ? ItemKey(item) : null;
     public static string GearKey(uint id) => "gear:" + id;
     public static string ItemKey(uint id) => "item:" + id;
+}
+
+// Which of the game's own grip animations each hand takes on the gun: the name of the animation state, one that the parts of a
+// vanilla gun name (the editor lists them by gun). Null keeps the gun's own. Only the fingers change; the hands stay on the gun's
+// grip points (moved as PartTransforms). The first-person arms play them; other players see no change.
+// LeftFingers / RightFingers: each finger joint turned on from the shape, 15 rows a hand in ForgeCore's finger order (thumb, index, middle,
+// ring, little; three joints each, knuckle outward), a row the joint's own Euler degrees (x curls the finger, y spreads it, z twists
+// it), applied after the animation as localRotation * Euler. Null: the shape as it is.
+public sealed class HandShapes
+{
+    public const int Joints = 15;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Left { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Right { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float[][]? LeftFingers { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float[][]? RightFingers { get; set; }
 }
 
 // Layout of a vanilla part root or a child under it, as absolute local values (Unity space, metres, Euler degrees).

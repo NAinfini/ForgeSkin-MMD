@@ -1,21 +1,31 @@
 # Changelog
 
+## 1.0.3
+
+In multiplayer the host and every client should run this version.
+
+- Fixed: a hit on an enemy is not counted twice when packets are lost or late, and a client that lags behind no longer subtracts the same hit again from the health the host reports.
+- Fixed: a large state sent to a player who just joined no longer holds back the updates every other player gets meanwhile.
+- Fixed: a player who joined late could miss what the others had already shared (a picked skin, a chosen loadout, enemy health) until someone changed it again; a player who asks again is now sent everything again. A player who joins a level after a checkpoint reload stays in the host's world for that level.
+- Fixed: character models (ForgeSkin) could stop moving with their players after the game removed one player's body, for example when someone left.
+- Fixed: changing a gun's hand shape in first person (ForgeSkin's hand pose) plays through the game's own grip animation; playing it directly on the hand layer changed nothing.
+- Added: `HumanRig.Links(bones, rest)`, `HumanRig.ArmWear(bones, rest)` and `HumanRig.Unposed(links)`. A model mapped onto the humanoid needs a bone only for its hips: any other joint without one is left out of the pose copy and keeps its rest pose on the bone above it, so a model without fingers, without an arm or with unlike sides follows a body (ForgeSkin's character models). A limb with a joint left out is not bent onto the body's, and a model whose hips rest on its own floor keeps its rest height; each is logged once.
+- Added: `JointClip.FromTurns(rate, joints, turns, hips, name)`, a clip built in code with a name, so recordings show it and `JointClip.Find` finds it (ForgeSkin's weapon inspect).
+- Added: the lobby button option `WithoutApparel`: the button also shows on a bot's bar (ForgeSkin's SKINS button for bots).
+- Removed or changed public interfaces: none.
+
 ## 1.0.2
 
 In multiplayer the host and every client should run this version: with an older ForgeCore on the host, a client shows only basic hit feedback.
 
-- Fixed: on a client, enemy health bars, damage numbers and kill marks showed nothing (the game settles a client's hits on the host only). They now show in the frame of the hit and are corrected by the host's result: a kill that did not happen is taken back and the bar gives back what it lost. The host sends enemy health to clients that have this version. A hit is not counted twice when packets are lost or late.
-- Fixed: a large state sent to a player who just joined no longer holds back the updates every other player gets meanwhile.
-- Fixed: a player who joined late could miss what the others had already shared (a picked skin, a chosen loadout, enemy health) until someone changed it again; a player who asks again is now sent everything again. A player who joins a level after a checkpoint reload stays in the host's world for that level.
+- Fixed: on a client, enemy health bars, damage numbers and kill marks showed nothing (the game settles a client's hits on the host only). They now show in the frame of the hit and are corrected by the host's result: a kill that did not happen is taken back and the bar gives back what it lost. The host sends enemy health to clients that have this version.
 - Fixed: a teammate's character model (ForgeSkin) turned flat pink in the level.
 - Fixed: a part a mod switches on and off every frame (a skin's flickering hologram) stays hidden while the first-person item is hidden; before, it was drawn in the middle of the screen during an action seen from behind.
 - Fixed: your body in the view from behind (Forge Emote's dance) stands on your feet; it sank into the floor after crouching and floated after a jump.
-- Fixed: character models (ForgeSkin) could stop moving with their players after the game removed one player's body, for example when someone left.
 - Added: `Combat.OwnHitPredicted`, `Combat.OwnHitSettled` and `Combat.OwnHitCorrected`, the local player's hits on enemies the same on host and client: shown at once, the host's result, and the difference between the two.
 - Added: `GameHooks.EnemyHitSent`, the local player's hit request to an enemy with its damage.
-- Added: `HumanRig.Links(bones, rest)`, `HumanRig.ArmWear(bones, rest)` and `HumanRig.Unposed(links)`. A model mapped onto the humanoid needs a bone only for its hips: any other joint without one is left out of the pose copy and keeps its rest pose on the bone above it, so a model without fingers, without an arm or with unlike sides follows a body (ForgeSkin's character models). A limb with a joint left out is not bent onto the body's, and a model whose hips rest on its own floor keeps its rest height; each is logged once.
-- Added: `JointClip.FromTurns(rate, joints, turns, hips, name)`, a clip built in code with a name, so recordings show it and `JointClip.Find` finds it (ForgeSkin's weapon inspect).
 - Logs: a missing toon shader, a library shader unloaded after loading and a person with no ghost material are each written once.
+
 
 ## 1.0.1
 

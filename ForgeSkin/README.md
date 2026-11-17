@@ -31,7 +31,7 @@ works too. Only its hips need a bone; a part without one keeps its shape and mov
 You normally don't install this by hand: skin mods made with the ForgeSkin editor list it as a dependency, so your mod
 manager installs it with them.
 
-Please also update ForgeCore to 1.0.2 (请同时更新 ForgeCore 到 1.0.2). In multiplayer the host and every client need it:
+Please also update ForgeCore to 1.0.3 (请同时更新 ForgeCore 到 1.0.3). In multiplayer the host and every client need it:
 a client's kill counts, kill sounds and damage screens come from the host's ForgeCore.
 联机时房主和每个客机都要更新：客机的击杀数、击杀音效和伤害屏来自房主的 ForgeCore。
 

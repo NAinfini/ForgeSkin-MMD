@@ -18,8 +18,10 @@ public sealed record PreviewPart(string Id, List<string> Nodes, List<PreviewTran
 public sealed record PreviewAmmo(string Node, float[] Offset, List<string> Hidden);
 // Damaged: some game textures could not be read (a game file rewritten outside the game). Modified: some are not the game's
 // own (another mod rewrote the game files; GameAssets.IsVanilla). Neither kind of preview is cached.
+// Points: the gear's hold points it has (Assembly.Points), each the part and path of its node (a PartTransform key).
 public sealed record PreviewResult(string Glb, List<PreviewPart> Parts, Dictionary<string, Dictionary<TextureChannel, string>> Textures,
-    Dictionary<string, PreviewMaterial> Params, bool Damaged = false, bool Modified = false);
+    Dictionary<string, PreviewMaterial> Params, bool Damaged = false, bool Modified = false, List<PreviewPoint>? Points = null);
+public sealed record PreviewPoint(string Point, string Part, string Path);
 
 // How the game draws a material. Kind: opaque; cutout (alpha test); glass (alpha-blended lens: Tint alpha is its opacity,
 // albedo if any is lens dirt); reticle (holographic sight surface: invisible except its reticle layers, drawn additively as
@@ -171,8 +173,12 @@ public static class Preview
         Log.Write($"preview {id}: {written.Count} textures in {clock.ElapsedMilliseconds} ms");
 
         var transforms = new Dictionary<string, List<PreviewTransform>>();
+        var points = new List<PreviewPoint>();
         foreach (var (part, path, n) in Assembly.PartNodes(root, activeOnly: true))
         {
+            // A point that is its part's own root is left out: moving it would move the whole part.
+            if (n.Point != null && path != null) points.Add(new PreviewPoint(n.Point, part, path));
+            else if (n.Point != null) Log.Write($"preview {id}: the {n.Point} point is the root of {part}; it cannot be moved on its own");
             var under = new List<string>();
             void Collect(Node c) { if (!c.Active || (c != n && c.Part != null && c.Part != part)) return; if (partOf.ContainsKey(c)) under.Add(nodeName[c]); c.Children.ForEach(Collect); }
             Collect(n);
@@ -184,7 +190,7 @@ public static class Preview
             a => new PreviewAmmo(nodeName[a.Shown], [a.Offset.X, a.Offset.Y, a.Offset.Z], a.Hidden.Select(h => nodeName[h]).ToList()));
         var order = Assembly.Slots.Select(s => s.Id).Concat(["ammo_speedloader", "ammo_bullet", "ammo_shell"]).ToList();
         var result = new PreviewResult(glbPath, parts.Keys.Union(transforms.Keys).OrderBy(p => order.IndexOf(p) is var i && i < 0 ? 99 : i)
-            .Select(p => new PreviewPart(p, parts.GetValueOrDefault(p) ?? new(), transforms.GetValueOrDefault(p) ?? new(), ammo.GetValueOrDefault(p))).ToList(), textures, parameters, damaged, modified);
+            .Select(p => new PreviewPart(p, parts.GetValueOrDefault(p) ?? new(), transforms.GetValueOrDefault(p) ?? new(), ammo.GetValueOrDefault(p))).ToList(), textures, parameters, damaged, modified, points.OrderBy(p => Array.FindIndex(Assembly.Points, x => x.Point == p.Point)).ToList());
         // Stored relative to the cache folder, so a moved data dir (portable GTFO_UserData) keeps its cache. A damaged or
         // modified one is rebuilt next time, so restored game files (Steam's file check keeps the build id) show again.
         if (!damaged && !modified) AtomicFile.WriteText(cached, JsonSerializer.Serialize(MapPaths(result, p => Path.GetRelativePath(dir, p)), Program.Json));

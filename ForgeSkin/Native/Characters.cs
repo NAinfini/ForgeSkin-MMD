@@ -16,7 +16,7 @@ namespace ForgeSkin.Plugin;
 // the body through PlayerLooks.Hang (this look's own hold keeps it, a hold that is not a look, an exosuit worn over the person, hides it with
 // the person until it lets go; the own-body view draws it, a copy of the body leaves it out). The local
 // player wears their own pick; a teammate the character their look names (a pack installed here with the same content, else the
-// original person); a bot always the original. The shared look (Looks, character and gear skins together) is also ForgeCore's player
+// original person); a bot the character the host picked for it (Looks). The shared look (Looks, character and gear skins together) is also ForgeCore's player
 // look (PlayerLooks): a replay stand-in asks for it, wears the character on its own body and its weapons' skins through Hold. A model
 // that cannot be read or does not fit its skeleton leaves the original person, one line. In first person the local player sees the
 // model's own arms (Arms below). The lobby's figure behind each player's loadout wears the same character, the way a stand-in does (Lobby).
@@ -264,11 +264,11 @@ static class Characters
         Lobby(now);
     }
 
-    // The character skin `player` wears: their own pick, a teammate's look, none for a bot (null: the original person).
+    // The character skin `player` wears: their own pick, a teammate's look, a bot's the one the host picked (null: the original person).
     static Skin? Wanted(SNet_Player player)
     {
-        if (player.IsBot) return null;
-        var skin = player.IsLocal ? Skins.Own(CharacterSkin.Target) : Looks.WornBy(player.Lookup, CharacterSkin.Target)?.Skin;
+        // A bot is asked first: on the host's machine its player is a local one.
+        var skin = !player.IsBot && player.IsLocal ? Skins.Own(CharacterSkin.Target) : Looks.WornBy(Looks.Key(player), CharacterSkin.Target)?.Skin;
         return skin == null || skin.Retired || Broken.Contains(skin) ? null : skin;
     }
 
@@ -434,7 +434,7 @@ static class Characters
     // the game's), so a dress is never half of a look that would have fitted a moment later.
     sealed class Provider : IPlayerLookProvider
     {
-        public byte[]? Describe(SNet_Player player) => player.IsBot ? null : Looks.Describe(player);
+        public byte[]? Describe(SNet_Player player) => Looks.Describe(player);
 
         public ILookDress? Dress(byte[] description, Animator body)
         {

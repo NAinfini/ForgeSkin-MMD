@@ -37,6 +37,11 @@ public static class Assembly
         (50, "melee_pommel", "GearMeleePommelPart", null, null),
     ];
 
+    // The hold points of a gun, by eGearPartAlign: where each hand's wrist goes (the game puts its hand IK targets on these nodes),
+    // where shots leave and where the aim line runs. They are nodes of the parts like any other, so a skin moves one with a
+    // PartTransform on its path. A gear whose parts name none for a type has no such point (the game falls back to the item's own).
+    public static readonly (string Point, int Align)[] Points = [("rightHand", 8), ("leftHand", 7), ("muzzle", 0), ("sight", 6)];
+
     // Attachment components mount on their base part's root.
     static readonly Dictionary<int, int> AttachedTo = new() { [13] = 12, [14] = 12, [17] = 16, [29] = 27, [35] = 33 };
 
@@ -104,6 +109,8 @@ public static class Assembly
             else if (AttachedTo.TryGetValue(slot.Comp, out var baseComp)) parent = parts.FirstOrDefault(p => p.Comp == baseComp)?.Root ?? holder;
             part.Root.Attach(parent);
         }
+        foreach (var (point, align) in Points)
+            if (FindAlign(parts, align, prio) is { } node) node.Point = point;
         return (holder, parts);
     }
 

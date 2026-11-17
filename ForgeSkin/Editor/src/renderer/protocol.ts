@@ -284,6 +284,9 @@ export interface CatalogItem {
   /** Guns: magazine size and the most bullets the reserve holds (from the game data); null otherwise. */
   clipSize?: number | null;
   maxReserve?: number | null;
+  /** Guns: the grip animation the game gives each hand on this gun (a skin's `hands` names another gun's); null where it has none. */
+  handLeft?: string | null;
+  handRight?: string | null;
   parts: CatalogPart[];
 }
 
@@ -325,6 +328,27 @@ export interface WeaponPreview {
   damaged: boolean;
   /** Some game textures are not the game's own (another mod rewrote the game files); they show and bake as rewritten. */
   modified: boolean;
+  /** The gun's hold points it has: the node (a PartTransform key) the game puts each wrist on, shoots from and aims along. */
+  points?: { point: HoldPoint; part: string; path: string }[] | null;
+}
+
+export type HoldPoint = 'rightHand' | 'leftHand' | 'muzzle' | 'sight';
+
+/** One hand of the game's first-person arms (preview.hands), in the hand bone's frame, Unity space: the hand bone and its 15 finger
+ *  joints (thumb, index, middle, ring, little; three each), each with its parent's index and rest pose, and the glove's skin. */
+export interface GameHand {
+  joints: { bone: string; parent: number; position: number[]; rotation: number[] }[];
+  positions: number[];
+  normals: number[];
+  indices: number[];
+  skinIndex: number[];
+  skinWeight: number[];
+}
+/** Both hands and, per hand, each of the game's grip animations as the local rotations of its 15 finger joints. */
+export interface GameHands {
+  left: GameHand;
+  right: GameHand;
+  shapes: { left: Record<string, number[][]>; right: Record<string, number[][]> };
 }
 
 export interface MatchCell {
@@ -474,6 +498,7 @@ export interface Methods {
   'catalog.get': [Record<string, never>, { items: CatalogItem[] }];
   'enemies.list': [Record<string, never>, { enemies: EnemyInfo[] }];
   'preview.weapon': [{ id: string }, WeaponPreview];
+  'preview.hands': [Record<string, never>, GameHands];
   'match.folder': [{ weaponId: string; folder: string }, MatchResult];
   'match.files': [{ weaponId: string; files: string[] }, MatchResult];
   'project.new': [{ weaponId?: string }, SkinDocument];

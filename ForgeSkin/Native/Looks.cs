@@ -1,3 +1,4 @@
+using BepInEx;
 using ForgeCore;
 using ForgeSkin.Format;
 using Player;
@@ -31,6 +32,7 @@ static class Looks
     sealed class Mate
     {
         public Look? Look; // null: none yet, or malformed
+        public byte[]? Raw; // a bot's look as the host sent it
         public readonly Dictionary<string, Worn> ByKey = new(); // gear key -> what it wears
         public readonly List<(string Gear, string Pack, string? Skin, uint Number)> Unshown = new(); // what the picker lists: gear key, Thunderstore mod, skin name if installed; and the skin's number
     }
@@ -45,6 +47,8 @@ static class Looks
             Channel = Net.Open(ForgeSkinPlugin.Guid);
             _row = Channel.Lobby("look");
             _row.Changed += Received;
+            _bots = Channel.Lobby("bots");
+            _bots.Changed += _ => BotsChanged();
         }
         catch (Exception e) { ForgeSkinPlugin.Fail("skin-look-failed", $"looks are not shared with teammates: {e.Message}", e); }
     }
@@ -53,6 +57,7 @@ static class Looks
     public static byte[]? Describe(SNet_Player player)
     {
         if (_row == null) return null;
+        if (player.IsBot) return Players.TryGetValue(Key(player), out var bot) ? bot.Raw : null;
         var bytes = player.IsLocal ? _row.Local : _row.TryGet(player.Lookup, out var theirs) ? theirs : null;
         return bytes != null && Look.Decode(bytes) is { } look && (look.Character != null || look.Gear.Count > 0) ? bytes : null;
     }
@@ -82,10 +87,16 @@ static class Looks
 
     static SNet_Player? PlayerOf(ulong lookup)
     {
+        // A bot is not in SNet.LobbyPlayers (it lists the humans only): it is the bot in its slot.
+        if ((lookup & BotBase) != 0)
+        {
+            var slot = (int)(lookup & ~BotBase);
+            return SNet.Slots != null && slot < SNet.Slots.PlayerSlots.Length && SNet.Slots.GetPlayerInSlot(slot) is { IsBot: true } bot ? bot : null;
+        }
         var players = SNet.LobbyPlayers;
         if (players != null)
             foreach (var player in players)
-                if (player != null && player.Lookup == lookup) return player;
+                if (player != null && Key(player) == lookup) return player;
         return null;
     }
 
@@ -216,6 +227,12 @@ static class Looks
     public static void Tick(float now)
     {
         if (_row == null) return;
+        if (now >= _nextBots)
+        {
+            _nextBots = now + 1f;
+            WriteBots();
+            BotsChanged();
+        }
         if (Skins.Version != _skinsVersion) { _skinsVersion = Skins.Version; _due = now + 0.5f; }
         if (_due >= 0 && now >= _due) { _due = -1; Write(); return; }
         if (now < _nextCheck) return;
@@ -285,5 +302,152 @@ static class Looks
         var stages = skin.Doc.Materials.Find(m => m.Wear is { Count: > 0 })?.Wear;
         if (stages == null) return 0;
         return (byte)Math.Min(byte.MaxValue, stages.IndexOf(Wear.Stage(stages, Wear.Count($"{skin.Doc.Id}|{key}"))));
+    }
+
+    // ---- bots (PLAN §4.11): the host picks what each bot wears, every player sees it ----
+    // A bot has no machine of its own to write a look, so the host writes all of them in one lobby value, "bots": per bot slot, a look
+    // like a player's (character and the skins of the gear the bot carries). Every player, the host too, keeps a bot's look under the
+    // bot's key (BotKey), so its gear and person are dressed exactly as a teammate's are. Only the value of the player who is the host
+    // now is read. The host's picks are kept per slot in BepInEx/ForgeSkin/bots.json; colours and adjustments are the host's own for
+    // that skin.
+
+    static NetLobbyValue? _bots;
+    static float _nextBots;
+    const ulong BotBase = 1UL << 62; // no Steam id has this bit
+
+    public static ulong BotKey(int slot) => BotBase | (uint)slot;
+
+    // Whose look a player's gear and person wear: a bot's by its slot, a player's by their id.
+    public static ulong Key(SNet_Player player) => player.IsBot ? BotKey(player.PlayerSlotIndex()) : player.Lookup;
+
+    static readonly string BotFile = Path.Combine(SkinFolders.Root(Paths.BepInExRootPath), "bots.json");
+    static Dictionary<string, Dictionary<string, string>>? _botChoices; // slot -> target key -> skin id
+
+    static Dictionary<string, Dictionary<string, string>> BotChoices() =>
+        _botChoices ??= Store.Read<Dictionary<string, Dictionary<string, string>>>(ForgeSkinPlugin.Guid, BotFile).Value ?? new();
+
+    // The skin the host picked for the bot in `slot`'s `key` (null: its original look).
+    public static Skin? BotPick(int slot, string key) =>
+        BotChoices().TryGetValue(slot.ToString(), out var picks) && picks.TryGetValue(key, out var id) && Skins.ById.TryGetValue(id, out var skin) && skin.Doc.Target.Key() == key ? skin : null;
+
+    // The host's pick for a bot ("" = the original look): kept, and sent with the bots' looks at once.
+    public static void ChooseBot(int slot, string key, string id)
+    {
+        var all = BotChoices();
+        if (!all.TryGetValue(slot.ToString(), out var picks)) all[slot.ToString()] = picks = new();
+        if (id == "") picks.Remove(key);
+        else picks[key] = id;
+        ForgeSkinPlugin.Info($"picked for the bot in slot {slot}, {key}: {(id == "" ? "vanilla" : id)}");
+        Store.Write(ForgeSkinPlugin.Guid, BotFile, all);
+        WriteBots();
+        BotsChanged();
+    }
+
+    // The host writes every bot's look; any other player clears theirs (a host who stopped being one).
+    static void WriteBots()
+    {
+        try
+        {
+            if (_bots == null) return;
+            // The bots are read from the slots: SNet.LobbyPlayers lists the humans only.
+            var slots = _session && SNet.IsMaster && Skins.Enabled && SNet.Slots != null ? SNet.Slots.PlayerSlots.Length : 0;
+            var rows = new List<(byte Slot, byte[] Look)>();
+            for (var slot = 0; slot < slots; slot++)
+                {
+                    if (SNet.Slots!.GetPlayerInSlot(slot) is not { IsBot: true } player) continue;
+                    var look = new Look();
+                    if (BotPick(slot, CharacterSkin.Target) is { } person)
+                    {
+                        if (person.ContentHash() is not { } own) return; // read on a worker: written within a second
+                        look.Character = new LookSkin { Skin = person.Number, Hash = own, Pack = person.Pack };
+                        Look.Tweaks(person.Doc, Skins.ColoursOf(person.Doc.Id), look.Character.Tweaks);
+                    }
+                    if (PlayerBackpackManager.TryGetBackpack(player, out var backpack) && backpack != null)
+                        foreach (var gearSlot in SkinnedGear.GearSlots)
+                        {
+                            if (!backpack.TryGetBackpackItem(gearSlot, out var item) || item?.GearIDRange is not { } range) continue;
+                            var id = SkinnedGear.GearIdOf(range);
+                            if (id == 0 || BotPick(slot, SkinTarget.GearKey(id)) is not { } skin) continue;
+                            if (skin.ContentHash() is not { } hash) return;
+                            var gear = new LookGear { GearId = id, Skin = skin.Number, Hash = hash, Pack = skin.Pack };
+                            Look.Tweaks(skin.Doc, Skins.ColoursOf(skin.Doc.Id), gear.Tweaks);
+                            look.Gear.Add(gear);
+                        }
+                    if (look.Character != null || look.Gear.Count > 0) rows.Add(((byte)slot, look.Encode()));
+                }
+            byte[]? bytes = null;
+            if (rows.Count > 0)
+            {
+                using var stream = new MemoryStream();
+                using var writer = new BinaryWriter(stream);
+                writer.Write((byte)rows.Count);
+                foreach (var (slot, look) in rows)
+                {
+                    writer.Write(slot);
+                    writer.Write((ushort)look.Length);
+                    writer.Write(look);
+                }
+                bytes = stream.ToArray();
+            }
+            var changed = bytes == null ? _bots.Local != null : _bots.Local == null || !bytes.AsSpan().SequenceEqual(_bots.Local);
+            if (changed) ForgeSkinPlugin.Info($"bots' looks written: {rows.Count} bot(s), {bytes?.Length ?? 0} bytes");
+            _bots.Set(bytes);
+        }
+        catch (Exception e) { ForgeSkinPlugin.Fail("skin-look-failed", $"bots' looks not written: {e.Message}", e); }
+    }
+
+    static readonly Dictionary<int, byte[]> BotRows = new();
+    static byte[]? _botsRead; // the host's value BotRows was read from
+
+    // The host's value read again: each bot's look that changed is resolved against the packs here and its gear and person dressed anew.
+    static void BotsChanged()
+    {
+        try
+        {
+            if (_bots == null) return;
+            var master = SNet.Master;
+            var bytes = master == null ? null : master.IsLocal ? _bots.Local : _bots.TryGet(master.Lookup, out var theirs) ? theirs : null;
+            if (bytes == _botsRead) return;
+            _botsRead = bytes;
+            BotRows.Clear();
+            if (bytes != null)
+                try
+                {
+                    using var reader = new BinaryReader(new MemoryStream(bytes));
+                    for (int i = 0, count = reader.ReadByte(); i < count; i++)
+                    {
+                        var slot = reader.ReadByte();
+                        BotRows[slot] = reader.ReadBytes(reader.ReadUInt16());
+                    }
+                }
+                catch (Exception e)
+                {
+                    BotRows.Clear();
+                    ForgeSkinPlugin.Fail("skin-look-malformed", $"the host's bot looks could not be read ({bytes.Length} bytes: {e.Message}); the bots show their original look");
+                }
+            var keys = Players.Keys.Where(k => (k & BotBase) != 0).Concat(BotRows.Keys.Select(BotKey)).Distinct().ToList();
+            foreach (var key in keys)
+            {
+                var slot = (int)(key & ~BotBase);
+                if (BotRows.TryGetValue(slot, out var raw))
+                {
+                    if (!Players.TryGetValue(key, out var bot)) Players[key] = bot = new Mate();
+                    else if (bot.Raw != null && raw.AsSpan().SequenceEqual(bot.Raw)) continue;
+                    bot.Raw = raw;
+                    bot.Look = Look.Decode(raw);
+                    if (bot.Look == null) ForgeSkinPlugin.Fail("skin-look-malformed", $"the look of the bot in slot {slot} could not be read ({raw.Length} bytes); it shows its original look");
+                    Resolve(key, bot);
+                }
+                else
+                {
+                    Players.Remove(key);
+                    foreach (var skin in Skins.ById.Values) skin.Forget(key);
+                }
+                SkinnedGear.OwnerChanged(key);
+                if (PlayerOf(key) is { } who) Characters.LookChanged(who);
+            }
+            Picker.Changed();
+        }
+        catch (Exception e) { ForgeSkinPlugin.Fail("skin-look-failed", $"bots' looks: {e.Message}", e); }
     }
 }

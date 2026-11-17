@@ -87,6 +87,7 @@ public static class Methods
         "profiles.remove" => Game.RemoveProfile(Str(p, "path")),
         "catalog.get" => new { items = WithGame(Catalog.Get) },
         "enemies.list" => new { enemies = WithGame(Enemies.List) },
+            "preview.hands" => WithGame(Hands.Get),
         "assembly.verify" => WithGame(g => Verify.Profile(g, Str(p, "profile"))),
         "preview.weapon" => WithGame(g => Preview.Weapon(g, Str(p, "id"), id)),
         "match.folder" => Match(Str(p, "weaponId"), Matching.ListImages(Str(p, "folder")), id),

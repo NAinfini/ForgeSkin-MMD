@@ -12,6 +12,9 @@ public sealed record CatalogItem(string Id, string Name, string? NameZh, string 
     string? Calibre, List<CatalogPart> Parts)
 {
     public string? CategoryZh { get; init; }
+    // Guns: the grip animations the game gives each hand on this gun (HandShapes names one of another gun's); null where its parts name none.
+    public string? HandLeft { get; init; }
+    public string? HandRight { get; init; }
     // ItemDataBlock persistentID of an item built from its own first-person prefabs (packs, consumables, carry items,
     // the hacking tool); null for gear built from parts, which has GearId.
     public uint? ItemId { get; init; }
@@ -263,9 +266,17 @@ public static class Catalog
             if (parts.Count == 0) continue;
 
             var (clip, reserve) = Ammo(g, comps, cat, slotName);
+            // As the game reads them: front, receiver, stock, the last part that names one wins.
+            string? handLeft = null, handRight = null;
+            foreach (var (comp, block) in new[] { (12, "GearFrontPart"), (16, "GearReceiverPart"), (19, "GearStockPart") })
+            {
+                if (!comps.TryGetValue(comp, out var partId) || !g.Blocks(block).TryGetValue(partId, out var partRow)) continue;
+                if ((string?)partRow["General"]?["LeftHandGripAnim"] is { Length: > 0 } l) handLeft = l;
+                if ((string?)partRow["General"]?["RightHandGripAnim"] is { Length: > 0 } r) handRight = r;
+            }
             items.Add(new CatalogItem((string?)naming?["id"] ?? Slug((string)gear["name"]!), english, (string?)naming?["nameZh"], catName,
                 slotName, (uint)gear["persistentID"]!, (string?)calibre?["label"], parts)
-            { Source = recipe, Order = (int?)naming?["order"] ?? 500, CategoryZh = (string?)naming?["categoryZh"], ClipSize = clip, MaxReserve = reserve });
+            { Source = recipe, Order = (int?)naming?["order"] ?? 500, CategoryZh = (string?)naming?["categoryZh"], ClipSize = clip, MaxReserve = reserve, HandLeft = handLeft, HandRight = handRight });
 
             int ammoParts = parts.Count(p => p.Role == "ammo");
             if (calibre != null && (!calibres.TryGetValue((string)calibre["id"]!, out var had) || had.AmmoParts < ammoParts))

@@ -141,7 +141,6 @@ public sealed class GunMount
     private const float NodeLossGraceSeconds = 3f;
     // Longer than the game's raise and aim transitions (well under a second).
     private const float HipSettleSeconds = 1.5f;
-    private const float HandShapeFade = 0.15f;
     // The most the first-person holder may stand from the arm shoulders and the hand targets for the reach to be read (the arm itself reaches 0.62).
     private const float SameViewMetres = 3f;
     private bool _boundFirstPerson, _magazineVisible, _reachRead;
@@ -189,7 +188,8 @@ public sealed class GunMount
 
     /// <summary>Which of the game's own grip animations the hands of the gun on <paramref name="holder"/> take (the animation state's name; null or empty
     /// keeps the one its parts gave). The game reads the holder's names when the gun is wielded and the item's own fields do nothing (G0), so these are what
-    /// is written; a gun already in the local first-person hands changes its grip at once. Only the first-person arms play these: third person keeps its pose.</summary>
+    /// is written; a gun already in the local first-person hands changes its grip at once, the game's way (<c>PlayAnimationsForWieldedItem</c>: playing the state
+    /// on the hand layer directly changes nothing, measured in game). Only the first-person arms play these: third person keeps its pose.</summary>
     public static void SetHandShapes(GearPartHolder holder, string? left, string? right)
     {
         if (holder == null || holder.WasCollected) throw new ArgumentNullException(nameof(holder));
@@ -200,9 +200,7 @@ public sealed class GunMount
         if (weapon == null || !weapon.IsFirstPerson || weapon.Owner == null) return;
         var hands = weapon.Owner.FPItemHolder;
         if (hands == null || hands.WieldedItem == null || hands.WieldedItem.Pointer != weapon.Pointer || hands.FPSArms == null) return;
-        var animator = hands.FPSArms.m_anim;
-        if (!string.IsNullOrEmpty(left)) animator.CrossFadeInFixedTime(left, HandShapeFade, PlayerFPSBody.ANIM_LAYER_LEFT_HAND);
-        if (!string.IsNullOrEmpty(right)) animator.CrossFadeInFixedTime(right, HandShapeFade, PlayerFPSBody.ANIM_LAYER_RIGHT_HAND);
+        if (weapon.Owner.Inventory != null) weapon.Owner.Inventory.PlayAnimationsForWieldedItem();
     }
 
     /// <summary>Another model (a spawned instance another package owns) moves with <paramref name="node"/> of the game's gun as the mount's magazine moves with

@@ -323,6 +323,8 @@ Make the bones of hair, ponytails, skirts and ribbons swing, and in game they fo
 3. The new card guesses its **Kind** from the bone names; change it if it is wrong.
 4. Click **Jolt**, **Run** or **Turn** to see the result, then adjust the sliders.
 
+Each set is drawn in the 3D view as violet dots and lines that follow the moves. Point at a set (in the 3D view or on its card on the right) and it turns orange with its name; click to select it, and the right side scrolls to its card. Grey dots are bones that can still be made to swing: click one to add it. With **Show bones** off none of these are drawn.
+
 ## Settings of a set
 
 The card's title is the name of the chain's top bone, with ×N for N strands.
@@ -890,6 +892,8 @@ A new attachment mounts just above the selected part; **Mount** → **On part** 
 ## Change a part itself
 
 A part's [Place](editor:place) tab moves, turns, scales or hides the part (**Hide (also in game)**); **Reset all** and **Restore original** put it back. A part with its own model shows **Replace model…** under **Attach** → **Model**: your .glb replaces only that part's model; child parts stay, textures and materials still apply, and position, rotation and scale stay editable. **Restore original model** undoes it.
+
+The **Grip and aim** group at the end of the parts list has this gun's right-hand grip, left-hand grip, muzzle and aim line. The game puts both hands on the grip points, shots leave from the muzzle point, and aiming looks along the aim line; when resizing or moving parts leaves the hands off the gun or the aim off, click a row and drag that point into place in the 3D view (while one is selected all four show as coloured dots, the muzzle and the aim line with a line along their direction, and the game's own hand is drawn on each grip point: its wrist on the point, its fingers the way that hand holds this gun). The arrow on a row puts it back where the game has it. Points this gun does not have are not listed. Under the grip points, **Right hand shape** and **Left hand shape** change how the fingers hold: pick the grip of another of the game's guns (listed by the guns that use it), and the hand stays on this gun's grip point. Only you see a hand shape, in first person. While a grip point is selected, every finger segment of that hand has a dot at its far end in the 3D view: drag a dot and the segment turns about its joint to follow the pointer; click a dot and rings appear on its joint, to turn the segment about any axis (to twist it, say). A hand whose fingers were moved gets a **Fingers** row under its grip point, and the arrow on it puts all its fingers back on the hand shape; every step can be undone. You and other players both see the finger changes; while the gun reloads the hands go to the magazine, so the changes fade out and come back afterwards.
 
 ## Sounds
 

@@ -19,6 +19,8 @@
     <EmbeddedResource Include="classdata.tpk" LogicalName="classdata.tpk" />
     <!-- Weapon names, Chinese names, official order and calibre labels; geometry always comes from the game. -->
     <EmbeddedResource Include="naming.json" LogicalName="naming.json" />
+    <!-- The finger poses of the game's grip animations, measured in game (ForgeDevelopment tools/capture_finger_poses.py). -->
+    <EmbeddedResource Include="hand-shapes.json" LogicalName="hand-shapes.json" />
     <!-- The game's own textures (content keys) per game revision, written by tools/build-editor-release.ps1: textures not on
          it mean another mod rewrote the game files (GameAssets.IsVanilla). -->
     <EmbeddedResource Include="vanilla-textures.json" LogicalName="vanilla-textures.json" />

@@ -1,16 +1,34 @@
-// The 人物模型 tab's 3D view: the imported model, its matched joints (the one picked on the figure highlighted), the body
-// colliders, the moves played on it (clips.ts) and the spring bones played back from the backend's frames along them.
-import { CameraControls, Grid } from '@react-three/drei';
+// The 人物模型 tab's 3D view: the imported model, its matched joints (the one picked on the figure highlighted), the spring sets
+// drawn on their bones (picked and added there), the body colliders, the moves played on it (clips.ts) and the spring bones played back from the backend's frames along them.
+import { CameraControls, Grid, Html } from '@react-three/drei';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Button, Group, Loader, Paper, SegmentedControl, Stack, Switch, Text, Title, Tooltip } from '@mantine/core';
 import { IconPlayerPause, IconPlayerPlay, IconUpload } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Box3, Quaternion, SkeletonHelper, Vector3, type SkinnedMesh } from 'three';
+import { Box3, BufferAttribute, BufferGeometry, SkeletonHelper, Vector3, type Bone, type Mesh, type SkinnedMesh } from 'three';
 import type CameraControlsImpl from 'camera-controls';
 import { t } from '../i18n';
 import type { CharmMotion } from '../viewport/refs';
 import { MOTION_SECONDS, PREVIEW_FPS, SETTLE_SECONDS } from '../viewport/motion';
-import { boneOf, buildArms, CHARACTER_LIGHTS, chooseModel, colliders, modelScene, modelVersion, onModel, pose, reopenCharacter, restPose, showBody, simulate, type SpringFrames } from './model';
+import {
+  addSpring,
+  boneOf,
+  buildArms,
+  CHARACTER_LIGHTS,
+  chooseModel,
+  colliders,
+  looseRoots,
+  modelScene,
+  modelVersion,
+  onModel,
+  pose,
+  reopenCharacter,
+  restPose,
+  showBody,
+  simulate,
+  springLabel,
+  type SpringFrames,
+} from './model';
 import { clipPlayer, MOTIONS, motionShipped, type ClipPlayer, type MotionGroup } from './clips';
 import { matchOf, matchReady, useCharacter } from './state';
 
@@ -19,39 +37,135 @@ const useModel = () => {
   return modelScene();
 };
 
+const LIT = '#ff9a3c';
+
+/** A dot kept on its bone every frame, so it follows the moves. The marks are mounted after <Motion />: they read the bones once the
+ * frame's pose is set. */
+function BoneDot({ bone, radius, color, label, onPick, onHover }: { bone: Bone; radius: number; color: string; label?: string; onPick(): void; onHover?(on: boolean): void }) {
+  const ref = useRef<Mesh>(null);
+  useFrame(() => void (ref.current && bone.getWorldPosition(ref.current.position)));
+  return (
+    <mesh ref={ref} renderOrder={10} onClick={(e) => (e.stopPropagation(), onPick())} onPointerOver={(e) => (e.stopPropagation(), onHover?.(true))} onPointerOut={() => onHover?.(false)}>
+      <sphereGeometry args={[radius, 12, 8]} />
+      <meshBasicMaterial color={color} depthTest={false} transparent opacity={0.9} />
+      {label && (
+        <Html center position={[0, radius * 4, 0]} pointerEvents="none" className="bone-tip">
+          {label}
+        </Html>
+      )}
+    </mesh>
+  );
+}
+
 function Joints({ size }: { size: number }) {
   const s = useCharacter();
-  const match = matchOf(s);
   return (
     <>
-      {Object.entries(match).map(([joint, name]) => {
+      {Object.entries(matchOf(s)).map(([joint, name]) => {
         const bone = boneOf(name);
-        if (!bone) return null;
-        const at = bone.getWorldPosition(new Vector3());
         const picked = s.joint === joint;
-        return (
-          <mesh key={joint} position={at} renderOrder={10} onClick={(e) => (e.stopPropagation(), useCharacter.setState({ joint, step: 'bones' }))}>
-            <sphereGeometry args={[size * (picked ? 0.013 : 0.007), 12, 8]} />
-            <meshBasicMaterial color={picked ? '#ff9a3c' : '#4fd18b'} depthTest={false} transparent opacity={0.9} />
-          </mesh>
-        );
+        return bone && <BoneDot key={joint} bone={bone} radius={size * (picked ? 0.013 : 0.007)} color={picked ? LIT : '#4fd18b'} onPick={() => useCharacter.setState({ joint, step: 'bones' })} />;
       })}
     </>
   );
 }
 
+const hoverOn = (id: string) => (on: boolean) => useCharacter.setState((s) => (on ? { hover: id } : s.hover === id ? { hover: null } : {}));
+const strandBones = (names: string[][]) => names.map((strand) => strand.map(boneOf).filter((b): b is Bone => !!b));
+const at = new Vector3();
+
+/** A set's strands as lines from bone to bone, redrawn every frame. */
+function StrandLines({ names, color }: { names: string[][]; color: string }) {
+  const bones = useMemo(() => strandBones(names), [names]);
+  const geometry = useMemo(() => {
+    const pairs = bones.reduce((n, strand) => n + Math.max(0, strand.length - 1), 0);
+    return new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(pairs * 6), 3));
+  }, [bones]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  useFrame(() => {
+    const points = geometry.getAttribute('position') as BufferAttribute;
+    let i = 0;
+    for (const strand of bones)
+      for (let k = 0; k + 1 < strand.length; k++)
+        for (const bone of [strand[k]!, strand[k + 1]!]) {
+          bone.getWorldPosition(at);
+          points.setXYZ(i++, at.x, at.y, at.z);
+        }
+    points.needsUpdate = true;
+  });
+  return (
+    <lineSegments geometry={geometry} frustumCulled={false} renderOrder={9}>
+      <lineBasicMaterial color={color} depthTest={false} transparent opacity={0.9} />
+    </lineSegments>
+  );
+}
+
+/** The spring sets on the figure: each set's bones as dots joined by lines, the one picked or under the pointer (here or in the
+ * list) lit and named; a click picks it. The grey dots are bones a new set can start at; a click on one adds the set. */
+function Springs({ size }: { size: number }) {
+  const s = useCharacter();
+  const loose = useMemo(() => looseRoots(s), [s.auto, s.picked, s.springs, s.bones]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <>
+      {s.springs.map((sp) => {
+        const lit = s.spring === sp.id || s.hover === sp.id;
+        const color = lit ? LIT : '#b48cff';
+        return (
+          <group key={sp.id}>
+            <StrandLines names={sp.strands} color={color} />
+            {strandBones(sp.strands).flatMap((strand, i) =>
+              strand.map((bone, k) => (
+                <BoneDot
+                  key={`${i}-${k}`}
+                  bone={bone}
+                  radius={size * (lit ? 0.007 : 0.0045)}
+                  color={color}
+                  label={s.hover === sp.id && !i && !k ? springLabel(s.springs, sp.id) : undefined}
+                  onPick={() => useCharacter.setState({ spring: sp.id })}
+                  onHover={hoverOn(sp.id)}
+                />
+              )),
+            )}
+          </group>
+        );
+      })}
+      {loose.map((name) => (
+        <BoneDot
+          key={name}
+          bone={boneOf(name)!}
+          radius={size * (s.hover === name ? 0.007 : 0.0045)}
+          color={s.hover === name ? LIT : '#9aa7b5'}
+          label={s.hover === name ? `+ ${name}` : undefined}
+          onPick={() => addSpring(name)}
+          onHover={hoverOn(name)}
+        />
+      ))}
+    </>
+  );
+}
+
+const UP = new Vector3(0, 1, 0);
+
 function Colliders() {
   const s = useCharacter();
   const caps = useMemo(() => colliders(), [s.colliders, s.capsules, s.auto, s.picked]); // eslint-disable-line react-hooks/exhaustive-deps
+  const meshes = useRef<(Mesh | null)[]>([]);
+  // Each capsule is put between its bones every frame, so it follows the moves.
+  useFrame(() =>
+    colliders().forEach((c, i) => {
+      const mesh = meshes.current[i];
+      if (!mesh) return;
+      const dir = c.b.clone().sub(c.a);
+      mesh.position.copy(c.a).add(c.b).multiplyScalar(0.5);
+      if (dir.length() > 1e-6) mesh.quaternion.setFromUnitVectors(UP, dir.normalize());
+    }),
+  );
   return (
     <>
       {caps.map((c, i) => {
-        const mid = c.a.clone().add(c.b).multiplyScalar(0.5);
-        const dir = c.b.clone().sub(c.a);
-        const length = dir.length();
-        const q = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), length > 1e-6 ? dir.normalize() : new Vector3(0, 1, 0));
+        const length = c.a.distanceTo(c.b);
         return (
-          <mesh key={i} position={mid} quaternion={q}>
+          <mesh key={i} ref={(m) => void (meshes.current[i] = m)}>
             <capsuleGeometry args={[c.radius, length, 4, 12]} />
             <meshBasicMaterial color="#3cc8ff" wireframe transparent opacity={0.35} />
           </mesh>
@@ -203,9 +317,10 @@ function Scene() {
       <Grid args={[10, 10]} cellSize={0.25} sectionSize={1} cellColor="#2a3340" sectionColor="#3b4a5c" fadeDistance={12} infiniteGrid />
       {scene && <primitive object={scene} />}
       {scene && showBones && helper && <primitive object={helper} />}
-      {box && step === 'bones' && <Joints size={box.max.y - box.min.y} />}
-      {scene && step === 'springs' && <Colliders />}
       {scene && <Motion />}
+      {scene && step === 'springs' && <Colliders />}
+      {box && showBones && step === 'bones' && <Joints size={box.max.y - box.min.y} />}
+      {box && showBones && step === 'springs' && <Springs size={box.max.y - box.min.y} />}
       {scene && <ArmsView controls={controls} />}
       <CameraControls ref={controls} makeDefault />
     </>

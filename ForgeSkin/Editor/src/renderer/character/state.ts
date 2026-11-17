@@ -112,6 +112,8 @@ export interface CharacterState {
   joint: string | null;
   springs: Spring[];
   spring: string | null;
+  /** What the pointer is on, in the list or on the figure: a spring set's id, or a loose bone's name. */
+  hover: string | null;
   colliders: Record<ColliderJoint, Collider>;
   shaders: Record<string, 'lit'>;
   /** The preview motion last asked for, and when (performance.now()). */
@@ -151,6 +153,7 @@ export const useCharacter = create<CharacterState>(() => ({
   joint: null,
   springs: [],
   spring: null,
+  hover: null,
   colliders: Object.fromEntries(COLLIDER_JOINTS.map((j) => [j, { on: true, scale: 1 }])) as Record<ColliderJoint, Collider>,
   shaders: {},
   motion: null,

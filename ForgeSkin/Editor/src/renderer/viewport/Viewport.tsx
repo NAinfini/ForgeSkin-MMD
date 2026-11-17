@@ -14,6 +14,8 @@ import { CodeEffects } from './CodeEffects';
 import { DrawLoop } from './DrawLoop';
 import { PartMeshes } from './PartMeshes';
 import { ModalTransform, modalState, newGesture, placeOnSurface, selectedTarget, type Target } from './ModalTransform';
+import { useFinger } from './gameHands';
+import { HoldPointMarks } from './HoldPointMarks';
 import { ATTACHMENT_EVENT, gearSurfaceAt, Loading, outlinedMeshes, pathChain, pickAt, quiet, SCENE_EVENT, selectedObjects, useSceneVersion, viewRefs, type Pick } from './refs';
 import { liveryLayer, placed } from '../livery';
 import type { CatalogItem, SkinDocument } from '../protocol';
@@ -241,23 +243,26 @@ function Gizmo() {
     return () => window.removeEventListener(ATTACHMENT_EVENT, f);
   }, []);
   // One gizmo stays mounted and is pointed at the selection: mounting one per selection leaks its handle geometry.
-  const on = !!target && modal === 'null|null';
+  // A picked finger joint takes the gizmo from the selected part, to be turned only.
+  const finger = useFinger((s) => s.pick);
+  const aim = finger ?? target;
+  const on = !!aim && modal === 'null|null';
   return (
     <>
       {/* Parked target while nothing is selected; it must be in the scene or the controls warn every frame. */}
       <primitive object={idle} />
       <TransformControls
-        object={target?.obj ?? idle}
+        object={aim?.obj ?? idle}
         enabled={on}
         showX={on}
         showY={on}
         showZ={on}
-        mode={view.gizmo}
+        mode={finger ? 'rotate' : view.gizmo}
         space="local"
-        size={0.8}
+        size={finger ? 0.22 : 0.8}
         ref={(c) => void (viewRefs.gizmo = c as unknown as typeof viewRefs.gizmo)}
         onMouseDown={() => (gesture.current = newGesture())}
-        onObjectChange={() => target?.commit(gesture.current)}
+        onObjectChange={() => aim?.commit(gesture.current)}
       />
     </>
   );
@@ -430,6 +435,7 @@ export function Stage({ tools = false, card = false }: { tools?: boolean; card?:
         {preview && <Attachments />}
         {preview && <PartMeshes />}
         {preview && <CodeEffects />}
+        {tools && preview && <HoldPointMarks />}
       </Suspense>
       <EffectComposer multisampling={4} renderPriority={1} autoClear={false}>
         {tools ? <Outlines /> : <></>}

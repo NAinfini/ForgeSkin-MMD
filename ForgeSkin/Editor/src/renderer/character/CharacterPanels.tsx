@@ -18,14 +18,13 @@ import {
   IconWorldUpload,
   type Icon,
 } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { t } from '../i18n';
 import { fileUrl } from '../protocol';
-import { useStore } from '../store';
 import { Field, Slider } from '../ui/fields';
 import { modName } from '../actions';
 import { Empty, Info, InspHead, Section } from '../ui/Features';
-import { BODY_JOINTS, chooseModel, exportCharacterMod, exportCharacterPack, guessKind, pickBone, rematch, stageIcon, strandsFrom, useSpringPresets } from './model';
+import { BODY_JOINTS, chooseModel, exportCharacterMod, exportCharacterPack, addSpring, pickBone, rematch, springLabel, stageIcon, useSpringPresets } from './model';
 import { COLLIDER_JOINTS, matchOf, matchReady, SPRING_KINDS, STEPS, updateSpring, useCharacter, type ColliderJoint, type RigCheck, type SpringKind, type Step } from './state';
 
 const STEP: Record<Step, { icon: Icon; color: string }> = {
@@ -471,23 +470,30 @@ function materialLabels(names: string[]): string[] {
 
 // ---- 4. hair and skirt ----
 
-/** A set's name on screen: its kind and a number among the sets of that kind (头发 1, 裙摆 1), the bones in the hover text. */
-function springLabel(springs: { id: string; kind: SpringKind }[], id: string): string {
-  const kind = springs.find((x) => x.id === id)?.kind ?? 'longHair';
-  const same = springs.filter((x) => SPRING_NAME[x.kind] === SPRING_NAME[kind]);
-  return `${t(`character.springName.${SPRING_NAME[kind]}`)} ${same.findIndex((x) => x.id === id) + 1}`;
-}
-const SPRING_NAME: Record<SpringKind, 'hair' | 'skirt' | 'tail'> = { longHair: 'hair', shortHair: 'hair', skirt: 'skirt', tail: 'tail' };
-
 function SpringCard({ id }: { id: string }) {
   const sp = useCharacter((s) => s.springs.find((x) => x.id === id));
   const label = useCharacter((s) => springLabel(s.springs, id));
   const presets = useSpringPresets();
   const base = presets?.[sp?.kind ?? 'longHair'];
+  const selected = useCharacter((s) => s.spring === id);
+  const hovered = useCharacter((s) => s.hover === id);
+  const card = useRef<HTMLDivElement>(null);
+  // A set picked on the figure brings its card into view.
+  useEffect(() => {
+    if (selected) card.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [selected]);
   if (!sp || !base) return null;
   const set = (key: 'stiffness' | 'damping' | 'weight' | 'gravity' | 'radius') => (v: number) => updateSpring(id, (x) => void (x[key] = v));
   return (
-    <div className="char-spring">
+    <div
+      ref={card}
+      className="char-spring"
+      data-selected={selected || undefined}
+      data-hover={hovered || undefined}
+      onPointerEnter={() => useCharacter.setState({ hover: id })}
+      onPointerLeave={() => useCharacter.setState((s) => (s.hover === id ? { hover: null } : {}))}
+      onPointerDown={() => useCharacter.setState({ spring: id })}
+    >
       <Group gap={6} wrap="nowrap" mb={6}>
         <IconWind size={14} color="var(--violet)" />
         <Text size="sm" fw={600} truncate style={{ flex: 1 }} title={sp.strands.map((x) => x.join(' › ')).join('\n')}>
@@ -495,7 +501,7 @@ function SpringCard({ id }: { id: string }) {
           {sp.strands.length > 1 ? ` ×${sp.strands.length}` : ''}
         </Text>
         <Tooltip label={t('character.removeSpring')}>
-          <UnstyledButton aria-label={t('character.removeSpring')} onClick={() => useCharacter.setState((s) => ({ springs: s.springs.filter((x) => x.id !== id) }))}>
+          <UnstyledButton aria-label={t('character.removeSpring')} onClick={() => useCharacter.setState((s) => ({ springs: s.springs.filter((x) => x.id !== id), hover: null }))}>
             <IconTrash size={14} color="var(--mantine-color-red-5)" />
           </UnstyledButton>
         </Tooltip>
@@ -533,14 +539,7 @@ function SpringsStep() {
   if (!s.model) return <Empty>{t('character.needModel')}</Empty>;
   const used = new Set([...Object.values(matchOf(s)), ...s.springs.flatMap((x) => x.strands.flat())]);
   const candidates = s.bones.filter((b) => !used.has(b.name)).map((b) => ({ value: b.name, label: b.name }));
-  const add = (name: string | null) => {
-    if (!name) return;
-    // A strand moves from its second bone on: one bone alone has nothing to swing.
-    const strands = strandsFrom(name).filter((x) => x.length >= 2);
-    if (!strands.length) return void useStore.getState().toast('info', t('character.springTooShort'));
-    const id = `${name}-${Date.now().toString(36)}`;
-    useCharacter.setState((x) => ({ springs: [...x.springs, { id, kind: guessKind(name, strands), strands }], spring: id }));
-  };
+
   return (
     <>
       <Section title={t('character.step.springs')} icon={IconWind} color={STEP.springs.color} info={t('character.springsInfo')}>
@@ -552,7 +551,7 @@ function SpringsStep() {
             placeholder={t('character.addSpring')}
             data={candidates}
             value={null}
-            onChange={add}
+            onChange={(name) => name && addSpring(name)}
             nothingFoundMessage={t('character.noBone')}
           />
           {s.springs.length ? s.springs.map((x) => <SpringCard key={x.id} id={x.id} />) : <Empty>{t('character.noSprings')}</Empty>}

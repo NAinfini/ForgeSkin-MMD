@@ -261,6 +261,10 @@ public sealed class LobbyButton
 
     internal string? ShownTooltip => Tooltip?.In(Mod.Texts);
 
+    /// <summary>True: the button also shows on a bar the game gives no APPAREL button (a bot's), where its visibility allows, in the
+    /// same rows as on a player's bar (the game has a button of its own in APPAREL's place there). False (default): only where APPAREL shows.</summary>
+    public bool WithoutApparel { get; set; }
+
     internal UIKitMod Mod { get; }
     internal Action<CM_PlayerLobbyBar> OnClick { get; }
     internal Func<string>? Note { get; }
