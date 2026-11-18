@@ -4,7 +4,7 @@ import { useHotkeys } from '@mantine/hooks';
 import { IconArrowBackUp, IconArrowForwardUp, IconFileText, IconFolderDown, IconListNumbers, IconListTree, IconStack2 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { Group as PanelGroup, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
-import { applyToGame, editorEdition, ensurePlugin, importMesh, openProject } from './actions';
+import { applyToGame, checkPluginLoad, editorEdition, ensurePlugin, importMesh, openProject } from './actions';
 import { useGameWarnings } from './gameLog';
 import { useProfile, useProfileSync } from './profile';
 import { baseName, call } from './protocol';
@@ -225,6 +225,18 @@ function useAutoPlugin() {
   }, [due, profile?.path, running]);
 }
 
+/** Reads what BepInEx said about ForgeCore and ForgeSkin in the chosen profile (PLAN §4.5): when the editor opens, on a profile
+ * change, about 20 s after the game starts (BepInEx has decided by then) and when it closes. Only the game's log is read. */
+function usePluginLoadCheck() {
+  const profile = useStore((s) => s.profiles.find((p) => p.path === s.prefs.profilePath && p.hasBepInEx)?.path);
+  const running = useStore((s) => !!s.game?.running);
+  useEffect(() => {
+    if (!profile) return;
+    const id = setTimeout(() => void checkPluginLoad(profile), running ? 20000 : 0);
+    return () => clearTimeout(id);
+  }, [profile, running]);
+}
+
 /** The right panel shows whatever is selected; with nothing selected, the skin as a whole; with no work open, only how to get one. */
 function Inspector() {
   const kind = useStore((s) => s.selection?.kind);
@@ -323,6 +335,7 @@ export function App() {
   useEffect(() => void useStore.getState().init(), []);
   useGameRunning();
   useAutoPlugin();
+  usePluginLoadCheck();
   useProfileSync();
   useAutoApply();
   useWatchedFiles();

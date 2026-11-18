@@ -16,8 +16,10 @@ import { PartMeshes } from './PartMeshes';
 import { ModalTransform, modalState, newGesture, placeOnSurface, selectedTarget, type Target } from './ModalTransform';
 import { useFinger } from './gameHands';
 import { HoldPointMarks } from './HoldPointMarks';
+import { AimCamera, SightLens } from './SightLens';
 import { ATTACHMENT_EVENT, gearSurfaceAt, Loading, outlinedMeshes, pathChain, pickAt, quiet, SCENE_EVENT, selectedObjects, useSceneVersion, viewRefs, type Pick } from './refs';
 import { liveryLayer, placed } from '../livery';
+import { useSightView } from '../sight';
 import type { CatalogItem, SkinDocument } from '../protocol';
 import { WeaponModel } from './WeaponModel';
 import { roomReflection } from './weaponScene';
@@ -167,7 +169,8 @@ function CameraRig() {
     window.addEventListener(SCENE_EVENT, onScene);
     if (preview) onScene();
     return () => window.removeEventListener(SCENE_EVENT, onScene);
-  }, [preview, view.ortho]);
+    // A new model, not a new preview object (a sight style put into its materials keeps the view where it is).
+  }, [preview?.glb, view.ortho]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Alt + right drag orbits, then snaps to the nearest axis view on release.
   useEffect(() => {
@@ -235,7 +238,7 @@ function Gizmo() {
   useEffect(() => {
     const id = setTimeout(() => setTarget(selectedTarget()), 0);
     return () => clearTimeout(id);
-  }, [selection, doc.attachments]);
+  }, [selection, doc.attachments, doc.sight]);
   // A new attachment's object appears only once its model has loaded, after the selection already changed.
   useEffect(() => {
     const f = () => setTarget(selectedTarget());
@@ -246,7 +249,9 @@ function Gizmo() {
   // A picked finger joint takes the gizmo from the selected part, to be turned only.
   const finger = useFinger((s) => s.pick);
   const aim = finger ?? target;
-  const on = !!aim && modal === 'null|null';
+  // The aim preview looks through the sight: no handles in the way.
+  const aiming = useSightView().aiming;
+  const on = !!aim && modal === 'null|null' && !aiming;
   return (
     <>
       {/* Parked target while nothing is selected; it must be in the scene or the controls warn every frame. */}
@@ -414,6 +419,7 @@ export function Viewport() {
       <Picking />
       <ModalTransform />
       <LiveryTool />
+      <AimCamera />
       <Stage tools />
     </Canvas>
   );
@@ -435,6 +441,7 @@ export function Stage({ tools = false, card = false }: { tools?: boolean; card?:
         {preview && <Attachments />}
         {preview && <PartMeshes />}
         {preview && <CodeEffects />}
+        {preview && <SightLens tools={tools} />}
         {tools && preview && <HoldPointMarks />}
       </Suspense>
       <EffectComposer multisampling={4} renderPriority={1} autoClear={false}>

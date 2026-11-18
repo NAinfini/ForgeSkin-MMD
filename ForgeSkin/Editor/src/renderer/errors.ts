@@ -115,15 +115,15 @@ export function friendly(e: unknown, fallback = t('errors.k25')): string {
   const image = err?.code === 'bad-image' && /[A-Za-z]:\\[^:]*?\.[A-Za-z0-9]{2,4}(?=$|:|\s)/.exec(err.message ?? '')?.[0];
   if (image) return t('errors.badImageFile', { v0: image });
   if (err?.code && MESSAGES[err.code]) return MESSAGES[err.code];
-  // The development editor's plugin build (actions.ts installPluginInto) says itself what went wrong.
-  if (err?.code === 'dev-plugin') return err.message ?? fallback;
+  // The development editor's plugin build (actions.ts installPluginInto): its output is in app.log.
+  if (err?.code === 'dev-plugin') return t('actions.devStageFailed');
   // A missing file is named by its path alone: .NET says "Could not find file 'C:\…'." (or "a part of the path"), the
   // backend "{path} not found" / "missing" / "does not exist".
   const missing = err?.code === 'not-found' && /'([A-Za-z]:\\[^']*)'|^(?:Folder )?([A-Za-z]:\\.*) (?:not found|missing|does not exist)$/.exec(err.message ?? '');
   if (missing) return t('errors.k3', { v0: missing[1] ?? missing[2] });
   if (err?.code === 'not-found') return t('errors.k3', { v0: err.message ?? '' });
-  // The backend's no-plugin message is the plugin files it looked for and did not find.
-  if (err?.code === 'no-plugin') return t('errors.noPlugin', { v0: err.message ?? '' });
+  // The backend's no-plugin message names the files it looked for; the log has it.
+  if (err?.code === 'no-plugin') return t('errors.noPlugin');
   // The bake's errors carry the layer's name.
   if (err?.code === 'empty-layer') return t('errors.emptyLayer', { v0: err.message ?? '' });
   if (err?.code === 'no-base-texture') return t('errors.noBaseTexture', { v0: err.message ?? '' });

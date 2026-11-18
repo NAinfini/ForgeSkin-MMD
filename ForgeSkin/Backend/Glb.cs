@@ -295,11 +295,7 @@ public static class GlbReader
         void Visit(int nodeIndex, Matrix4x4 parent)
         {
             var node = json["nodes"]![nodeIndex]!;
-            var local = node["matrix"] is JsonArray m
-                ? new Matrix4x4((float)m[0]!, (float)m[1]!, (float)m[2]!, (float)m[3]!, (float)m[4]!, (float)m[5]!, (float)m[6]!, (float)m[7]!,
-                    (float)m[8]!, (float)m[9]!, (float)m[10]!, (float)m[11]!, (float)m[12]!, (float)m[13]!, (float)m[14]!, (float)m[15]!)
-                : Matrix4x4.CreateScale(V3(node["scale"], 1)) * Matrix4x4.CreateFromQuaternion(Q(node["rotation"])) * Matrix4x4.CreateTranslation(V3(node["translation"], 0));
-            var world = local * parent;
+            var world = Local(node) * parent;
             if (node["mesh"] is { } meshIndex)
                 foreach (var prim in json["meshes"]![(int)meshIndex]!["primitives"]!.AsArray())
                 {
@@ -356,6 +352,40 @@ public static class GlbReader
         mesh.SubMeshes.Add(tri);
         return mesh;
     }
+
+    // Where each named node of the scene sits, in the model's Unity space (as Read puts the mesh): the first node of each name.
+    public static Dictionary<string, Vector3> NodePositions(string path)
+    {
+        var (json, _, _) = Parse(path);
+        var found = new Dictionary<string, Vector3>(StringComparer.Ordinal);
+        void Visit(int nodeIndex, Matrix4x4 parent)
+        {
+            var node = json["nodes"]![nodeIndex]!;
+            var world = Local(node) * parent;
+            if ((string?)node["name"] is { Length: > 0 } name && !found.ContainsKey(name))
+            {
+                var p = Vector3.Transform(Vector3.Zero, world);
+                found[name] = new Vector3(p.X, p.Y, -p.Z);
+            }
+            foreach (var c in node["children"]?.AsArray() ?? []) Visit((int)c!, world);
+        }
+        try
+        {
+            var scene = json["scenes"]![(int?)json["scene"] ?? 0]!;
+            foreach (var n in scene["nodes"]!.AsArray()) Visit((int)n!, Matrix4x4.Identity);
+        }
+        catch (Exception e) when (e is ArgumentOutOfRangeException or IndexOutOfRangeException or NullReferenceException or InvalidOperationException or FormatException)
+        {
+            throw new BackendException("bad-mesh", $"{path}: {e.Message}");
+        }
+        return found;
+    }
+
+    // A node's own transform: its matrix, else scale, rotation and translation.
+    static Matrix4x4 Local(JsonNode node) => node["matrix"] is JsonArray m
+        ? new Matrix4x4((float)m[0]!, (float)m[1]!, (float)m[2]!, (float)m[3]!, (float)m[4]!, (float)m[5]!, (float)m[6]!, (float)m[7]!,
+            (float)m[8]!, (float)m[9]!, (float)m[10]!, (float)m[11]!, (float)m[12]!, (float)m[13]!, (float)m[14]!, (float)m[15]!)
+        : Matrix4x4.CreateScale(V3(node["scale"], 1)) * Matrix4x4.CreateFromQuaternion(Q(node["rotation"])) * Matrix4x4.CreateTranslation(V3(node["translation"], 0));
 
     static Vector3 V3(JsonNode? a, float d) => a is JsonArray v ? new((float)v[0]!, (float)v[1]!, (float)v[2]!) : new(d);
     static Quaternion Q(JsonNode? a) => a is JsonArray v ? new((float)v[0]!, (float)v[1]!, (float)v[2]!, (float)v[3]!) : Quaternion.Identity;

@@ -14,7 +14,14 @@
     "isolatedModules": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "paths": { "three": ["./node_modules/@types/three/index.d.ts"] },
+    "paths": {
+      "three": ["./node_modules/@types/three/index.d.ts"],
+      "@gltf-transform/core": ["./node_modules/@gltf-transform/core"],
+      "@gltf-transform/extensions": ["./node_modules/@gltf-transform/extensions"],
+      "fast-png": ["./node_modules/fast-png/lib/index.d.ts"],
+      "i18next": ["./node_modules/i18next"],
+      "zod": ["./node_modules/zod"]
+    },
     "types": ["node", "vite/client"]
   },
   "include": ["src", "forge.config.ts", "vite.*.config.ts", "forge.env.d.ts"]

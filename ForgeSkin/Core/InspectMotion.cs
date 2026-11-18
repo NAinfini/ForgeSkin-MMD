@@ -16,11 +16,12 @@ public enum InspectHold : byte { Grip, Away, Under, Side, Top, Muzzle, Mag }
 // A key of the gun. Rest: the game's own pose. Otherwise the intent: Turn (muzzle toward the view's right), Tilt (muzzle up), Roll (about
 // the bore, top toward the right), in degrees from the gun held level and pointing ahead, and where the gun's bounds centre sits in the view (At, -1..1 of the
 // half width and height) with the shown part (InspectLook.Corner) inside Fill of the half view. How far away the gun sits is solved, not authored.
-// Spin and Flip free the gun from the grip hand: the hand stays where the key holds the gun while the gun turns about its bounds
-// centre, Spin degrees about its side axis (a twirl on the trigger finger) and Flip degrees about its bore; Rise metres up the view
-// then tosses it. Rise alone lifts the gun with both hands on it (a heft). They are interpolated as numbers, so a key can spin a whole
+// Spin and Flip free the gun from the grip hand. Spin alone (degrees about its side axis) is a twirl on the trigger finger: the gun
+// turns about its trigger guard and the hand goes with it (a small circle, the wrist rocking once a turn). With Flip (degrees about
+// its bore) or Rise (metres up the view) it is a toss: the hand stays where the key holds the gun while the gun turns about its bounds
+// centre. Rise alone lifts the gun with both hands on it (a heft). They are interpolated as numbers, so a key can spin a whole
 // turn or more.
-public readonly record struct InspectGunKey(float Time, bool Rest, float Turn, float Tilt, float Roll, Vector2 At, float Fill, float Spin = 0f, float Flip = 0f, float Rise = 0f);
+public readonly record struct InspectGunKey(float Time, bool Rest, float Turn, float Tilt, float Roll, Vector2 At, float Fill, float Spin = 0f, float Flip = 0f, float Rise = 0f, bool Through = false);
 
 // A key of the off hand: what it holds and, on the gun, where along it (0 the back of the bounds, 1 the front).
 public readonly record struct InspectHandKey(float Time, InspectHold On, float Along);
@@ -53,7 +54,14 @@ public sealed class InspectMotion
     public const float DefaultFill = 0.95f;
 
     // The gun keys around `time` and the smooth step between them (a == b past the last key).
-    public void GunSpan(float time, out int a, out int b, out float s) => Span(_gunTimes, time, out a, out b, out s);
+    // A key the gun goes through without stopping (Through): the span into it only eases in and the span out of it only eases out.
+    public void GunSpan(float time, out int a, out int b, out float s)
+    {
+        Span(_gunTimes, time, out a, out b, out s);
+        if (a == b || !(Gun[a].Through || Gun[b].Through)) return;
+        var t = Math.Clamp((time - _gunTimes[a]) / (_gunTimes[b] - _gunTimes[a]), 0f, 1f);
+        s = Gun[a].Through && Gun[b].Through ? t : Gun[b].Through ? t * t * (2f - t) : 1f - (1f - t) * (1f - t);
+    }
 
     public void HandSpan(float time, out int a, out int b, out float s) => Span(_handTimes, time, out a, out b, out s);
 
@@ -88,6 +96,7 @@ public sealed class InspectMotion
             var rise = key.TryGetProperty("rise", out var r) ? r.GetSingle() : 0f;
             if (!(rise >= 0f && rise <= 1f)) throw Bad(id, "rise is 0..1 metres");
             var rest = !key.EnumerateObject().Any(p => p.Name != "t");
+            if (rest && key.TryGetProperty("through", out _)) throw Bad(id, "through is for a key of the motion's own");
             var at = Vector2.Zero;
             if (key.TryGetProperty("at", out var place))
             {
@@ -95,8 +104,8 @@ public sealed class InspectMotion
                 at = xy.Length == 2 && xy.All(v => Math.Abs(v) <= 1f) ? new Vector2(xy[0], xy[1]) : throw Bad(id, "at is [x, y], each -1..1");
             }
             var fill = key.TryGetProperty("fill", out var f) ? f.GetSingle() : DefaultFill;
-            if (!(fill > 0f && fill <= 1f) || Math.Abs(at.X) >= fill || Math.Abs(at.Y) >= fill) throw Bad(id, "fill is in (0, 1] and at lies inside it");
-            gun.Add(new InspectGunKey(Time(id, key, gun.Count == 0 ? -1f : gun[^1].Time), rest, Angle("turn"), Angle("tilt"), Angle("roll"), at, fill, Angle("spin", 1080f), Angle("flip", 1080f), rise));
+            if (!(fill > 0f && fill <= 2f) || Math.Abs(at.X) >= fill || Math.Abs(at.Y) >= fill) throw Bad(id, "fill is in (0, 2] and at lies inside it");
+            gun.Add(new InspectGunKey(Time(id, key, gun.Count == 0 ? -1f : gun[^1].Time), rest, Angle("turn"), Angle("tilt"), Angle("roll"), at, fill, Angle("spin", 1440f), Angle("flip", 1440f), rise, key.TryGetProperty("through", out var th) && th.GetBoolean()));
         }
         if (gun.Count < 2 || gun[0].Time != 0f || !gun[0].Rest || !gun[^1].Rest) throw Bad(id, "the gun has at least two keys, the first at 0, the first and last the game's pose ({ \"t\": … } alone)");
         var hand = new List<InspectHandKey>();
@@ -323,10 +332,12 @@ public readonly record struct InspectShot(float Inside, float Cover, float Depth
 
     // The rule this frame breaks, or null. A frame on the way to or from the game's pose (`fromGame`) is held to the poorer of the game's
     // pose and each rule (a rifle's stock reaches behind the eye there), give or take 0.05 of a share and 0.02 m.
-    public string? Breaks(in InspectShot game, bool fromGame)
+    // A gun twirling on the trigger finger (`twirl`) may swing its far end out of the view as it goes round: it is watched from as near
+    // as it is held, not from where every turn of it would fit.
+    public string? Breaks(in InspectShot game, bool fromGame, bool twirl = false)
     {
         float share = fromGame ? 0.05f : 1e-3f, metres = fromGame ? 0.02f : 1e-3f;
-        if (Inside < (fromGame ? MathF.Min(LeastInside, game.Inside) : LeastInside) - share) return $"only {Inside:P0} of the gun is in the view";
+        if (!twirl && Inside < (fromGame ? MathF.Min(LeastInside, game.Inside) : LeastInside) - share) return $"only {Inside:P0} of the gun is in the view";
         if (Depth < MathF.Min(LeastDepth, game.Depth) - metres) return $"the gun comes {Depth:0.00} m from the eye";
         return null;
     }
@@ -360,7 +371,8 @@ public sealed class InspectLook
     readonly InspectArm _off, _arm;
     readonly Vector3 _gripAt; // the grip hand's target in the gun's space
     readonly Quaternion _grip;
-    readonly Vector3 _centre; // the gun's bounds centre, which a free gun turns about
+    readonly Vector3 _centre; // the gun's bounds centre, which a tossed gun turns about
+    readonly Vector3 _trigger; // the trigger guard, which a twirled gun turns about (Trigger)
     readonly InspectRig _rig;
 
     public InspectLook(InspectMotion motion, in InspectRig rig)
@@ -376,6 +388,7 @@ public sealed class InspectLook
         var gripAt = Vector3.Transform(rig.GripAt - rig.GunAt, toGun);
         var grip = toGun * rig.Grip;
         (_gripAt, _grip, _centre, _rig) = (gripAt, grip, rig.Centre, rig);
+        _trigger = Trigger(rig, gripAt, grip);
         (_off, _arm) = (rig.OffArm, rig.GripArm);
         var hands = motion.Hand;
         _handAt = new Vector3[hands.Length];
@@ -480,7 +493,7 @@ public sealed class InspectLook
         var keys = Motion.Gun;
         GunPose(time, 1f, _rig.GunAt, _rig.Gun, _rig.TanHalf, out var at, out var turn, out var view);
         Motion.GunSpan(time, out var a, out var b, out _);
-        var broken = Shot(_rig, at, turn, view, _gripAt).Breaks(_game, keys[a].Rest || keys[b].Rest);
+        var broken = Shot(_rig, at, turn, view, _gripAt).Breaks(_game, keys[a].Rest || keys[b].Rest, Twirling);
         if (broken != null) return broken;
         // Both hands stay within their arms' reach of the gun: the grip hand where it holds it, an off hand on the gun where it touches.
         var hand = HeldAt + Vector3.Transform(_gripAt, HeldTurn);
@@ -607,7 +620,9 @@ public sealed class InspectLook
         // The bounds centre moves on a straight line between keys (so it stays in the view between two keys that show it) while the gun
         // turns about it; to and from the game's pose the back of the gun does (so the stock leaves the eye and comes back without
         // swinging nearer).
-        var pin = ka || kb ? _centre - new Vector3(0f, 0f, _rig.Extents.Z) : _gripAt;
+        // A gun with nothing behind the grip hand to speak of (a pistol) has no stock to keep from the eye: its hand goes straight.
+        var back = _centre - new Vector3(0f, 0f, _rig.Extents.Z);
+        var pin = (ka || kb) && back.Z < _gripAt.Z - StockBehind ? back : _gripAt;
         Vector3 Mid(Vector3 p, Quaternion q) => p + Vector3.Transform(pin, q);
         var liveMid = Mid(liveAt, live);
         var mid = Vector3.Lerp(ka ? liveMid : Mid(_gunAt[a], _gun[a]), kb ? liveMid : Mid(_gunAt[b], _gun[b]), s) + 4f * s * (1f - s) * _bow[a];
@@ -636,26 +651,63 @@ public sealed class InspectLook
         var spin = Wind(ga.Rest, ga.Spin, gb.Spin) + (Wind(gb.Rest, gb.Spin, ga.Spin) - Wind(ga.Rest, ga.Spin, gb.Spin)) * s;
         var flip = Wind(ga.Rest, ga.Flip, gb.Flip) + (Wind(gb.Rest, gb.Flip, ga.Flip) - Wind(ga.Rest, ga.Flip, gb.Flip)) * s;
         if (weight < 1f) (spin, flip) = (Fade(spin, weight), Fade(flip, weight));
-        Free = spin != 0f || flip != 0f;
+        // At a whole turn the gun is back in the hand's hold: held again, so a rise there is a heft, not a toss.
+        static bool Turned(float angle) => angle != MathF.Round(angle / 360f) * 360f;
+        Free = Turned(spin) || Turned(flip);
+        Twirling = false;
         if (!Free) { at.Y += rise; HeldAt = at; }
         else
         {
             const float Degrees = MathF.PI / 180f;
-            var pivot = at + Vector3.Transform(_centre, turn);
+            // A spin with no rise and no flip is a twirl on the trigger finger: the gun turns about its trigger guard, and the hand goes
+            // with it. The finger carries the guard round a small circle in the plane of the spin and the wrist rocks once a turn, both
+            // back where they held the gun at every whole turn, so the hand takes the grip again without a jump.
+            var twirl = Twirling = rise == 0f && flip == 0f;
+            var about = twirl ? _trigger : _centre;
+            var pivot = at + Vector3.Transform(about, turn);
+            if (twirl)
+            {
+                var phase = spin * Degrees;
+                pivot += Vector3.Transform(new Vector3(0f, TwirlRadius * MathF.Sin(phase), TwirlRadius * (1f - MathF.Cos(phase))), turn);
+                HeldTurn = Quaternion.Normalize(turn * Quaternion.CreateFromAxisAngle(Vector3.UnitX, TwirlRock * Degrees * MathF.Sin(phase)));
+                HeldAt = pivot - Vector3.Transform(about, HeldTurn);
+            }
             turn = Quaternion.Normalize(turn * Quaternion.CreateFromAxisAngle(Vector3.UnitX, spin * Degrees) * Quaternion.CreateFromAxisAngle(Vector3.UnitZ, flip * Degrees));
-            at = pivot + new Vector3(0f, rise, 0f) - Vector3.Transform(_centre, turn);
+            at = pivot + new Vector3(0f, rise, 0f) - Vector3.Transform(about, turn);
         }
         // Between two keys of the motion's own the item camera widens as far as this frame needs to keep the shown part in the view.
-        if (!ka && !kb) view = MathF.Max(view, rest + (ViewFor(Whole, _rig, turn, at, _gripAt) - rest) * weight);
+        // (Not in a twirl: its keys' view is nearer than one that holds every turn, Frames. Keys that let the gun past the view, Fill over 1, let it here too.)
+        if (!ka && !kb && !Twirling) view = MathF.Max(view, rest + (ViewFor(Whole with { Fill = MathF.Max(1f, MathF.Max(ga.Fill, gb.Fill)) }, _rig, turn, at, _gripAt) - rest) * weight);
     }
 
     static readonly InspectGunKey Whole = default(InspectGunKey) with { Fill = 1f };
+
+    // A twirl: how far (metres) the trigger finger carries the guard off its place, and how far (degrees) the wrist rocks, once a turn.
+    const float TwirlRadius = 0.02f, TwirlRock = 18f;
+
+    // How far (metres) a gun reaches behind its grip hand before it counts as having a stock (GunPose's pin).
+    const float StockBehind = 0.15f;
+
+    // The trigger in the gun's space: where the tip of the grip hand's index finger is, on the gun's centre plane. The hand node is the
+    // wrist (ForgeCore gun-hold.json: -X toward the fingers, +Z toward the thumb): the index knuckle lies a palm's length along the
+    // fingers on the thumb's side (the top of the grip's back), and the finger reaches from there along the gun to the trigger, a little
+    // below; the hand is a hand's size on every gun.
+    static readonly Vector3 IndexKnuckle = new(-0.09f, 0f, 0.03f), KnuckleToTrigger = new(0f, -0.01f, 0.065f);
+
+    static Vector3 Trigger(in InspectRig rig, Vector3 gripAt, Quaternion grip)
+    {
+        var finger = gripAt + Vector3.Transform(IndexKnuckle, grip) + KnuckleToTrigger;
+        return new Vector3(rig.Centre.X, finger.Y, finger.Z);
+    }
 
     // Set by GunPose: whether the gun is free of the grip hand this frame, the pose it is held in (where the grip hand stays) and the
     // grip arm's elbow swivel.
     public bool Free { get; private set; }
     public Vector3 HeldAt { get; private set; }
     public Quaternion HeldTurn { get; private set; }
+
+    // Whether the last GunPose had the gun twirling on the trigger finger (free, about its trigger guard).
+    public bool Twirling { get; private set; }
     public float HeldSwivel { get; private set; }
 
     // Where the grip arm's elbow is this frame (set by GunPose): the point the game's IK bends the arm toward.
@@ -773,29 +825,42 @@ public sealed class InspectLook
                 var s = from + i % m * turnStep;
                 var cost = Cost(key, rig, arm, p, s, p - offset, want, hold, gripAt, touches);
                 // The frame rules (InspectShot) weigh above everything else; measured only for a place that could still win.
-                if (cost < best) cost += 10f * Frames(key, turning, rig, want, p - offset, gripAt, Margin, out _);
+                // The hand is placed for the gun as held: a rise lifts it from there (weighing the lifted frame here would put the hand lower by as much).
+                if (cost < best) cost += 10f * Frames(key with { Rise = 0f }, turning && key.Rise == 0f, rig, want, p - offset, gripAt, grip, Margin, out _);
                 if (cost < best) (best, hand, swivel) = (cost, p, s);
             }
         }
         turn = Quaternion.Normalize(arm.Comfort(hand, hold, swivel) * Quaternion.Inverse(grip));
         at = hand - Vector3.Transform(gripAt, turn);
-        Frames(key, turning, rig, turn, at, gripAt, 0f, out view);
+        Frames(key, turning, rig, turn, at, gripAt, grip, 0f, out view);
     }
 
     // How far the frames a key shows fall short of the frame rules (0: they keep them) and the item camera view they need: the gun held
     // at `at`, `turn`, lifted by the key's rise, and when it is `turning` (spun or flipped about its bounds centre) at every 30 degrees of it.
-    static float Frames(in InspectGunKey key, bool turning, in InspectRig rig, Quaternion turn, Vector3 at, Vector3 gripAt, float margin, out float view)
+    static float Frames(in InspectGunKey key, bool turning, in InspectRig rig, Quaternion turn, Vector3 at, Vector3 gripAt, Quaternion grip, float margin, out float view)
     {
         at.Y += key.Rise;
-        var pivot = at + Vector3.Transform(rig.Centre, turn);
+        // A twirl (no rise) turns about the trigger guard, a toss about the bounds centre (GunPose).
+        var about = turning && key.Rise == 0f ? Trigger(rig, gripAt, grip) : rig.Centre;
+        var pivot = at + Vector3.Transform(about, turn);
         var frames = turning ? 24 : 1;
         Span<Quaternion> turns = stackalloc Quaternion[frames];
         for (var k = 0; k < frames; k++)
             turns[k] = Quaternion.Normalize(turn * Quaternion.CreateFromAxisAngle(k < 12 ? Vector3.UnitX : Vector3.UnitZ, k % 12 * MathF.PI / 6f));
         view = 0f;
-        foreach (var q in turns) view = MathF.Max(view, ViewFor(key, rig, q, pivot - Vector3.Transform(rig.Centre, q), gripAt));
+        foreach (var q in turns) view = MathF.Max(view, ViewFor(key, rig, q, pivot - Vector3.Transform(about, q), gripAt));
         var shortBy = 0f;
-        foreach (var q in turns) shortBy = MathF.Max(shortBy, Short(Shot(rig, pivot - Vector3.Transform(rig.Centre, q), q, view, gripAt), margin));
+        if (about == rig.Centre)
+        {
+            foreach (var q in turns) shortBy = MathF.Max(shortBy, Short(Shot(rig, pivot - Vector3.Transform(about, q), q, view, gripAt), margin));
+            return shortBy;
+        }
+        // A twirl is watched from as near as the gun is held (InspectShot.Breaks): the view and the frame rules are the held pose's, and
+        // of its turns only that none brings the gun too near the eye.
+        view = ViewFor(key, rig, turn, at, gripAt);
+        shortBy = Short(Shot(rig, at, turn, view, gripAt), margin);
+        for (var k = 0; k < 12; k++)
+            shortBy = MathF.Max(shortBy, MathF.Max(0f, InspectShot.MinDepth * (1f + margin) - Shot(rig, pivot - Vector3.Transform(about, turns[k]), turns[k], view, gripAt).Depth));
         return shortBy;
     }
 

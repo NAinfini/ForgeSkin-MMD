@@ -319,14 +319,32 @@ let edition: Promise<'dev' | 'installed' | 'portable'> | null = null;
 export const editorEdition = () => (edition ??= window.forge.edition());
 
 /** plugin.install into `profile`. The development editor first builds and stages the plugin from its checkout, so it never
- * installs an old build; when it cannot, the error says why in plain words. */
-export async function installPluginInto(profile: string): Promise<unknown> {
+ * installs an old build; when it cannot, the error carries the build's last lines for the log. What the install moved away
+ * is reported (PLAN §4.5). */
+export async function installPluginInto(profile: string) {
   if ((await editorEdition()) === 'dev') {
     const staged = await window.forge.stagePlugin();
-    if (!staged.ok)
-      throw { code: 'dev-plugin', message: staged.reason === 'noForgeCore' ? t('actions.devNoForgeCore', { v0: staged.detail ?? '' }) : t('actions.devStageFailed', { v0: staged.detail ?? '' }) };
+    if (!staged.ok) throw { code: 'dev-plugin', message: `build-editor-release.ps1 -PluginOnly failed (whole output in app.log, "plugin stage"): ${staged.detail ?? ''}` };
   }
-  return call('plugin.install', { profile });
+  const r = await call('plugin.install', { profile });
+  for (const note of r.notes) st().report('info', note);
+  return r;
+}
+
+// BepInEx's verdicts already reported, so a check repeated on focus, a profile change or a game start says each once per run.
+const toldLoad = new Set<string>();
+/** What BepInEx said about ForgeCore and ForgeSkin the last time the game started from `profile` (plugin.loadCheck reads its
+ * LogOutput.log): each refusal once, the full account to app.log and a short toast. A ForgeSkin skipped only because ForgeCore
+ * did not load is left to the ForgeCore message, which names the cause. */
+export async function checkPluginLoad(profile: string): Promise<void> {
+  const r = await call('plugin.loadCheck', { profile }).catch((e: unknown) => (window.forge.appLog('plugin.loadCheck', detail(e)), null));
+  const notes = (r?.notes ?? []).filter((n) => !toldLoad.has(n.detail));
+  const causes = notes.filter((n) => n.code !== 'load-dependency-failed');
+  for (const note of notes) {
+    toldLoad.add(note.detail);
+    if (causes.length && !causes.includes(note)) window.forge.appLog(`install ${note.code}`, note.detail);
+    else st().report('error', note);
+  }
 }
 
 // Profiles already told that the editor leaves their newer store plugin alone (once per editor run and set of copies, unless

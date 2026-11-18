@@ -416,15 +416,15 @@ public static class SkinsFormat
                 {
                     var layer = channel.Layer();
                     // Skins sets a whole colour: a reticle colour goes in with full alpha (the plugin keeps the game's alpha).
-                    if (r.Color is { } rc)
+                    // An off layer is black: the reticle is added by colour, so it adds nothing.
+                    if (r.Visible == false || r.Color != null)
                     {
-                        var c = ForgeVisual.ColourSpace.Glow(rc, r.Intensity ?? 1, game?.Hdr.Contains("_ReticuleColor" + layer) ?? true);
+                        var c = r.Visible == false ? new float[] { 0, 0, 0 } : ForgeVisual.ColourSpace.Glow(r.Color!, r.Intensity ?? 1, game?.Hdr.Contains("_ReticuleColor" + layer) ?? true);
                         properties["_ReticuleColor" + layer] = Property("Color", new JsonObject { ["r"] = c[0], ["g"] = c[1], ["b"] = c[2], ["a"] = 1 });
                     }
                     else if (r.Intensity != null) dropped.Add(new("reticleIntensity", doc.Name, $"{o.Material} {layer}"));
                     if (r.Scale is float scale) properties["_ReticuleScale" + layer] = Property("Float", new JsonObject { ["value"] = scale });
                     if (r.Offset is float offset) properties["_ReticuleOffset" + layer] = Property("Float", new JsonObject { ["value"] = offset });
-                    if (r.Visible is bool shown) properties["_Fade" + layer] = Property("Float", new JsonObject { ["value"] = shown ? 1 : 0 });
                 }
                 var target = new JsonObject { ["material_name"] = o.Material };
                 // BlendHS samples no albedo: as the plugin does, draw the picture with the gear shader, the slots the skin

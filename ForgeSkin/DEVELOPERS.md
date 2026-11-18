@@ -206,6 +206,43 @@ see it only through the sight, which in practice is the player aiming it. `asset
 files (a layer the material has no picture slot for is reported), and the Skins export writes them as properties (an
 intensity without a colour is reported, `reticleIntensity`). Folder matching never assigns a reticle channel.
 
+## Sight on an imported model
+
+`sight` in the document (`Core/SkinDocument.cs`, plan §4.15) puts a game lens on the skin's own model. `lens` is exactly one
+of `attachment` (that attachment's model takes the lens material), `part` with an optional `path` (that node's own meshes
+take it) or, with `size` (width and height in metres) and `position`/`rotation`, a pane anchored at `part`/`path`. `style`
+is the `GearSightPartDataBlock` id whose flat lens material is copied (ForgeCore `SightLenses.Of`), `zoom` the id whose
+`SightProperties.GearFovZoom`/`WorldFovZoom` the gun wears while held in first person (ForgeCore `HeldSettings.Wear`, key
+`ForgeSkin.Sight`). The lens's reticles are the override named `sight:lens` (`Sight.LensMaterial`), reticle content only; it
+works as on a game lens (above). `SkinPack.Validate` rejects a lens without a style, a style without a lens, a lens on both or
+neither of an attachment and a part, an attachment without a model, a bad pane size, and a `sight:lens` override without a lens
+or with anything but reticles (`bad-sight`). In game `Native/SkinnedGear.Sight.cs` waits for the lens template, logs an id the
+game lacks or a zoom of 0 once (`skin-sight-skipped`) and takes the lens and the zoom off with the skin. Nothing goes on the
+wire: teammates get the lens through the pack, the zoom is the holder's own. The editor's backend method `sights.list`
+(`Backend/Sights.cs`) gives each sight part's id, name, both fields of view, offline gear id and lens material name. A click
+with 从模型里选 on the whole-gun model (below) puts a pane there instead: that model is one mesh.
+
+## Whole-gun model
+
+A model in place of the whole gun (plan §4.2) adds no field. It is an attachment on the receiver's root (else the first part's).
+The model is made the glTF way, its front (muzzle end) along glTF +Z, which is -Z once imported into Unity space, so the
+attachment is turned 180° about Y (`gun.seat` returns that `rotation`) and its muzzle points down the gear's +Z; every part root of the gun is `visible: false`; the right hand, left hand, muzzle and aim point nodes
+are part layout entries (position only). Hiding a part hides the game's renderers there, never the skin's own attachments
+(plugin `PartPose`, editor `hiddenMeshes`): an attachment hides with its own `visible`. So the plugin, teammates' copies and
+replay stand-ins wear it as any skin.
+
+Where the model and the hold points go is one rule, the backend's `gun.seat` (`Backend/GunSwap.cs`), which calls ForgeCore
+`GunHold.Solve` with the numbers of ForgeCore `Data/gun-hold.json` (the backend links both files). The
+model's points are its nodes named `RightHand`, `LeftHand`, `muzzle` and `SightLook` (ForgeCore `GunNodes`, any case;
+`mesh.import` returns them as `sockets`, Unity space, the model's own size). A hand without its node grips at that hand's
+palm touch point on the gun (the hand node plus `palm.right` or `palm.left`) at the same share of each axis of the model's
+bounds as of the gun's, so it stays on the model whatever the model's length. The model shows at `shownScale` the first
+time and at its attachment's scale on 重新自动摆. The answer, in the gear's frame: the model's origin, both wrists, and the
+model's muzzle and aim point where it has them (else those nodes keep the game's). A shown length outside `length.min`–`max`
+is one hint in the editor. ForgeSkin does not go through `GunMount`, so nothing pulls a far left hand into the arm's reach.
+The editor keeps the model's sockets and bounds in its own state (`editor.wholeGun`, never packed); `gunSwap.ts` reads the 3D
+view's gear frame for the rule and writes its answer as one undo step.
+
 ## Charms
 
 An attachment's `charm` hangs its model and screen on a rope generated in code, from the attachment's origin (its -Y the
@@ -278,12 +315,15 @@ where in metres; the plugin solves the rest for the gun in hand when the look st
   turns the gun about its bore with the top going right, all in degrees from the gun held level and pointing ahead (at most 180;
   not from the game's pose this frame, which is lowered when the game relaxes the gun at idle). `at` is where the centre
   of the gun's bounds should sit in the view (-1..1 of the half width and height, default the middle; a preference the solve weighs,
-  not a pin), `fill` the share of the half view the shown part stays inside (default 0.95).
-- `rise` alone (metres up) lifts the gun in both hands. The free-gun track: `spin` (degrees about the gun's side axis) and `flip`
-  (degrees about the bore), with `rise` a toss, free the gun from the grip hand. The hand stays where the key's held pose puts it
-  and the gun turns about its bounds centre, so the hand takes the gun back without a jump when the track returns to zero or a whole
-  turn. They are interpolated as numbers (up to 1080 degrees), so one key can spin twice; a game's-pose key takes the whole turn
+  not a pin), `fill` the share of the half view the shown part stays inside (default 0.95; over 1, up to 2, lets it reach past the view).
+- `rise` alone (metres up) lifts the gun in both hands from where the key holds it (the hand is placed for the gun as held, then lifted). The free-gun track: `spin` (degrees about the gun's side axis) and `flip`
+  (degrees about the bore) free the gun from the grip hand. `spin` alone is a twirl on the trigger finger: the gun turns about its
+  trigger guard and the hand goes with it (a small circle, the wrist rocking once a turn). With `flip` or `rise` it is a toss: the
+  hand stays where the key's held pose puts it and the gun turns about its bounds centre. Either way the hand takes the gun back
+  without a jump when the track returns to zero or a whole turn. They are interpolated as numbers (up to 1440 degrees), so one key can spin twice; a game's-pose key takes the whole turn
   nearest its neighbour, so a gun spun round is not wound back, and an interrupted look fades the rest of the spin.
+- `through: true` on a key of the motion's own: the gun does not stop there. The span into it only eases in and the span out of
+  it only eases out, so two beats read as one motion (a spin that carries the hand on).
 - `hand`: the off hand's keys `{ "t", "on", "along" }`, first and last `grip`. `on` is `grip` (the game's own grip), `away`
   (lowered out of the view), `under` (its grip slid along the gun; without `along` it stays at its own place), `side` (the gun's left
   side), `top`, `muzzle` (under the front end) or `mag` (under the magazine node, or along the bottom); `along` is 0 at the back of
@@ -293,8 +333,10 @@ The shipped motions are the wrist roll in two beats and back: the gun's left fac
 right; then it turns to its right side with the muzzle still up and to the left: pistols, revolvers and compact guns all the way
 over in the wrist (the gun upside down, the back of the grip hand toward the viewer, the elbow swung out), rifles, shotguns, machine
 guns and long guns in both hands a third of a turn the other way (roll -90 from +30), enough to show the right side and top, since
-nobody rolls a machine gun over in one hand; then the game's pose. Only the revolver adds a beat, two turns about its
-centre (`spin` 720) before it goes back. Pistols, revolvers and compact guns drop the off hand out of view; rifles, shotguns,
+nobody rolls a machine gun over in one hand; then the game's pose. Only the revolver adds a beat before it goes back: two turns on
+the trigger finger (the grip hand's index finger, on the gun's centre plane), upright, the hand going with it (watched from as near
+as the gun is held: its far end may leave the view as it goes round); the last turn runs straight on into the hand going up until the
+muzzle points up (the key that ends the spin is `through`), and the hand brings it back down. Pistols, revolvers and compact guns drop the off hand out of view; rifles, shotguns,
 machine guns and long guns keep it under the gun throughout and slide it toward the receiver for the right face (`along` 0.45, 0.3
 for machine guns, 0.35 for long guns).
 
@@ -372,6 +414,24 @@ python Mods/ForgeSkin/tools/package_release.py --artifacts-path artifacts/dotnet
 ```
 
 The pack reader (`Core/`) is compiled into `ForgeSkin.Plugin.dll`; the zip holds that one DLL, `lang/` and the metadata.
+
+The editor (`Editor/`) needs the .NET 10 SDK (`pnpm start` builds `Backend/` itself), Node 26.5.1 or newer and pnpm 11 (the
+versions in the repository root `package.json`), and builds the same way in this repository and in an export (the mirror and the
+friend's repository, `Mods/Release/README.md`):
+
+```
+pnpm install --frozen-lockfile    # in Editor/, its own lockfile; nothing above Editor/ is read
+pnpm lint                         # eslint and tsc; also writes src/renderer/generated/skin-document.ts from the backend (builds it)
+pnpm start
+```
+
+The editor imports site code from `Web/src` by relative path. Every npm package that code imports (`zod`, `i18next`, `fast-png`,
+`three`, `@gltf-transform/core`, `@gltf-transform/extensions`) is declared in `Editor/package.json`, resolved from the editor's
+own `node_modules` by `paths` in `Editor/tsconfig.json` (type check) and `resolve.dedupe` in `Editor/vite.renderer.config.ts`
+(bundle); a new package in that code goes into all three, and `export-mirror.ps1` fails when one is missing from `package.json`.
+In this repository the site's `Web/src/forge/generated/wire.ts` must exist first (`pnpm generate:ephemeral` in the repository root);
+an export carries the copy it found. `pnpm make` and `pnpm package` need the folder `tools/build-editor-release.ps1` stages
+(`FORGESKIN_PUBLISH_DIR`).
 
 ## Adding packs
 
@@ -535,19 +595,28 @@ feed (`ForgeSkin-update` release of NAinfini/GTFO-Forge-Mods) are in `Mods/Relea
 In a checkout the backend installs the plugin from `artifacts/forge-skin-release/publish/plugin` (`Install.PluginSource`).
 The development editor never installs on its own (nor do the editors `docs-shots.mjs` and `gallery-thumbs.mjs` start); an
 install the user asks for (the profile menu's 从源码构建并安装插件, or 应用 when the profile's plugin is missing or differs) first runs
-this script with `-PluginOnly` (steps 1, 2 and 4 only; `-BepInEx` defaults to `GTFO_BEPINEX_PATH`, else the Forge-Multiplayer
-r2modman profile) and the ForgeCore zip it last used, which it leaves in `artifacts/forge-skin-release/thunderstore/`
-(`Editor/src/main/main.ts` `stageDevPlugin`); without one the editor says to run the script once with `-ForgeCore`. A packaged
+this script with `-PluginOnly` and no `-ForgeCore` (`Editor/src/main/main.ts` `stageDevPlugin`): it builds ForgeSkin and ForgeCore
+from source and stages ForgeCore's folder from that build and the files `release.json` lists for it (local media from this
+checkout, else the main checkout), with no Thunderstore zip; nothing has to be packaged first. `-BepInEx` defaults to
+`GTFO_BEPINEX_PATH`, else the Forge-Multiplayer r2modman profile. Its whole output goes to `app.log` (`plugin stage`). A packaged
 editor installs on its own (at start, on a profile change, after the game closes) only into a profile the user picked in the
 profile menu (`prefs.profileChosen`), from its own `resources/publish/plugin`. The script stages `publish/plugin` in a sibling
-folder and swaps it in whole, so an interrupted run leaves no half folder. Installing into a profile deletes the
-`ForgeSkin.Format.dll` and `NVorbis.dll` that 1.0.3 and earlier left in `BepInEx/plugins/ForgeSkin/`. When the mod manager
-installed the plugin (a `ForgeSkin.Plugin.dll` elsewhere under `BepInEx/plugins`), the editor keeps that copy and deletes
-its own `ForgeSkin.Plugin.dll` and `lang/` from `plugins/ForgeSkin/`, so one copy loads. ForgeCore and ForgeSkin follow the
-editor: every ForgeCore in the profile (a folder under `BepInEx/plugins` holding `ForgeCore.dll`) and the plugin the game
-loads (the managed copy, else `plugins/ForgeSkin/`) whose files differ from the shipped build are overwritten in place with
-it, except a copy straight from the store that is newer (`Install.NewerFromStore`: its package folder's Thunderstore
-`manifest.json` `version_number` equals the DLL's file version, and that version is above the shipped DLL's), which stays
-and is reported (`plugin.install` `newer`, profile `pluginNewer`); a profile without ForgeCore gets the shipped package in
-`BepInEx/plugins/NAinfini-ForgeCore/ForgeCore/`, where a mod manager puts it. Uninstalling removes only the
-editor's own plugin copy and its `lang/`; the skins folder and a managed copy stay.
+folder and swaps it in whole, so an interrupted run leaves no half folder.
+
+`plugin.install` (`Install.Plugin`, rule in `Install.Plan`) leaves each package as one loadable copy at its home
+`BepInEx/plugins/NAinfini-<Package>/<Package>/`, where a mod manager puts it (`Install.Home`). Every other folder under
+`BepInEx/plugins` holding `ForgeCore.dll` or `ForgeSkin.Plugin.dll` goes: the editor's former folder `plugins/ForgeSkin/` is cleared
+(with the `ForgeSkin.Format.dll` and `NVorbis.dll` 1.0.3 left there); any other copy goes to the Recycle Bin, its folder whole when it
+holds nothing but the package's files, else its DLL, and is reported (`notes`, `plugin-copy-removed`, with its path). The home copy
+takes the shipped files unless it is a newer copy straight from the store (`Install.NewerFromStore`: its package folder's Thunderstore
+`manifest.json` `version_number` equals the DLL's file version, above the shipped DLL's), which stays and is reported (`newer`,
+profile `pluginNewer`); a newer store ForgeSkin stays only while the ForgeCore the profile ends with meets the minimum of its
+`[BepInDependency]` (`PluginMeta`, read from the DLL's metadata), else the shipped ForgeSkin replaces it. BepInEx and GTFO-API
+belong to the mod manager: the editor neither installs nor checks them. `plugin.loadCheck` (`LoadLog.Check`) reads, never writes,
+the profile's `BepInEx/LogOutput.log` when it is newer than the last change under `BepInEx/plugins` (the editor stamps the home
+folders it writes) and turns BepInEx's `Could not load [...]` and `Skipping [...]` lines about ForgeCore or ForgeSkin into notes
+(`load-missing-dependency`, `-any`, `load-incompatible`, `load-duplicate`, `load-dependency-failed`, `load-refused`); the editor runs it
+when it opens, on a profile change and after the game starts or closes. Every note is two layers: `args` make the short toast
+(`install.<code>` in the locales), `detail` (what was checked, paths, versions, the log line, cause and fix) goes to `backend.log`
+and `app.log` (`useStore.report`). Uninstalling removes the home ForgeSkin unless a mod manager owns it (a `manifest.json` in
+`NAinfini-ForgeSkin/`) and what is left in `plugins/ForgeSkin/`; the skins folder and ForgeCore stay.

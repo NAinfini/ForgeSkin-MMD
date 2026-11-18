@@ -1,7 +1,8 @@
 import { useGLTF } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
-import { CanvasTexture, Mesh, Vector3, SRGBColorSpace, type MeshStandardMaterial, type Object3D } from 'three';
+import { CanvasTexture, Mesh, MeshStandardMaterial, Vector3, SRGBColorSpace, type Object3D } from 'three';
+import { LENS } from '../sight';
 import { baseTexturePath, drawLayer, LayerSource, loadImage } from '../frames';
 import { hasLivery, tintedPicture } from '../livery';
 import { LiveryPreview } from './liveryPreview';
@@ -190,13 +191,16 @@ export function WeaponModel({ preview }: { preview: WeaponPreview }) {
       );
     useStore.setState({ subParts });
     editableMaterials(scene, materials.current);
+    // The sight's lens (sight.ts): on no game mesh, drawn where the skin puts its lens.
+    if (!materials.current.has(LENS)) materials.current.set(LENS, new MeshStandardMaterial({ name: LENS }));
     viewRefs.materials = materials.current;
     sceneMapped();
     return () => {
       viewRefs.root = null;
       viewRefs.materials = null;
     };
-  }, [scene, preview]);
+    // The parts, not the whole preview: a lens style put into the preview's materials (sight.ts) maps nothing again.
+  }, [scene, preview.parts]);
 
   // Apply textures and parameters from the document over the game's own.
   useEffect(() => {

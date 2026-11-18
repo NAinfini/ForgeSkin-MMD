@@ -81,10 +81,8 @@ public sealed class GunMount
     private static bool _hooked;
     private static IntPtr _heldItem;
     private static GunMount? _held;
-    // One held copy of each first-person settings block a mounted gun was given (the game's blocks are shared with its own guns).
-    // Keyed with the sight's aim field of view: two guns on one block may carry different sights.
-    private static readonly Dictionary<(IntPtr, int), ItemFPSSettingsDataBlock> HoldCopies = new();
-    private static readonly HashSet<IntPtr> HoldCopyPointers = new();
+    // The key of the rule's hold among the settings copies (HeldSettings): every mount on one block shares its copy per sight zoom.
+    private const string HoldKey = "ForgeVisual.GunMount";
     private static GunHoldRules? _rules;
 
     /// <summary>The rule every gun model is held by (<c>Data/gun-hold.json</c>, embedded in ForgeVisual).</summary>
@@ -105,7 +103,6 @@ public sealed class GunMount
         internal Transform? WeaponRight, WeaponLeft, WeaponMuzzle, WeaponSight;
         internal PlayerSyncIK? SyncIK;
         internal Transform? SyncLeftTarget, SyncProxy;
-        internal ItemFPSSettingsDataBlock? Settings;
         internal bool WritesAttempted;
     }
 
@@ -133,7 +130,6 @@ public sealed class GunMount
     private GameObject? _magazineObject;
     private GunFrame _gripRest, _leftRest, _rightTargetRest, _leftTargetRest, _modelRest, _magazineNodeRest, _magazineRest;
     private GunHoldResult _hold;
-    private ItemFPSSettingsDataBlock? _holdOriginal;
     private int _viewLayer = -1;
     private float _hipSince = -1f;
     private float _nodesLostSince = -1f;
@@ -450,45 +446,19 @@ public sealed class GunMount
 
     private static bool Points(Transform? node, Transform? socket) => socket == null || node == socket;
 
-    private static ItemFPSSettingsDataBlock? Settings(ItemEquippable weapon) => weapon.m_itemFPSSettingsForGear ?? weapon.m_itemFPSSettingsForItem;
+    // The item wears the rule's hold (HeldSettings, with this mount's sight zoom).
+    private bool Held(ItemEquippable weapon) => HeldSettings.Wears(weapon, HoldKey);
 
-    // The item wears the rule's hold: its first-person settings are a held copy.
-    private static bool Held(ItemEquippable weapon) => Settings(weapon) is { } settings && HoldCopyPointers.Contains(settings.Pointer);
-
-    /// <summary>The item's first-person settings become a copy with the rule's hold (hip and relaxed position, hip item field of view); the game's
-    /// block is shared with its own guns and is never written. Aiming keeps the game's settings: the game lines the model's sight up with the camera.</summary>
-    private void ApplyHold(ItemEquippable weapon)
+    /// <summary>The item takes the rule's hold (hip and relaxed position, hip item field of view) and a mounted sight's world zoom through
+    /// <see cref="HeldSettings"/>, never on the game's shared blocks. The game lines the model's sight up with the camera when aiming.</summary>
+    private void ApplyHold(ItemEquippable weapon) => HeldSettings.Wear(weapon, HoldKey, static (original, copy) =>
     {
-        var current = Settings(weapon);
-        if (current == null || HoldCopyPointers.Contains(current.Pointer)) return;
-        if (!HoldCopies.TryGetValue((current.Pointer, _sightLookFov), out var copy))
-        {
-            var rules = Rules;
-            copy = current.MemberwiseClone().Cast<ItemFPSSettingsDataBlock>();
-            var hold = new Vector3(rules.Hold.X, rules.Hold.Y, rules.Hold.Z);
-            copy.localPosHip = current.localPosHip + hold;
-            copy.localPosRelaxed = current.localPosRelaxed + hold;
-            copy.ItemCameraFOVDefault = GunHold.HipItemFov(current.ItemCameraFOVDefault, rules);
-            if (_sightLookFov != 0) copy.LookCameraFOVZoom = _sightLookFov;
-            HoldCopies[(current.Pointer, _sightLookFov)] = copy;
-            HoldCopyPointers.Add(copy.Pointer);
-        }
-        _holdOriginal = current;
-        // The native setter resolves the recoil animation again from the copy, which names the same one.
-        weapon.SetItemFPSSettingsForGear(copy);
-        Resettle(weapon);
-    }
-
-    /// <summary>The game reads the hip position and item field of view once, when the hip state takes the wielded item (<c>FPIS_Hip.SetupWieldedItem</c>).
-    /// Settings changed while the local first-person gun already sits at the hip (a model mounted after the wield, or a mount released) would wait for the
-    /// next state change, so the hip state takes the item again.</summary>
-    private static void Resettle(ItemEquippable weapon)
-    {
-        if (!weapon.IsFirstPerson) return;
-        var holder = weapon.Owner != null ? weapon.Owner.FPItemHolder : null;
-        if (holder == null || holder.WieldedItem == null || holder.WieldedItem.Pointer != weapon.Pointer || holder.m_currentState != FPItemStateName.Hip) return;
-        holder.m_itemStates[(int)FPItemStateName.Hip].Cast<FirstPersonItem.FPIS_Hip>().SetupWieldedItem();
-    }
+        var rules = Rules;
+        var hold = new Vector3(rules.Hold.X, rules.Hold.Y, rules.Hold.Z);
+        copy.localPosHip = original.localPosHip + hold;
+        copy.localPosRelaxed = original.localPosRelaxed + hold;
+        copy.ItemCameraFOVDefault = GunHold.HipItemFov(original.ItemCameraFOVDefault, rules);
+    }, aimWorldFov: _sightLookFov);
 
     /// <summary>Once per wield, after the gun has sat at the hip for <see cref="HipSettleSeconds"/>: shoulder (upper arm bone) to each hand target against
     /// the arm's reach. The left hand is pulled back along the gun into the reach (the rule's clamp; one line for the model's author) so the hand stays
@@ -891,9 +861,6 @@ public sealed class GunMount
             WeaponSight = weapon != null ? weapon.SightLookAlign : null,
         };
         snapshot.SyncIK = WieldedSyncIK(weapon);
-        snapshot.Settings = weapon != null ? Settings(weapon) : null;
-        // A rollback gives the item the settings it had before the hold, never a held copy.
-        if (mount != null && snapshot.Settings != null && HoldCopyPointers.Contains(snapshot.Settings.Pointer)) snapshot.Settings = mount._holdOriginal;
         if (snapshot.SyncIK != null) snapshot.SyncLeftTarget = snapshot.SyncIK.m_leftArmSolver.target;
         if (mount != null)
         {
@@ -953,12 +920,8 @@ public sealed class GunMount
             Attempt(() => weapon.m_leftHandGripAlign = Live(snapshot.WeaponLeft), failures);
             Attempt(() => weapon.MuzzleAlign = Live(snapshot.WeaponMuzzle), failures);
             Attempt(() => weapon.SightLookAlign = Live(snapshot.WeaponSight), failures);
-            Attempt(() =>
-            {
-                if (snapshot.Settings == null || Settings(weapon) is not { } held || !HoldCopyPointers.Contains(held.Pointer)) return;
-                weapon.SetItemFPSSettingsForGear(snapshot.Settings);
-                Resettle(weapon);
-            }, failures);
+            // A rollback gives the item the blocks it had before the hold, never a held copy.
+            Attempt(() => HeldSettings.Restore(weapon), failures);
         }
         RestoreSyncTarget(snapshot, failures);
     }

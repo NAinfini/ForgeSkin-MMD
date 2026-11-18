@@ -5,7 +5,7 @@
 // the game's own player actions and Mixamo clips ForgeEmote converted, both on the same rig and read by the same loader.
 import { AnimationMixer, type AnimationAction, type Object3D } from 'three';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { createSkinPose } from '../../../../../../Web/src/shared/render/imported-skin-pose';
+import { createSkinPose } from '../../../../../Web/src/shared/render/imported-skin-pose';
 import { friendly } from '../errors';
 import { call } from '../protocol';
 import { useStore } from '../store';

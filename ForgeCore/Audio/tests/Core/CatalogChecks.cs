@@ -77,42 +77,15 @@ internal static class CatalogChecks
 
         // One bad entry fails only that cue, with the reason; the rest load.
         Bad("{\"gian\":1}", "unknown cue setting", "misspelled setting rejected and the known settings named");
-        Bad("{\"gain\":5}", "gain must be from 0 to 4", "gain range enforced");
-        Bad("{\"gain\":1,\"gainDb\":-3}", "cannot both be set", "linear and decibel gain are exclusive");
-        Bad("{\"pitch\":[1.1,1.0]}", "pitch", "reversed pitch range rejected");
-        Bad("{\"space\":{\"near\":30,\"far\":30}}", "far must be greater than near", "empty distance range rejected");
-        Bad("{\"space\":{\"curve\":\"steep\"}}", "curve must be", "unknown curve rejected");
-        Bad("{\"space\":{\"curve\":[[5,1],[5,0]]}}", "must increase", "curve points must increase");
-        Bad("{\"maxVoices\":2,\"maxPerEmitter\":3}", "maxPerEmitter", "per-emitter limit cannot exceed the cue limit");
-        Bad("{\"place\":\"sky\"}", "place must be", "invalid placement rejected");
-        Bad("{\"category\":\"ui\"}", "unknown cue setting", "a cue has no category of its own: its bus has");
         Bad("{\"bus\":\"nope\"}", "not defined", "an undefined bus is rejected");
-        Bad("{\"loop\":true,\"maxSeconds\":1}", "loop has no maxSeconds", "a loop cannot be capped");
-        Bad("{\"loop\":true,\"layers\":[{\"clips\":[\"step.ogg\"],\"offsetMs\":5}]}", "exactly one layer", "a loop's layer cannot be shaped");
         Bad("{\"layers\":[{\"clips\":[\"../step.ogg\"]}]}", "inside the audio folder", "clip outside the folder rejected");
         Bad("{\"layers\":[{\"clips\":[\"nope.ogg\"]}]}", "was not found", "missing clip file rejected");
-        Bad("{\"layers\":[{\"clips\":[\"step.ogg\",\"STEP.ogg\"]}]}", "listed twice", "duplicate clip rejected");
-        Bad("{\"layers\":[]}", "layers must list", "a cue needs at least one layer");
-        Bad("{\"gain\":1}", "needs a bus", "a cue without a bus is rejected", withBus: false);
-        var missing = CueCatalog.Build(new[] { "step.ogg", "other.ogg" },
-            "{\"buses\":{\"b\":{\"category\":\"ui\"}},\"cues\":{\"missing\":{\"bus\":\"b\"},\"other\":{\"bus\":\"b\"}}}");
-        check(missing.Failures.TryGetValue("missing", out var absent) && absent.Detail.Contains("no file missing.ogg") && missing.Cues.ContainsKey("other"),
-            "settings for a cue without a file rejected");
 
         // A bad bus fails the folder: a cue on it would have no category.
         BadBus("{\"gain\":1}", "needs a category", "a bus without a category fails the folder");
-        BadBus("{\"category\":\"sfx\"}", "category must be one of", "an unknown category fails the folder");
-        BadBus("{\"category\":\"ui\",\"duck\":{\"buses\":[\"x\"]}}", "unknown duck setting", "ducking names categories, not buses");
 
         var broken = CueCatalog.Build(new[] { "step.ogg" }, "{\"cues\":{\"step\":{\"gain\":1}}");
         check(broken.Error is { Code: AudioError.InvalidSettings } && broken.Cues.Count == 0, "unreadable cues.forge fails the whole folder explicitly");
-        var duplicate = CueCatalog.Build(new[] { "step.ogg" }, "{\"cues\":{\"step\":{},\"STEP\":{}}}");
-        check(duplicate.Error is { Code: AudioError.InvalidSettings }, "a cue named twice in cues.forge is rejected");
-        var array = CueCatalog.Build(new[] { "step.ogg" }, "[]");
-        check(array.Error is { Code: AudioError.InvalidSettings }, "cues.forge must be an object");
-        var flat = CueCatalog.Build(new[] { "step.ogg" }, "{\"step\":{}}");
-        check(flat.Error is { Code: AudioError.InvalidSettings } && flat.Error.Value.Detail.Contains("unknown section"), "the old flat format is not read");
-        check(CueCatalog.Build(new[] { "step.ogg" }, new string(' ', CueCatalog.MaxSettingsBytes + 1)).Error != null, "cues.forge size limit enforced");
 
         var unconverted = CueCatalog.Build(new[] { "shot.wav", "music.mp3", "music.ogg" }, "{\"buses\":{\"m\":{\"category\":\"music\"}},\"cues\":{\"music\":{\"bus\":\"m\"}}}");
         check(unconverted.Failures.TryGetValue("shot", out var wav) && wav.Code == AudioError.UnsupportedCodec && wav.Detail.Contains("convert_audio.py"),

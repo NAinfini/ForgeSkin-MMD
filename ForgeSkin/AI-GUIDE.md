@@ -58,6 +58,7 @@ await forgeAI.get('materials/0/livery')                  // one value of the doc
 | `removeLivery`, `moveLivery {by}`, `setFinish {material, finish}` | |
 | `addLayer {material, layer}`, `removeLayer` | animated layer (`kind`, `sources`, `text`, ...) |
 | `addAttachment {kind, glb?, shape?, params?, wire?, charm?}`, `removeAttachment {id}` | `kind` is `screen`, `mesh`, `shape` or `image` (next row); `mesh` imports an absolute `.glb`/`.gltf` path; `shape` adds a built-in shape as the **Shapes** menu does (a hologram in the skin's colour, or a solid charm with `charm`): `shape` is `line`, `sphere`, `ring`, `arc`, `box`, `grid`, `cylinder`, `cone`, `panel`, `hexPanel`, `reticle` or `tickArc`, `params` changes its defaults (`radius`, `width`, `height`, `depth`, `length`, `thickness` in metres; `segments`, `cells`, `ticks` as counts; `angle` in degrees; `help` and a wrong name list each shape's own), `wire` makes a box, sphere, cylinder, cone or panel a wireframe or solid. A `mesh` keeps the model's own pictures: the base colour, and where the model has them its emissive, normal and metallic-roughness pictures, go onto the attachment's material as PNGs at their own size (scaled down only past 16384, the largest texture the game makes), shown in the 3D view and in game; the attachment colour tints them, and as a hologram the base-colour picture is what glows, in the attachment colour. Returns the attachment `id` and its `textures` (channel to PNG path) |
+| `wholeGun {action, glb?}` | the whole-gun model, as **Whole gun** › **Look** › **Whole-gun model** does: `import` (an absolute `.glb`/`.gltf` path) puts the model on the receiver in place of the whole gun, hides every part of the gun and places the right and left grips, muzzle and aim point by the rule (`DEVELOPERS.md`, "Whole-gun model"); `reseat` places them again at the model's current scale; `remove` takes the model off and shows the gun's parts again. Returns `wholeGun`, the model's attachment id or null |
 | `addAttachment {kind: 'image', image, width?}` | a picture (absolute path of a png, jpg, jpeg or webp) as a hologram screen, as the menu's **Picture hologram…** does: an image plane shape (`shape` `image`, `params` `width`, `height` in metres, editable like any shape) `width` wide (default 0.03) with the picture's proportions; the picture is copied as a PNG at its own size (scaled down only past 16384) into `images/` beside the skin and becomes the attachment's base-colour picture, shown as the hologram's glow; colour white. Fails with `bad-image` when the file is not a readable picture |
 | `addHoloSet {set}` | a matching set of hologram shapes placed from the open item's parts, as **Hologram sets** does: `sight` (a tick arc and a ring in front of the sight on its aim line), `barrel` (three tick rings at the barrel's end, smaller towards and past the muzzle), `strip` (a wire panel and two bars on the receiver's left side). One line width, tick length, colour fade, flicker and edge glow; each element is an ordinary shape attachment named `<set> · <shape>`. Edge glow costs one code effect per element: when the skin has too few of its 8 left the set comes without it (`outline: false`). Returns `ids` |
 | `placeOnSurface {id, view: [x, y]}` or `{id, point, normal, up?}` | lays an attachment flush on the gear as a click in the **Snap to surface** mode does: its back on the surface plus the gap (a screen's own, else 0.5 mm), its face along the normal. `view` is a point of the 3D view (0..1 across and down; the image's top follows the camera's up, attachments are not hit); `point` and `normal` are world coordinates, `up` the direction the top points to (default world +Y). Fails with `no-hit` when no gear is under `view`. Returns `position`, `rotation`, `worldPoint`, `worldNormal`, `part` |
@@ -130,8 +131,8 @@ Escape. Controls are found by accessible name (`aria-label`, or the button text)
 | Status bar | Log button, hot-reload state (game running: an apply shows within seconds; game closed: next start), busy text, `Autosaved`, undo and redo (**Undo · Ctrl+Z**, **Redo · Ctrl+Y**) | always visible |
 
 Right-edge tabs by selection: the whole gun (row **Whole gun** at the top of the part tree, also what a newly opened work
-selects: **Look** with the whole-gun texture folder, **Colour schemes** and player colours, **Sounds**, **Info** with
-the counts and **Keep missing parts and channels as they are**); a part (**Textures**, **Livery**, **Layers**,
+selects: **Look** with the whole-gun texture folder, **Colour schemes** and player colours, **Sight** on main and
+special weapons, **Sounds**, **Info** with the counts and **Keep missing parts and channels as they are**); a part (**Textures**, **Livery**, **Layers**,
 **Attach**, **Place**, **Sounds**); an attachment (**Place**, **Look**, **Screen**, **Effects**, **Sounds**).
 
 Part rows, layer rows and attachment rows are `role="option"` elements that carry `aria-selected`; skin cards are
@@ -293,6 +294,12 @@ Each step lists the control and what tells you it worked.
   lacks, a value out of range or a wrong target fails the pack with `bad-fx-program`, `bad-fx-value`, `bad-fx-target`,
   `bad-fx-tweak` or `bad-trigger`. The pack needs no file for a code effect. What players change is stored
   on their computer, never in the pack; the Skins formats cannot carry code effects (the export report lists them).
+- **Sight** (`sight` in the document): a game lens on the skin's own model. `lens` is `{attachment}` (an attachment with a
+  model), `{part, path}` (that node's meshes) or a pane `{part, path, size: [w, h], position, rotation}` (metres, Unity
+  space, under that node); `style` and `zoom` are game sight part ids (the backend method `sights.list` lists them with their
+  fields of view). The lens's reticle is the material override `sight:lens`, set like a game lens's reticle (`params.reticles`,
+  `reticleA`..`reticleC`) and nothing else. Set it with `patch` on `sight` or through the **Sight** tab; a bad combination fails
+  the pack with `bad-sight`.
 - What an agent can generate directly: the image files that go into texture slots and decals, and audio files. Hand-editing a
   pack or the autosave bypasses the editor's checks and bake step; make changes in the editor instead.
 

@@ -5,13 +5,13 @@ import { fileURLToPath } from 'node:url';
 const forgeVisual = fileURLToPath(new URL('../../ForgeCore/Visual', import.meta.url));
 // The 人物模型 tab matches bones with the site's own matcher and canonical rig and converts models with the site's own converter
 // (Web/src/forge, Web/src/generated/rig) and plays moves with the site's pose copy (Web/src/shared/render); the converter's libraries
-// and three are this app's own declared copies (dedupe; tsconfig maps three's types the same way).
-const site = fileURLToPath(new URL('../../../Web/src', import.meta.url));
+// and three, i18next and zod are this app's own declared copies: every package Web/ imports is declared in package.json, resolved from here by dedupe for the bundle and by tsconfig paths for the type check (export-mirror.ps1 fails when Web/ imports one that package.json does not declare).
+const site = fileURLToPath(new URL('../../Web/src', import.meta.url));
 // The dev server starts at 5190 (FORGESKIN_DEV_PORT overrides it), leaving 5173 to other programs; a taken port moves on to the next free one.
 const port = Number(process.env.FORGESKIN_DEV_PORT) || 5190;
 export default defineConfig({
   plugins: [react()],
-  resolve: { dedupe: ['@gltf-transform/core', '@gltf-transform/extensions', 'fast-png', 'three'] },
+  resolve: { dedupe: ['@gltf-transform/core', '@gltf-transform/extensions', 'fast-png', 'i18next', 'three', 'zod'] },
   worker: { format: 'es' },
   // A development run keeps its data in GTFO_UserData inside this folder (main/dataDir.ts). The dev server does not watch it: its
   // watch holds every folder there open, so a work's folders could not be moved to the Recycle Bin (project.delete, work-in-use).

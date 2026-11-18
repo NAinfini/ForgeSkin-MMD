@@ -27,6 +27,9 @@ public sealed class SkinDocument
     // A gun skin's hand shapes; null: the gun's own.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public HandShapes? Hands { get; set; }
+    // A gun skin's sight on its own model (PLAN §4.15); null: the gun's own.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Sight? Sight { get; set; }
     // Live code effects (CodeEffect.cs); null: none.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<CodeEffect>? CodeEffects { get; set; }
@@ -163,6 +166,43 @@ public sealed class HandShapes
     public float[][]? RightFingers { get; set; }
 }
 
+// A sight on the skin's own model, the game's way (PLAN §4.15). Style is a vanilla sight part (GearSightPartDataBlock persistentID)
+// whose flat lens material the lens is drawn with (Unlit/HolographicSight_3Layers through ForgeCore SightLenses), so it projects the
+// reticle layers the game does; the override named LensMaterial changes them like a game lens's (Textures ReticleA..C,
+// Params.Reticles). Zoom is a vanilla sight part (iron sights included) whose aim fields of view (SightProperties GearFovZoom,
+// WorldFovZoom) the gun takes while the local player holds it. Either may be set alone. The aim point is the gun's Sight_Align,
+// laid out like any part node (Parts).
+public sealed class Sight
+{
+    public const string LensMaterial = "sight:lens";
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public uint? Style { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public SightLens? Lens { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public uint? Zoom { get; set; }
+}
+
+// Where the lens is: the model of an attachment (Attachment), the own model of a part node (Part and Path, as PartTransform names
+// them), or, with Size, a new flat pane under that part node at Position and Rotation (local, metres and Euler degrees, null: zero),
+// Size[0] wide and Size[1] high in metres about its centre, its front toward the node's -Z (the eye behind the gun).
+public sealed class SightLens
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Attachment { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Part { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Path { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float[]? Size { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float[]? Position { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float[]? Rotation { get; set; }
+}
+
 // Layout of a vanilla part root or a child under it, as absolute local values (Unity space, metres, Euler degrees).
 // Every value is optional: null keeps what the game built. Written once when the gear finishes assembling, so applying
 // it again changes nothing. Visible = false disables the renderers at and under the transform.
@@ -190,7 +230,7 @@ public static class TextureChannels
     public static bool IsReticle(this TextureChannel c) => c is TextureChannel.ReticleA or TextureChannel.ReticleB or TextureChannel.ReticleC;
 
     // A reticle channel's layer letter, as the shader names the layer's properties: _Reticule<L>, _ReticuleColor<L>,
-    // _ReticuleScale<L>, _ReticuleOffset<L>, _Fade<L>.
+    // _ReticuleScale<L>, _ReticuleOffset<L>.
     public static string Layer(this TextureChannel c) => c switch
     {
         TextureChannel.ReticleA => "A",
@@ -414,7 +454,7 @@ public sealed class MaterialParams
 // ForgeVisual.ColourSpace.Glow(Color, Intensity) in _ReticuleColor<L> (Intensity is what white takes in that property's units;
 // MaterialParams.GlowFromGame's colour space without the emission unit), the colour's alpha kept; Intensity alone scales the
 // game's colour. Scale and Offset are the shader's _ReticuleScale<L> and _ReticuleOffset<L> (Offset is the layer's projection
-// depth, not a shift); Visible is _Fade<L> (1 drawn, 0 not).
+// depth, not a shift); Visible = false writes _ReticuleColor<L> as black (the reticle is added by colour; the shader's _Fade<L> is not used).
 public sealed class Reticle
 {
     public float[]? Color { get; set; }

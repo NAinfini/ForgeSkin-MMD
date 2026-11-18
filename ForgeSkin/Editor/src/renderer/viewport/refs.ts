@@ -116,13 +116,14 @@ function otherPart(part: string, o: Object3D): boolean {
 }
 
 /**
- * Meshes that hiding `obj` (a transform of `part`) hides, as the plugin does: every mesh under it, attachments included,
- * down to another part's root (a sight on the receiver's mount belongs to the sight and hides only from its own row).
+ * Meshes that hiding `obj` (a transform of `part`) hides, as the plugin does: the game's meshes under it, down to another
+ * part's root (a sight on the receiver's mount belongs to the sight and hides only from its own row). The skin's attachments
+ * have their own visibility (a whole-gun model hangs on a hidden part).
  */
 export function hiddenMeshes(part: string, obj: Object3D): Mesh[] {
   const out: Mesh[] = [];
   const walk = (o: Object3D) => {
-    if (o !== obj && otherPart(part, o)) return;
+    if (o !== obj && (otherPart(part, o) || o.name.startsWith('attachment:'))) return;
     if ((o as Mesh).isMesh && !o.userData.sfUnmapped && !o.userData.sfExtraAmmo) out.push(o as Mesh);
     o.children.forEach(walk);
   };

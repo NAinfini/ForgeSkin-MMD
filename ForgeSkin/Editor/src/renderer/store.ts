@@ -14,6 +14,7 @@ import {
   type EnemyInfo,
   type GameInfo,
   type InstalledPack,
+  type InstallNote,
   type MatchCell,
   type MatchResult,
   type MaterialOverride,
@@ -52,6 +53,8 @@ export type Selection =
   | { kind: 'livery'; material: string; id: string }
   | { kind: 'sound'; id: string }
   | { kind: 'fx'; id: string }
+  /** The sight's lens pane (sight.ts), moved and sized with the gizmo; one per gun, so its id is fixed. */
+  | { kind: 'lens'; id: 'lens' }
   | null;
 
 const selectionKey = (s: Selection) => JSON.stringify(s?.kind === 'part' ? { ...s, sub: s.sub ?? null } : s);
@@ -286,6 +289,8 @@ interface State {
   log(line: string): void;
   toast(kind: NotifyKind, text: string, action?: NotifyAction): void;
   fail(e: unknown, fallback?: string): void;
+  /** A plugin install's note or BepInEx's verdict on the plugins: the full account to app.log, the short message to the log panel and a toast. */
+  report(kind: NotifyKind, note: InstallNote): void;
   setPrefs(p: Partial<Prefs>): void;
   select(s: Selection): void;
   setHover(h: Selection): void;
@@ -350,7 +355,7 @@ interface State {
 
   // attachments
   /** `init` finishes the new attachment in the same undo step (a shape's name, look and parameters). */
-  addAttachment(kind: 'screen' | 'mesh', mesh?: { forgeskinmesh: string; glb: string }, init?: (a: Attachment, editor: Record<string, unknown>) => void, id?: string): void;
+  addAttachment(kind: 'screen' | 'mesh', mesh?: { forgeskinmesh: string; glb: string }, init?: (a: Attachment, editor: Record<string, unknown>, doc: SkinDocument) => void, id?: string): void;
   updateAttachment(id: string, fn: (a: Attachment) => void, coalesceKey?: string): void;
   removeAttachment(id: string): void;
   /** Converts the picked audio file to Ogg next to the project and adds it as a sound of the event (and, for a kill, the
@@ -525,6 +530,12 @@ export const useStore = create<State>((set, get) => ({
     window.forge.appLog('error', detail(e));
     get().log(text);
     get().toast('error', text);
+  },
+  report(kind, note) {
+    window.forge.appLog(`install ${note.code}`, note.detail);
+    const text = t(`install.${note.code}`, { ...note.args, defaultValue: '' });
+    get().log(text);
+    get().toast(kind, text);
   },
 
   setPrefs(p) {
@@ -1006,7 +1017,7 @@ export const useStore = create<State>((set, get) => ({
         const ed = d.editor as Record<string, unknown>;
         ed.meshPreviews = { ...((ed.meshPreviews as Record<string, string>) ?? {}), [id]: mesh.glb };
       }
-      init?.(d.attachments!.at(-1)!, d.editor as Record<string, unknown>);
+      init?.(d.attachments!.at(-1)!, d.editor as Record<string, unknown>, d);
     });
     set({ selection: { kind: 'attachment', id } });
   },
@@ -1018,8 +1029,7 @@ export const useStore = create<State>((set, get) => ({
   },
   removeAttachment(id) {
     get().edit((d) => {
-      d.attachments = d.attachments!.filter((x) => x?.id !== id);
-      d.materials = d.materials!.filter((m) => m?.material !== attachmentMaterial(id)); // the paint on its model
+      dropAttachment(d, id);
     });
     set({ selection: null });
   },
@@ -1173,8 +1183,14 @@ export const partMeshKey = (part: string, path?: string | null) => `${part}/${pa
 
 setLang(useStore.getState().prefs.lang ?? systemLang());
 
+/** Takes attachment `id` out of `d` with the paint on its model. */
+export function dropAttachment(d: SkinDocument, id: string) {
+  d.attachments = d.attachments!.filter((x) => x?.id !== id);
+  d.materials = d.materials!.filter((m) => m?.material !== attachmentMaterial(id));
+}
+
 /** An entry that keeps every game value says nothing; leave it out. */
-function dropEmptyParts(d: SkinDocument) {
+export function dropEmptyParts(d: SkinDocument) {
   d.parts = d.parts!.filter((t) => t && (t.position != null || t.rotation != null || t.scale != null || t.visible != null || t.mesh != null));
 }
 

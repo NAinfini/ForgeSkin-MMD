@@ -12,7 +12,7 @@ ForgeSkin is two things:
 ## What you need
 
 - GTFO installed. The editor finds the game by itself; if it does not, the 3D view asks for the game folder (the one with `GTFO.exe`).
-- An r2modman profile with **BepInExPack_GTFO** in it. The ForgeSkin plugin and the ForgeCore it needs are installed by the editor the first time you click **Apply** on a work's card; you don't download them yourself. When the profile already has a ForgeSkin or ForgeCore from r2modman that is newer than the editor's, the editor leaves it as it is, says so once and installs the skin as usual.
+- An r2modman profile with **BepInExPack_GTFO** and **GTFO-API** in it (your mod manager installs those). The ForgeSkin plugin and the ForgeCore it needs are installed by the editor the first time you click **Apply** on a work's card; you don't download them yourself. When the profile already has a ForgeSkin or ForgeCore from r2modman that is newer than the editor's, the editor leaves it as it is, says so once and installs the skin as usual.
 
 ## Good to know
 
@@ -466,6 +466,17 @@ Select the sight part and pick its lens material (only a holographic lens has th
 
 The 3D view draws the three layers on the lens with these values (depth is not shown there). In game only you see it, when you aim down the sight; teammates with the same skin never look through your lens.
 
+## A sight on your own model {#sight}
+
+A model you imported (a replaced part or an attachment) can be a sight too, with the game's own lens, reticle and zoom. Select **Whole gun** and click **Sight** on the right edge. Four sections:
+
+- **Lens**: **Pick from model**, then click the lens mesh in the 3D view (clicking an attachment uses the whole attachment); when the model has no separate lens mesh, **Add a lens** puts a small pane in front of the aim point, which you place and size with **Move and size**. **Lens style** picks a game sight whose lens it looks like. **Remove lens** takes it off.
+- **Reticle**: the same as the sight reticle above, starting with the chosen style's reticle.
+- **Zoom**: one of the game sights' zoom steps, used when you aim in game; **Unchanged** keeps the gun's own. It works without a lens too.
+- **Aim**: **Aim preview** looks out from the aim point at the chosen zoom, to check that the reticle is centred and the sight body does not block the view; click again to leave. **Line up with lens** moves the aim point right behind the lens; **Select aim point** lets you drag it yourself.
+
+Teammates see the lens on your gun; the zoom is only in your own view.
+
 ## Paint in another program
 
 The **Publish** menu has **Export OBJ model (by part)…**, **Export OBJ model (merged)…** and **Export UV templates…**. Paint on the OBJ in Substance Painter or Blender, or over the UV template in an image editor, then drop the result back in.
@@ -891,7 +902,11 @@ A new attachment mounts just above the selected part; **Mount** → **On part** 
 
 ## Change a part itself
 
-A part's [Place](editor:place) tab moves, turns, scales or hides the part (**Hide (also in game)**); **Reset all** and **Restore original** put it back. A part with its own model shows **Replace model…** under **Attach** → **Model**: your .glb replaces only that part's model; child parts stay, textures and materials still apply, and position, rotation and scale stay editable. **Restore original model** undoes it.
+A part's [Place](editor:place) tab moves, turns, scales or hides the part (**Hide (also in game)**); **Reset all** and **Restore original** put it back. A part with its own model shows **Replace model…** under **Attach** → **Model**: your .glb replaces only that part's model; child parts stay, textures and materials still apply, and position, rotation and scale stay editable. **Restore original model** undoes it. Hiding a part hides only the game's own model; your attachments on it stay visible.
+
+## Whole-gun model
+
+The look page of a main or special weapon starts with **Whole-gun model**. **Import whole-gun model** takes one .glb (muzzle to the front as glTF expects, which is -Y in Blender before export) that replaces the whole gun: every part of the original gun is hidden, the model hangs on the receiver, and the right hand, left hand, muzzle and sight line are placed for you; drag them in 3D afterwards. Nodes named `RightHand`, `LeftHand`, `muzzle` and `SightLook` in the model are used as they are; a hand without its node goes where that hand sits within the original gun's bounds, at the same share of the model's bounds; without muzzle and sight nodes, the original gun's are kept. The model is an ordinary attachment you can scale and paint under **Attach**; after changing its size, press **Place again**. **Remove whole-gun model** brings back the original parts and hold points. The sight page's pick-from-model also works on the whole-gun model, to place a lens on it.
 
 The **Grip and aim** group at the end of the parts list has this gun's right-hand grip, left-hand grip, muzzle and aim line. The game puts both hands on the grip points, shots leave from the muzzle point, and aiming looks along the aim line; when resizing or moving parts leaves the hands off the gun or the aim off, click a row and drag that point into place in the 3D view (while one is selected all four show as coloured dots, the muzzle and the aim line with a line along their direction, and the game's own hand is drawn on each grip point: its wrist on the point, its fingers the way that hand holds this gun). The arrow on a row puts it back where the game has it. Points this gun does not have are not listed. Under the grip points, **Right hand shape** and **Left hand shape** change how the fingers hold: pick the grip of another of the game's guns (listed by the guns that use it), and the hand stays on this gun's grip point. Only you see a hand shape, in first person. While a grip point is selected, every finger segment of that hand has a dot at its far end in the 3D view: drag a dot and the segment turns about its joint to follow the pointer; click a dot and rings appear on its joint, to turn the segment about any axis (to twist it, say). A hand whose fingers were moved gets a **Fingers** row under its grip point, and the arrow on it puts all its fingers back on the hand shape; every step can be undone. You and other players both see the finger changes; while the gun reloads the hands go to the magazine, so the changes fade out and come back afterwards.
 
@@ -1144,15 +1159,21 @@ The hips have no bone yet. Open **Bones**, click the red hips and pick a bone, u
 - A character installed while the game runs shows from the next level.
 - Teammates without your character mod, or with another version of it, see the original character.
 
-## "The plugin files the editor installs are missing"
+## "The editor's own plugin files are missing"
 
-The editor carries the plugin it installs into your profile. This message means those files are missing from the editor itself; it names each missing file with its full path. Fix it by how you run the editor:
+The editor carries the plugin it installs into your profile. This message means those files are missing from the editor itself; the full path of each missing file is in the editor log (`logs/backend.log` in the data folder, which Settings opens). Fix it by how you run the editor:
 
 | How you run it | Fix |
 | --- | --- |
 | Installed (Setup.exe) | Run the latest Setup.exe again. The plugin sits in the install folder under `app-<version>\resources\publish\plugin`; your data folder (`Documents\ForgeSkin`) is not touched. |
 | Portable zip | Unzip the whole zip again over the same folder. `resources\publish\plugin\ForgeSkin\ForgeSkin.Plugin.dll` and `resources\publish\plugin\ForgeCore\ForgeCore.dll` must be there; `GTFO_UserData` next to the program is kept. |
-| From the source code | The editor run from source installs a plugin only when you ask: **Build the plugin from source and install it** in the profile menu, or **Apply** when the profile's plugin is missing or out of date; either builds the plugin from the checkout first. The first time, run `pwsh Mods/ForgeSkin/tools/build-editor-release.ps1 -PluginOnly -ForgeCore <NAinfini-ForgeCore zip>` (the ForgeCore zip of the release set) once from the repository root; later builds reuse that ForgeCore zip. If it fails, the reason is usually the BepInEx profile path: pass `-BepInEx <profile>/BepInEx` or set `GTFO_BEPINEX_PATH`. |
+| From the source code | The editor run from source installs a plugin only when you ask: **Build the plugin from source and install it** in the profile menu, or **Apply** when the profile's plugin is missing or out of date; either builds ForgeSkin and ForgeCore from the checkout first, with nothing to package beforehand. If it fails, the reason is in the `plugin stage` entry of `logs/app.log` in the data folder, usually the BepInEx profile path: set `GTFO_BEPINEX_PATH` to `<profile>/BepInEx`. |
+
+## "ForgeCore did not load" and "a second copy"
+
+The editor looks after two mods only, ForgeCore and ForgeSkin; BepInEx and GTFO-API come from your mod manager. When it installs the plugin, each of the two ends up as a single copy where the mod manager puts it (`BepInEx/plugins/NAinfini-ForgeCore/ForgeCore/`, `BepInEx/plugins/NAinfini-ForgeSkin/ForgeSkin/`); a copy anywhere else goes to the Recycle Bin and the editor says so. Take it back from there if you wanted it.
+
+When the editor opens, when you switch profiles, and after the game starts or closes, it reads the profile's BepInEx log `LogOutput.log` (it never writes to it). If BepInEx refused ForgeCore or ForgeSkin, a message in the bottom right says why and what to do, for example "ForgeCore did not load: GTFO-API is missing or too old. Update it to 0.6.1 or newer in your mod manager." The full log line, paths and versions are in the editor log. Fix it in the mod manager, then start the game again.
 
 ## The log
 

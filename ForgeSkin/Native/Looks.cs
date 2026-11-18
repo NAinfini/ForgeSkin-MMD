@@ -353,28 +353,28 @@ static class Looks
             var slots = _session && SNet.IsMaster && Skins.Enabled && SNet.Slots != null ? SNet.Slots.PlayerSlots.Length : 0;
             var rows = new List<(byte Slot, byte[] Look)>();
             for (var slot = 0; slot < slots; slot++)
+            {
+                if (SNet.Slots!.GetPlayerInSlot(slot) is not { IsBot: true } player) continue;
+                var look = new Look();
+                if (BotPick(slot, CharacterSkin.Target) is { } person)
                 {
-                    if (SNet.Slots!.GetPlayerInSlot(slot) is not { IsBot: true } player) continue;
-                    var look = new Look();
-                    if (BotPick(slot, CharacterSkin.Target) is { } person)
-                    {
-                        if (person.ContentHash() is not { } own) return; // read on a worker: written within a second
-                        look.Character = new LookSkin { Skin = person.Number, Hash = own, Pack = person.Pack };
-                        Look.Tweaks(person.Doc, Skins.ColoursOf(person.Doc.Id), look.Character.Tweaks);
-                    }
-                    if (PlayerBackpackManager.TryGetBackpack(player, out var backpack) && backpack != null)
-                        foreach (var gearSlot in SkinnedGear.GearSlots)
-                        {
-                            if (!backpack.TryGetBackpackItem(gearSlot, out var item) || item?.GearIDRange is not { } range) continue;
-                            var id = SkinnedGear.GearIdOf(range);
-                            if (id == 0 || BotPick(slot, SkinTarget.GearKey(id)) is not { } skin) continue;
-                            if (skin.ContentHash() is not { } hash) return;
-                            var gear = new LookGear { GearId = id, Skin = skin.Number, Hash = hash, Pack = skin.Pack };
-                            Look.Tweaks(skin.Doc, Skins.ColoursOf(skin.Doc.Id), gear.Tweaks);
-                            look.Gear.Add(gear);
-                        }
-                    if (look.Character != null || look.Gear.Count > 0) rows.Add(((byte)slot, look.Encode()));
+                    if (person.ContentHash() is not { } own) return; // read on a worker: written within a second
+                    look.Character = new LookSkin { Skin = person.Number, Hash = own, Pack = person.Pack };
+                    Look.Tweaks(person.Doc, Skins.ColoursOf(person.Doc.Id), look.Character.Tweaks);
                 }
+                if (PlayerBackpackManager.TryGetBackpack(player, out var backpack) && backpack != null)
+                    foreach (var gearSlot in SkinnedGear.GearSlots)
+                    {
+                        if (!backpack.TryGetBackpackItem(gearSlot, out var item) || item?.GearIDRange is not { } range) continue;
+                        var id = SkinnedGear.GearIdOf(range);
+                        if (id == 0 || BotPick(slot, SkinTarget.GearKey(id)) is not { } skin) continue;
+                        if (skin.ContentHash() is not { } hash) return;
+                        var gear = new LookGear { GearId = id, Skin = skin.Number, Hash = hash, Pack = skin.Pack };
+                        Look.Tweaks(skin.Doc, Skins.ColoursOf(skin.Doc.Id), gear.Tweaks);
+                        look.Gear.Add(gear);
+                    }
+                if (look.Character != null || look.Gear.Count > 0) rows.Add(((byte)slot, look.Encode()));
+            }
             byte[]? bytes = null;
             if (rows.Count > 0)
             {

@@ -110,7 +110,7 @@ public sealed class SkinPack : IDisposable
             throw new SkinFormatException("no-id", "Skin id is empty");
         bool character = doc.Target.Weapon == CharacterSkin.Target;
         if (character != (doc.Character != null) || character && (doc.Target.GearId != null || doc.Target.ItemId != null
-            || doc.Materials.Count > 0 || doc.Attachments.Count > 0 || doc.Parts.Count > 0 || doc.Sounds.Count > 0 || doc.CodeEffects is { Count: > 0 }))
+            || doc.Materials.Count > 0 || doc.Attachments.Count > 0 || doc.Parts.Count > 0 || doc.Sounds.Count > 0 || doc.CodeEffects is { Count: > 0 } || doc.Sight != null))
             throw new SkinFormatException("bad-character-target", $"a character skin has the target {CharacterSkin.Target} and its character only, nothing of a gear");
         if (!character && doc.Target.Weapon != null && (doc.Target.GearId == null) == (doc.Target.ItemId == null))
             throw new SkinFormatException("no-gear", $"Weapon {doc.Target.Weapon} needs exactly one of a gear id and an item id");
@@ -247,6 +247,36 @@ public sealed class SkinPack : IDisposable
                 File(a.Screen.TextMesh, a.Id, mesh: true);
                 File(a.Screen.BorderMesh, a.Id, mesh: true);
             }
+        }
+
+        // The sight: a lens needs its style and exactly one place, a pane its size; the lens look's override needs a lens. Whether the
+        // ids are sight parts of the game is the plugin's to see (skin-sight-skipped).
+        if (doc.Sight is { } sight)
+        {
+            static void BadSight(string why) => throw new SkinFormatException("bad-sight", $"sight: {why}");
+            if (sight.Lens == null && sight.Zoom == null) BadSight("neither a lens nor a zoom");
+            if (sight.Zoom == 0 || sight.Style == 0) BadSight("a style or zoom is a sight part id above 0");
+            if (sight.Lens is { } lens)
+            {
+                if (sight.Style == null) BadSight("a lens needs a style");
+                if ((lens.Attachment == null) == string.IsNullOrWhiteSpace(lens.Part)) BadSight("a lens is on exactly one of an attachment and a part");
+                if (lens.Attachment != null && (lens.Size != null || lens.Path != null || !doc.Attachments.Exists(a => a.Id == lens.Attachment && a.Mesh != null)))
+                    BadSight($"attachment {lens.Attachment} is no attachment with a model, or the lens names a node or size on it");
+                if (lens.Size != null && (lens.Size.Length != 2 || !lens.Size.All(v => float.IsFinite(v) && v > 0))) BadSight("a pane's size is two finite numbers above 0");
+                if (lens.Size == null && (lens.Position != null || lens.Rotation != null)) BadSight("only a pane has a position and rotation");
+                Vec(lens.Position, 3, "sight lens");
+                Vec(lens.Rotation, 3, "sight lens");
+            }
+            else if (sight.Style != null) BadSight("a style needs a lens");
+        }
+        if (doc.Materials.Find(m => m.Material == Sight.LensMaterial) is { } lensLook)
+        {
+            if (doc.Sight?.Lens == null) throw new SkinFormatException("bad-sight", $"{Sight.LensMaterial}: the lens look needs a lens");
+            // The lens is the game's lens material: only its reticles change (the plugin reads nothing else of this override).
+            var p = lensLook.Params;
+            if (lensLook.Textures.Keys.Any(c => !c.IsReticle()) || lensLook.Layers.Count > 0 || lensLook.Finish != null || lensLook.Livery is { Count: > 0 }
+                || p.EmissiveEnabled != null || p.EmissiveColor != null || p.EmissiveIntensity != null || p.Metallic != null || p.Smoothness != null || p.Tint != null)
+                throw new SkinFormatException("bad-sight", $"{Sight.LensMaterial}: the lens look carries reticles only");
         }
 
         if (doc.Picture != null) File(doc.Picture, "picture", image: true);

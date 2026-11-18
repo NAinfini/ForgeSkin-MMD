@@ -33,6 +33,8 @@ export type Finish = NonNullable<MaterialOverride['finish']>;
 export type PlayerColor = NonNullable<NonNullable<SkinDocument['playerColors']>[number]>;
 export type ColorSlot = NonNullable<NonNullable<PlayerColor['slots']>[number]>;
 export type CodeEffect = NonNullable<NonNullable<SkinDocument['codeEffects']>[number]>;
+export type Sight = NonNullable<SkinDocument['sight']>;
+export type SightLens = NonNullable<Sight['lens']>;
 
 /** Game events in the order the UI lists them; `simulate` ones get a preview button in the 3D view. */
 export const TRIGGERS: { value: Trigger; label: string; simulate?: boolean }[] = [
@@ -218,6 +220,17 @@ export interface EnemyInfo {
   nameZh: string;
 }
 
+/** One of the game's sight parts for the sight group (Backend Sights.cs): its aim fields of view (0: the gun's own) and, when it
+ *  has a flat holographic lens, that lens's material and the catalog sight item whose preview shows it. */
+export interface SightInfo {
+  id: number;
+  name: string;
+  gear: number;
+  world: number;
+  item: string | null;
+  lens: string | null;
+}
+
 /** The events that can happen on `item` (all of them when unknown). */
 export function triggersFor(item: { slot: Slot; id: string; itemId?: number | null } | null | undefined) {
   if (item?.itemId != null) return ITEM_TRIGGERS;
@@ -375,6 +388,24 @@ export interface MeshImport {
   emissive: { color: number[]; intensity: number } | null;
   /** Sizes of the pictures kept, and what was left out. */
   notes: string[];
+  /** The model's gun sockets by hold point (RightHand, LeftHand, muzzle, SightLook nodes; Unity space, its own size). */
+  sockets: Partial<Record<HoldPoint, number[]>>;
+}
+
+/** The whole-gun model's seat (backend GunSwap): in the gear's frame, Unity space. Muzzle and sight are null where the gun's stay. */
+export interface GunSeat {
+  scale: number;
+  origin: number[];
+  /** The model's turn (Unity Euler degrees): its glTF front down the bore. */
+  rotation: [number, number, number];
+  rightHand: number[];
+  leftHand: number[];
+  muzzle: number[] | null;
+  sight: number[] | null;
+  shownLength: number;
+  lengthMin: number;
+  lengthMax: number;
+  sockets: HoldPoint[];
 }
 
 /** A skin project on disk (`project.list`). */
@@ -464,6 +495,14 @@ export interface BackendError {
   message: string;
 }
 
+/** Something a plugin install did or BepInEx said about the plugins (Backend InstallNote): `code` and `args` make the short
+ * message (locale key `install.<code>`), `detail` is the full account for the log. */
+export interface InstallNote {
+  code: 'plugin-copy-removed' | 'load-missing-dependency' | 'load-missing-dependency-any' | 'load-incompatible' | 'load-duplicate' | 'load-dependency-failed' | 'load-refused';
+  args: Record<string, string>;
+  detail: string;
+}
+
 export interface Progress {
   id: number;
   done: number;
@@ -497,6 +536,7 @@ export interface Methods {
   'profiles.remove': [{ path: string }, unknown];
   'catalog.get': [Record<string, never>, { items: CatalogItem[] }];
   'enemies.list': [Record<string, never>, { enemies: EnemyInfo[] }];
+  'sights.list': [Record<string, never>, { sights: SightInfo[] }];
   'preview.weapon': [{ id: string }, WeaponPreview];
   'preview.hands': [Record<string, never>, GameHands];
   'match.folder': [{ weaponId: string; folder: string }, MatchResult];
@@ -513,6 +553,20 @@ export interface Methods {
   'project.missing': [{ project: SkinDocument }, { files: string[] }];
   'project.files': [{ project: SkinDocument }, { files: string[] }];
   'mesh.import': [{ glb: string }, MeshImport];
+  'gun.seat': [
+    {
+      native: {
+        rightHand: { at: number[]; rotation: number[] };
+        leftHand: { at: number[]; rotation: number[] };
+        muzzle: number[] | null;
+        sight: number[] | null;
+        bounds: { min: number[]; max: number[] };
+      };
+      model: { sockets: Partial<Record<HoldPoint, number[]>>; bounds: { min: number[]; max: number[] } };
+      scale: number | null;
+    },
+    GunSeat,
+  ];
   /** A charm moved by the game's own rope along the hanging point's path, one result frame per input frame; vertices and normals
    * are base64 little-endian float32 in the hanging point's frame, the pendant a world pose (xyz, quaternion xyzw). */
   'charm.simulate': [
@@ -609,7 +663,8 @@ export interface Methods {
   'assets.restore': [{ skinId?: string; discardStale?: boolean }, { restored: string[]; skipped: { file: string; reason: string }[]; stale: StaleAssets[] }];
   'assets.status': [Record<string, never>, AssetStatus];
   'assets.export': [{ pack: string; out: string }, { zip: string; buildId: string; files: string[]; warnings: string[] }];
-  'plugin.install': [{ profile: string }, unknown];
+  'plugin.install': [{ profile: string }, { installed: string; replaced: string[]; newer: string[]; notes: InstallNote[]; version: string | null }];
+  'plugin.loadCheck': [{ profile: string }, { log: string; notes: InstallNote[] }];
   'plugin.log': [{ profile: string; since?: string; from?: number; head?: string }, { lines: { time: string; level: 'info' | 'warn'; message: string }[]; next: number; head: string; reset: boolean }];
   'plugin.uninstall': [{ profile: string }, unknown];
   'export.obj': [{ weaponId: string; parts: string[]; mode: 'separate' | 'merged'; outDir: string }, { dir: string; files: string[] }];

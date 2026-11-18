@@ -23,6 +23,15 @@ public sealed class GameFactAttribute : FactAttribute
     }
 }
 
+// Local-resource layer: needs the plugin the editor ships, staged in a checkout by build-editor-release.ps1 -PluginOnly.
+public sealed class PluginFactAttribute : FactAttribute
+{
+    public PluginFactAttribute()
+    {
+        if (Install.ShippedVersion() == null) Skip = "needs the staged plugin (Mods/ForgeSkin/tools/build-editor-release.ps1 -PluginOnly), not run";
+    }
+}
+
 public class GameTests
 {
     static JsonNode Call(string method, object? args = null) =>
@@ -131,6 +140,34 @@ public class GameTests
         var repick = JsonNode.Parse(File.ReadAllText(Directory.GetFiles(skins, "*" + SkinPack.PickExtension).Single()))!;
         Assert.Equal(("gear:45", "skin-flow-test"), ((string)repick["target"]!, (string)repick["skin"]!));
         Assert.True((bool)Call("pack.list", new { profile }).AsArray().Single()!["inUse"]!);
+    }
+
+    // Install contract (PLAN §4.5), local-resource layer: needs the staged plugin (build-editor-release.ps1 -PluginOnly), else "not run".
+    // A profile holding ForgeSkin in the editor's former folder ends with one copy of each package at its mod manager home and
+    // is current; then BepInEx's refusal of ForgeCore for an old GTFO-API, read from LogOutput.log, is the missing-dependency note.
+    [PluginFact]
+    public void PluginInstall()
+    {
+        var profile = Directory.CreateTempSubdirectory("sf-plugin-").FullName;
+        var core = Directory.CreateDirectory(Path.Combine(profile, "BepInEx", "core")).FullName;
+        File.WriteAllText(Path.Combine(core, "BepInEx.Unity.IL2CPP.dll"), "");
+        var former = Directory.CreateDirectory(Game.PluginDir(profile)).FullName;
+        File.WriteAllText(Path.Combine(former, "ForgeSkin.Plugin.dll"), "an older editor's copy");
+
+        var install = Call("plugin.install", new { profile });
+        Assert.Empty(install["notes"]!.AsArray());
+        Assert.False(File.Exists(Path.Combine(former, "ForgeSkin.Plugin.dll")));
+        foreach (var (name, dll) in new[] { ("ForgeCore", "ForgeCore.dll"), ("ForgeSkin", "ForgeSkin.Plugin.dll") })
+            Assert.Equal([Path.Combine(Install.Home(profile, name), dll)],
+                Directory.GetFiles(Path.Combine(profile, "BepInEx", "plugins"), dll, SearchOption.AllDirectories));
+        Assert.True((bool)Call("profiles.get", new { path = profile })["pluginCurrent"]!);
+
+        var coreName = PluginMeta.Read(Path.Combine(Install.Home(profile, "ForgeCore"), "ForgeCore.dll"))!;
+        File.WriteAllText(Path.Combine(profile, "BepInEx", "LogOutput.log"),
+            $"[Error  :   BepInEx] Could not load [{coreName.Name} {coreName.Version}] because it has missing dependencies: dev.gtfomodding.gtfo-api (>=0.6.1)\n");
+        var note = Assert.Single(Call("plugin.loadCheck", new { profile })["notes"]!.AsArray())!;
+        Assert.Equal(("load-missing-dependency", "ForgeCore", "GTFO-API", "0.6.1"),
+            ((string)note["code"]!, (string)note["args"]!["plugin"]!, (string)note["args"]!["dependency"]!, (string)note["args"]!["version"]!));
     }
 
     static void WriteJson(string path, object value)

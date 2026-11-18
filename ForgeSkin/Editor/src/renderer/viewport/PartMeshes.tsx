@@ -10,7 +10,8 @@ import { ownMeshes, partTarget, useSceneVersion } from './refs';
 
 function Replacement({ glb, node }: { glb: string; node: Object3D }) {
   const gltf = useGLTF(fileUrl(glb));
-  const scene = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+  // Marked for the sight lens on this node (SightLens.tsx), which draws on the replacement.
+  const scene = useMemo(() => Object.assign(gltf.scene.clone(true), { userData: { sfReplacement: true } }), [gltf.scene]);
   useEffect(() => {
     const own = ownMeshes(node);
     const material = own[0]?.material as Material | undefined;

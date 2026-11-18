@@ -4,6 +4,7 @@
 // { ok: false, code, message }. Operating guide: Mods/ForgeSkin/AI-GUIDE.md.
 import { Raycaster, Vector3, type Mesh, type Material } from 'three';
 import { applyToGame, buildPack, checkSkins, importMesh, problems } from './actions';
+import { importWholeGun, removeWholeGun, reseatWholeGun, wholeGunOf } from './gunSwap';
 import { loadImage } from './frames';
 import { addLivery, isProjected, liveryLayer, moveLivery, removeLivery, setFinish, updateLivery } from './livery';
 import { attachedOf, call, type DynamicLayer, type Methods, type LiveryKind, type SkinDocument, type TextureChannel } from './protocol';
@@ -405,6 +406,20 @@ const COMMANDS: Record<string, { args: string; run: Handler }> = {
         }
       });
       return { ids };
+    },
+  },
+  wholeGun: {
+    args: '{action: import|reseat|remove, glb? (import: absolute path of a .glb/.gltf)}',
+    run: async (a) => {
+      if (a.action === 'import') {
+        const before = wholeGunOf(st().doc)?.attachment;
+        await importWholeGun(file(need<string>(a, 'glb', isStr)));
+        const now = wholeGunOf(st().doc)?.attachment;
+        if (!now || now === before) fail('import-failed', 'the model could not be imported or placed (see the editor log)');
+      } else if (a.action === 'reseat') await reseatWholeGun();
+      else if (a.action === 'remove') removeWholeGun();
+      else fail('bad-args', 'action is import, reseat or remove');
+      return { wholeGun: wholeGunOf(st().doc)?.attachment ?? null };
     },
   },
   addAttachment: {

@@ -43,7 +43,15 @@ public class FormatTests
                 Material = MaterialOverride.ForAttachment("m1"),
                 Layers = { new DynamicLayer { Id = "l2", Name = "Sticker", Kind = LayerKind.Sequence, Atlas = new LayerAtlas { Path = "layers/l1.png", FrameCount = 2, Columns = 2, FrameWidth = 16, FrameHeight = 16, TargetRect = [0, 0, 16, 16] } } },
             },
+            // The sight lens's reticle: a game lens's reticle layer on the skin's own lens.
+            new MaterialOverride
+            {
+                Material = Sight.LensMaterial,
+                Params = new MaterialParams { Reticles = new() { [TextureChannel.ReticleA] = new Reticle { Color = [1, 0.2f, 0.2f], Intensity = 3, Scale = 8 } } },
+            },
         },
+        // A pane lens in the style of Sight_5 on the sight part, and Sight_4's zoom.
+        Sight = new Sight { Style = 21, Zoom = 23, Lens = new SightLens { Part = "sight", Size = [0.03f, 0.02f], Position = [0, 0.04f, 0.05f], Rotation = [0, 0, 0] } },
         Attachments =
         {
             new Attachment { Id = "m1", Name = "Model", Part = "receiver", Mesh = "meshes/m1.forgeskinmesh", Charm = new Charm { Style = CharmStyle.Beads } },
@@ -145,7 +153,7 @@ public class FormatTests
     }
 
     // A deliberately broken pack per error-code family (document, path, resource, mesh content, screen, audio, sound event, player
-    // colour, code effect, reticle) must be caught.
+    // colour, code effect, reticle, sight) must be caught.
     public static TheoryData<string, Action<SkinDocument, Dictionary<string, byte[]>>> Broken => new()
     {
         { "schema", (d, _) => d.Schema = 99 },
@@ -173,6 +181,8 @@ public class FormatTests
         { "bad-material-target", (d, _) => d.Materials[1].Material = MaterialOverride.ForAttachment("s1") },
         // Reticle values under a channel that is no reticle layer.
         { "bad-reticle", (d, _) => d.Materials[0].Params.Reticles![TextureChannel.Albedo] = new Reticle { Scale = 2 } },
+        // A sight lens with no vanilla lens to borrow its look from.
+        { "bad-sight", (d, _) => d.Sight!.Style = null },
     };
     [Theory]
     [MemberData(nameof(Broken))]
@@ -565,7 +575,7 @@ public class FormatTests
     // view, not filling it, not at the eye or through the near plane, its centre and its shown part in the view, both hands within reach),
     // and a motion that turns the gun's muzzle at the eye is caught, as is one whose off hand would flip round its wrist; at the rifle's keys the grip hand is within the arm's reach with its
     // wrist within its limits and a rest key is the game's pose; the heavy motion's off hand under the gun is under it and within reach;
-    // the revolver's twirl turns the gun about its bounds centre while the hand stays at the held pose. A wrist wrung 90 degrees is
+    // the revolver's twirl turns the gun away from the hand mid-turn and back into its hold at a whole turn. A wrist wrung 90 degrees is
     // turned back to its limit.
     [Fact]
     public void InspectMotionTable()
@@ -659,12 +669,14 @@ public class FormatTests
         Assert.True(Vector3.Transform(under - gunNow, Quaternion.Inverse(gunTurn)).Y < rig.Centre.Y);
         Assert.True(Vector3.Distance(under, rig.OffArm.Shoulder) <= rig.OffArm.Reach + 1e-4f);
 
-        // A free gun (the revolver's twirl) turns about its bounds centre while the grip hand stays at the held pose.
+        // The revolver's twirl: mid-turn the gun is turned away from the hand that carries it, and at a whole turn it is back in the
+        // hand's hold exactly, so the hand takes the grip without a jump.
         look = new InspectLook(table.Motions.Single(m => m.Id == "revolver"), rig);
-        look.GunPose(3.0f, 1f, gunAt, Quaternion.Identity, rig.TanHalf, out var spunAt, out var spun, out _);
+        look.GunPose(3.3f, 1f, gunAt, Quaternion.Identity, rig.TanHalf, out var spunAt, out var spun, out _);
         Assert.True(look.Free);
-        Assert.True(Vector3.Distance(spunAt + Vector3.Transform(rig.Centre, spun), look.HeldAt + Vector3.Transform(rig.Centre, look.HeldTurn)) < 1e-4f);
         Assert.InRange(MathF.Abs(Quaternion.Dot(spun, look.HeldTurn)), 0f, 0.99f);
+        look.GunPose(3.7f, 1f, gunAt, Quaternion.Identity, rig.TanHalf, out spunAt, out spun, out _);
+        Assert.True(Vector3.Distance(spunAt, look.HeldAt) < 1e-4f && MathF.Abs(Quaternion.Dot(spun, look.HeldTurn)) > 0.99999f);
 
         var wrung = Quaternion.CreateFromAxisAngle(Vector3.Normalize(rig.GripAt - rig.GripArm.Elbow(rig.GripAt)), MathF.PI / 2f) * rig.Grip;
         var back = rig.GripArm.Comfort(rig.GripAt, wrung);

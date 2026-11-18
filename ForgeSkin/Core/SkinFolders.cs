@@ -37,6 +37,7 @@ public static class SkinFolders
 
     public static string Readback(string bepInEx) => Path.Combine(Root(bepInEx), "readback");
 
-    /// <summary>The folder the editor installs its own copy of the plugin DLL into (a mod manager puts it elsewhere).</summary>
+    /// <summary>Where earlier editors installed their own copy of the plugin DLL (the editor now installs where a mod manager does,
+    /// plugins/NAinfini-ForgeSkin/ForgeSkin/, and clears this one); old skins folders lived under it.</summary>
     public static string Plugin(string bepInEx) => Path.Combine(bepInEx, "plugins", "ForgeSkin");
 }

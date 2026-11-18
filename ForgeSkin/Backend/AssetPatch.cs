@@ -519,19 +519,20 @@ public static class AssetPatch
         {
             var layer = channel.Layer();
             var colour = "_ReticuleColor" + layer;
-            if (r.Color != null || r.Intensity != null)
+            // An off layer is drawn black: the reticle is added onto the view by colour, so black adds nothing. A layer
+            // with no colour given and not off keeps the material's own colour.
+            if (r.Color != null || r.Intensity != null || r.Visible == false)
             {
                 if (Entry("m_Colors", colour) is { } cur)
                 {
                     float k = r.Intensity ?? 1;
-                    float[] rgb = r.Color is { } rc ? ForgeVisual.ColourSpace.Glow(rc, k, hdr.Contains(colour)) : [cur["r"].AsFloat * k, cur["g"].AsFloat * k, cur["b"].AsFloat * k];
+                    float[] rgb = r.Visible == false ? [0, 0, 0] : r.Color is { } rc ? ForgeVisual.ColourSpace.Glow(rc, k, hdr.Contains(colour)) : [cur["r"].AsFloat * k, cur["g"].AsFloat * k, cur["b"].AsFloat * k];
                     Color(cur, [.. rgb, cur["a"].AsFloat]);
                 }
                 else warnings.Add($"{name}: the material has no reticle colour {layer}; not written");
             }
             if (r.Scale is float scale) Float("_ReticuleScale" + layer, scale, $"reticle scale {layer}");
             if (r.Offset is float offset) Float("_ReticuleOffset" + layer, offset, $"reticle offset {layer}");
-            if (r.Visible is bool shown) Float("_Fade" + layer, shown ? 1 : 0, $"reticle switch {layer}");
         }
     }
 

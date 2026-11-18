@@ -1,8 +1,8 @@
 // The character import runs here, off the page: the site's own converter and VRM reading (Web/src/forge/character-import.ts) turn the
 // file into the character format's model files and the filled-in bones, springs and colliders. Refusals come back as the converter's codes.
-import { importCharacter, type CharacterImport } from '../../../../../../Web/src/forge/character-import';
-import { ImportedModelError } from '../../../../../../Web/src/forge/imported-model-format';
-import { reencodeAsPng } from '../../../../../../Web/src/forge/lib/png-reencode';
+import { importCharacter, type CharacterImport } from '../../../../../Web/src/forge/character-import';
+import { ImportedModelError } from '../../../../../Web/src/forge/imported-model-format';
+import { reencodeAsPng } from '../../../../../Web/src/forge/lib/png-reencode';
 
 export type ImportReply = { result: CharacterImport } | { code: string; params: Record<string, string | number>; message: string };
 

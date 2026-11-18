@@ -13,6 +13,10 @@ namespace ForgeSkin.Backend;
 // in-game picker's choice, else active.json, else the first by path.
 public sealed record InstalledSkin(string Id, string Name, string File, string? Weapon, bool Active, string? Error, string[]? Dropped = null, string Source = "editor", string? Mod = null, bool InUse = false, string? Modified = null);
 
+/// <summary>What a plugin install did or found that the user is told (PLAN §4.5): `Code` and `Args` make the short message the editor
+/// shows, `Detail` is the full account (what was checked, paths, versions, cause, fix) that goes to the logs.</summary>
+public sealed record InstallNote(string Code, Dictionary<string, string> Args, string Detail);
+
 // Skins and the plugin in a BepInEx profile (PLAN §3.2). Skin writes are atomic file replaces the plugin hot-reloads,
 // so they work while the game runs; only replacing the plugin DLL needs the game closed.
 public static class Install
@@ -258,9 +262,9 @@ public static class Install
     }
 
     // The plugin the app ships, next to the backend: plugin/ForgeSkin/ForgeSkin.Plugin.dll and plugin/ForgeCore/, the plugins/ForgeCore/
-    // folder of the NAinfini-ForgeCore release zip it depends on. In a checkout the same layout that Mods/ForgeSkin/tools/build-editor-release.ps1
+    // folder of the NAinfini-ForgeCore package it depends on. In a checkout the same layout that Mods/ForgeSkin/tools/build-editor-release.ps1
     // stages under artifacts/forge-skin-release/publish/plugin.
-    static string PluginSource()
+    internal static string PluginSource()
     {
         // The folder to name when none is complete: the first that exists (a half-staged one), else the checkout's (the
         // folder holding .git), else plugin/ next to the backend.
@@ -276,7 +280,8 @@ public static class Install
         }
         var where = named ?? checkout ?? Path.Combine(AppContext.BaseDirectory, "plugin");
         var missing = new[] { Path.Combine(where, "ForgeSkin", PluginDll), Path.Combine(where, "ForgeCore", CoreDll) }.Where(f => !File.Exists(f));
-        throw new BackendException("no-plugin", string.Join("; ", missing));
+        throw new BackendException("no-plugin", "The plugin files this editor installs are missing: " + string.Join("; ", missing)
+            + ". A packaged editor carries them in resources/publish/plugin (reinstall it); a checkout stages them with Mods/ForgeSkin/tools/build-editor-release.ps1 -PluginOnly.");
     }
 
     static Version DllVersion(string dll)
@@ -285,13 +290,21 @@ public static class Install
         return new Version(v.FileMajorPart, v.FileMinorPart, v.FileBuildPart);
     }
 
-    // Every folder under BepInEx/plugins holding a ForgeCore.dll (a mod manager puts it in NAinfini-ForgeCore/).
-    static List<string> CoreFolders(string profile)
-    {
-        var plugins = Path.Combine(profile, "BepInEx", "plugins");
-        if (!Directory.Exists(plugins)) return [];
-        return [.. Directory.EnumerateFiles(plugins, CoreDll, new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }).Select(f => Path.GetDirectoryName(f)!)];
-    }
+    /// <summary>The two packages the editor ships and keeps in step (PLAN §4.5): the folder in its plugin/ and in the Thunderstore zip, and the DLL.
+    /// ForgeCore first: whether a newer ForgeSkin may stay depends on the ForgeCore the profile ends with.</summary>
+    internal static readonly (string Name, string Dll)[] Packages = [("ForgeCore", CoreDll), ("ForgeSkin", PluginDll)];
+
+    /// <summary>Where a mod manager installs a package, BepInEx/plugins/NAinfini-&lt;name&gt;/&lt;name&gt;/: the one copy of it a profile keeps.</summary>
+    public static string Home(string profile, string name) => Path.Combine(Plugins(profile), "NAinfini-" + name, name);
+
+    internal static string Plugins(string profile) => Path.Combine(profile, "BepInEx", "plugins");
+
+    // Every folder under BepInEx/plugins holding the DLL: BepInEx loads from each (a copy the mod manager disabled has another file name).
+    static List<string> Folders(string profile, string dll) => Directory.Exists(Plugins(profile))
+        ? [.. Directory.EnumerateFiles(Plugins(profile), dll, new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }).Select(f => Path.GetDirectoryName(Path.GetFullPath(f))!)]
+        : [];
+
+    static bool SameFolder(string a, string b) => string.Equals(Path.GetFullPath(a).TrimEnd('\\', '/'), Path.GetFullPath(b).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
 
     // Whether every file of the shipped folder `source` is in `target` with the same content (`cached`: for a status report).
     static bool Same(string source, string target, bool cached = false) =>
@@ -314,44 +327,24 @@ public static class Install
         }
     }
 
-    // The newest ForgeSkin.Plugin.dll a mod manager installed (anywhere under BepInEx/plugins but the editor's own
-    // plugins/ForgeSkin/, usually NAinfini-ForgeSkin/), or null. The skins are in BepInEx/ForgeSkin/skins either way.
-    static string? ManagedPlugin(string profile)
-    {
-        var plugins = Path.Combine(profile, "BepInEx", "plugins");
-        if (!Directory.Exists(plugins)) return null;
-        var own = Path.GetFullPath(Game.PluginDir(profile)) + Path.DirectorySeparatorChar;
-        return Directory.EnumerateFiles(plugins, PluginDll, new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true })
-            .Where(f => !Path.GetFullPath(f).StartsWith(own, StringComparison.OrdinalIgnoreCase)).MaxBy(DllVersion);
-    }
-
-    /// <summary>The plugin DLL the game loads from this profile: the mod manager's, else the editor's, else null.</summary>
+    /// <summary>The plugin DLL the game loads from this profile (the one at its home, else the newest elsewhere), or null.</summary>
     public static string? InstalledPlugin(string profile)
     {
-        var own = Path.Combine(Game.PluginDir(profile), PluginDll);
-        return ManagedPlugin(profile) ?? (File.Exists(own) ? own : null);
-    }
-
-    // The copies the editor keeps in step with the shipped folders: the ForgeSkin the game loads (the mod manager's, else the
-    // editor's own folder) and every ForgeCore; `Dll` is the copy's DLL, `Source` the shipped folder it follows.
-    static IEnumerable<(string Name, string Source, string Target, string Dll)> Copies(string profile, string source)
-    {
-        var skin = ManagedPlugin(profile) is { } managed ? Path.GetDirectoryName(managed)! : Game.PluginDir(profile);
-        yield return ("ForgeSkin", Path.Combine(source, "ForgeSkin"), skin, PluginDll);
-        foreach (var core in CoreFolders(profile)) yield return ("ForgeCore", Path.Combine(source, "ForgeCore"), core, CoreDll);
+        var home = Path.Combine(Home(profile, "ForgeSkin"), PluginDll);
+        return File.Exists(home) ? home : Folders(profile, PluginDll).Select(f => Path.Combine(f, PluginDll)).MaxBy(DllVersion);
     }
 
     // A copy the editor leaves alone: one a mod manager installed from the store, newer than the shipped one. From the store means
     // its package folder (the first folder under BepInEx/plugins) holds the Thunderstore manifest.json whose version_number is the
     // DLL's own version, so nothing wrote over it since. Store versions only go up, so a higher number there is a newer build. Any
-    // other copy (the editor's own folder, one unpacked by hand, one an editor already wrote over, the pre-store 1.1.x ForgeSkin and
-    // 1.0.2 ForgeCore of the GitHub editors) follows the shipped one by content, whatever its number.
+    // other copy (one unpacked by hand, one an editor already wrote over, the pre-store 1.1.x ForgeSkin and 1.0.2 ForgeCore of the
+    // GitHub editors) follows the shipped one by content, whatever its number.
     static bool NewerFromStore(string profile, string dll, string shippedDll)
     {
         if (!File.Exists(dll)) return false;
         var version = DllVersion(dll);
         if (version <= DllVersion(shippedDll)) return false;
-        var plugins = Path.GetFullPath(Path.Combine(profile, "BepInEx", "plugins"));
+        var plugins = Path.GetFullPath(Plugins(profile));
         var top = Path.GetRelativePath(plugins, Path.GetFullPath(dll)).Split(Path.DirectorySeparatorChar);
         if (top.Length < 2 || top[0] == "..") return false;
         try
@@ -362,26 +355,54 @@ public static class Install
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException) { return false; }
     }
 
+    // What one package of the profile ends as. `Keep`: the newer store copy at its home stays, else the shipped files go there.
+    // `Others`: every other folder BepInEx would load it from, all of which go. `Why`: what a keep or a refused keep rests on.
+    sealed record Step(string Name, string Source, string Home, string Dll, bool Keep, List<string> Others, string Why);
+
+    // The rule (PLAN §4.5): each package ends as one loadable copy, at its home. A newer copy straight from the store at its home
+    // stays; ForgeSkin only while the ForgeCore the profile ends with is at least the minimum its [BepInDependency] declares (read
+    // from that DLL), else the shipped ForgeSkin replaces it. Any other home copy takes the shipped files.
+    static List<Step> Plan(string profile, string source)
+    {
+        var steps = new List<Step>();
+        Version? core = null;
+        var coreGuid = PluginMeta.Read(Path.Combine(source, "ForgeCore", CoreDll))?.Guid;
+        foreach (var (name, dll) in Packages)
+        {
+            var from = Path.Combine(source, name);
+            var home = Home(profile, name);
+            var at = Path.Combine(home, dll);
+            var shipped = DllVersion(Path.Combine(from, dll));
+            var keep = NewerFromStore(profile, at, Path.Combine(from, dll));
+            var why = keep ? $"{at} {DllVersion(at)} came from the store and is newer than the shipped {shipped}, so it stays" : "";
+            if (keep && name == "ForgeSkin" && coreGuid != null && PluginMeta.Read(at)?.Minimum(coreGuid) is { } min && min > core)
+            {
+                keep = false;
+                why = $"{at} {DllVersion(at)} came from the store and is newer than the shipped {shipped}, but it needs ForgeCore >={min} and the profile ends with ForgeCore {core}, so the shipped ForgeSkin replaces it";
+            }
+            if (name == "ForgeCore") core = keep ? DllVersion(at) : shipped;
+            steps.Add(new Step(name, from, home, dll, keep, [.. Folders(profile, dll).Where(f => !SameFolder(f, home))], why));
+        }
+        return steps;
+    }
+
     /// <summary>The profile's store copies newer than the shipped ones, which the editor leaves alone ("ForgeCore 1.0.3"), for the editor to say so.</summary>
     public static string[] Newer(string profile)
     {
         string source;
         try { source = PluginSource(); } catch (BackendException) { return []; }
-        return [.. Copies(profile, source).Where(c => !Same(c.Source, c.Target, true) && NewerFromStore(profile, Path.Combine(c.Target, c.Dll), Path.Combine(c.Source, c.Dll)))
-            .Select(c => $"{c.Name} {DllVersion(Path.Combine(c.Target, c.Dll)).ToString(3)}")];
+        return [.. Plan(profile, source).Where(s => s.Keep).Select(s => $"{s.Name} {DllVersion(Path.Combine(s.Home, s.Dll)).ToString(3)}")];
     }
 
-    // Current: one plugin, nothing an older version left beside it, a ForgeCore in the profile, and each copy (Copies) either the
-    // shipped build's files (DLL and lang/) or a newer one from the store (NewerFromStore).
+    // Current: each package is one copy at its home (Plan), the shipped files or a newer store copy that stays, and nothing an
+    // older version left in the editor's former folder.
     public static bool PluginCurrent(string profile)
     {
         string source;
         try { source = PluginSource(); } catch (BackendException) { return false; }
-        var dir = Game.PluginDir(profile);
-        var copies = Copies(profile, source).ToList();
-        return (ManagedPlugin(profile) == null || !File.Exists(Path.Combine(dir, PluginDll))) && !RetiredFiles.Any(f => File.Exists(Path.Combine(dir, f)))
-            && copies.Any(c => c.Name == "ForgeCore")
-            && copies.All(c => Same(c.Source, c.Target, true) || NewerFromStore(profile, Path.Combine(c.Target, c.Dll), Path.Combine(c.Source, c.Dll)));
+        var former = Game.PluginDir(profile);
+        return !RetiredFiles.Any(f => File.Exists(Path.Combine(former, f)))
+            && Plan(profile, source).All(s => s.Others.Count == 0 && (s.Keep || Same(s.Source, s.Home, true)));
     }
 
     // The plugin's in-game texts (lang/*.forge, beside its DLL) under `folder`, as paths relative to it.
@@ -393,37 +414,73 @@ public static class Install
     {
         if (!File.Exists(dll) || !Game.Running) return;
         try { using var _ = File.Open(dll, FileMode.Open, FileAccess.ReadWrite, FileShare.None); }
-        catch (IOException) { throw new BackendException("game-running", "Close GTFO first: it has the plugin loaded"); }
+        catch (IOException) { throw new BackendException("game-running", $"Close GTFO first: it has {dll} loaded, and the plugin files cannot be replaced while it runs"); }
     }
 
-    // ForgeCore and ForgeSkin follow this editor: each copy in the profile (Copies) whose files differ from the shipped build is
-    // overwritten in place with it (a mod manager's copy too, where the mod manager put it), unless it is a newer one from the
-    // store (NewerFromStore), which stays and is named in `newer`; a profile without ForgeCore gets it in
-    // BepInEx/plugins/NAinfini-ForgeCore/ForgeCore/ where the mod manager would put it. A ForgeSkin the mod manager installed is the
-    // one the game loads, so the editor's own copy in plugins/ForgeSkin/ is deleted and the profile never holds the same plugin twice.
+    // ForgeCore and ForgeSkin end as one loadable copy each, at their home where a mod manager puts them (Plan). Every other copy
+    // goes: the editor's own former folder plugins/ForgeSkin/ is cleared, and a copy the editor did not put there goes to the
+    // Recycle Bin (whole when its folder holds nothing but the package's files, else its DLL alone) and is reported in `notes`
+    // with its path. Nothing is touched while the game holds one of the files.
     public static object Plugin(string profile)
     {
         RequireProfile(profile);
         var source = PluginSource();
-        var managed = ManagedPlugin(profile);
         MovePreRenameInstall(profile);
-        var dir = Game.PluginDir(profile);
         Directory.CreateDirectory(Skins(profile));
-        foreach (var f in RetiredFiles.Append(PluginDll)) RequireUnlocked(Path.Combine(dir, f));
-        var copies = Copies(profile, source).ToList();
-        if (!copies.Any(c => c.Name == "ForgeCore")) copies.Add(("ForgeCore", Path.Combine(source, "ForgeCore"), Path.Combine(profile, "BepInEx", "plugins", CoreFolder, "ForgeCore"), CoreDll));
-        var newer = new List<string>();
+        var former = Game.PluginDir(profile);
+        var plan = Plan(profile, source);
+        foreach (var f in RetiredFiles.Append(PluginDll)) RequireUnlocked(Path.Combine(former, f));
+        foreach (var s in plan)
+        {
+            foreach (var other in s.Others) RequireUnlocked(Path.Combine(other, s.Dll));
+            if (!s.Keep) RequireUnlocked(Path.Combine(s.Home, s.Dll));
+        }
+        var notes = new List<InstallNote>();
         var replaced = new List<string>();
-        foreach (var (name, from, to, dll) in copies.Where(c => !Same(c.Source, c.Target)))
-            if (NewerFromStore(profile, Path.Combine(to, dll), Path.Combine(from, dll))) newer.Add($"{name} {DllVersion(Path.Combine(to, dll)).ToString(3)}");
-            else
+        var newer = new List<string>();
+        foreach (var s in plan)
+        {
+            var kept = s.Keep ? DllVersion(Path.Combine(s.Home, s.Dll)) : DllVersion(Path.Combine(s.Source, s.Dll));
+            var copies = string.Join(", ", s.Others.Prepend(s.Home).Where(f => File.Exists(Path.Combine(f, s.Dll))).Select(f => $"{f} {DllVersion(Path.Combine(f, s.Dll))}"));
+            foreach (var other in s.Others)
+                if (SameFolder(other, former))
+                {
+                    foreach (var f in Texts(other).Append(s.Dll).Concat(RetiredFiles).Select(f => Path.Combine(other, f)).Where(File.Exists)) File.Delete(f);
+                    Log.Write($"plugin.install {profile}: removed {s.Name} from {other}, where editors before this one installed it; it is at {s.Home} now");
+                }
+                else notes.Add(MoveAway(profile, s, other, copies, kept));
+            if (s.Why.Length > 0) Log.Write($"plugin.install {profile}: {s.Name}: {s.Why}");
+            if (s.Keep) newer.Add($"{s.Name} {kept.ToString(3)}");
+            else if (!Same(s.Source, s.Home))
             {
-                CopyOver(from, to);
-                if (name == "ForgeCore") replaced.Add(to);
+                CopyOver(s.Source, s.Home);
+                // Copies keep the shipped files' times: the folder's time says when the profile changed (LoadLog.Check).
+                Directory.SetLastWriteTimeUtc(s.Home, DateTime.UtcNow);
+                replaced.Add(s.Home);
             }
-        string[] stale = managed == null ? RetiredFiles : [.. RetiredFiles, PluginDll, .. Texts(dir)];
-        foreach (var f in stale.Select(f => Path.Combine(dir, f)).Where(File.Exists)) File.Delete(f);
-        return new { installed = copies[0].Target, forgeCore = replaced, newer, managedPlugin = managed != null, version = Game.Profiles().FirstOrDefault(p => Path.GetFullPath(p.Path) == Path.GetFullPath(profile))?.PluginVersion };
+        }
+        foreach (var f in RetiredFiles.Select(f => Path.Combine(former, f)).Where(File.Exists)) File.Delete(f);
+        return new { installed = Home(profile, "ForgeSkin"), replaced, newer, notes, version = Game.Profiles().FirstOrDefault(p => Path.GetFullPath(p.Path) == Path.GetFullPath(profile))?.PluginVersion };
+    }
+
+    // A loadable copy the editor did not install: to the Recycle Bin (never a plain delete), its folder whole when it holds only
+    // what the shipped package holds (never BepInEx/plugins itself), else its DLL, which is what makes BepInEx load it.
+    static InstallNote MoveAway(string profile, Step s, string other, string copies, Version kept)
+    {
+        var dll = Path.Combine(other, s.Dll);
+        var version = DllVersion(dll);
+        var shipped = Directory.GetFiles(s.Source, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(s.Source, f)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var whole = !SameFolder(other, Plugins(profile)) && Directory.GetFiles(other, "*", SearchOption.AllDirectories)
+            .All(f => Path.GetRelativePath(other, f) is var rel && (shipped.Contains(rel) || rel.StartsWith("lang" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)));
+        var moved = whole ? other : dll;
+        RecycleBin.Send(moved);
+        var detail = $"plugin.install {profile}: BepInEx would load {s.Name} from more than one folder ({copies}); it loads one and skips the others "
+            + $"(\"Skipping [...] because a newer version exists\" in BepInEx/LogOutput.log), so which one runs is not ours to choose. The profile keeps one copy, "
+            + $"{s.Name} {kept} at {s.Home}, where a mod manager installs it. {moved} ({s.Name} {version}) was not installed there by the editor, so it was moved "
+            + $"to the Recycle Bin, not deleted{(whole ? "" : $"; the other files in {other} stay")}. Fix if it was wanted: restore it from the Recycle Bin and remove "
+            + $"the copy at {s.Home} instead; if a mod manager lists the moved copy, remove it there too.";
+        Log.Write(detail);
+        return new InstallNote("plugin-copy-removed", new() { ["package"] = s.Name, ["path"] = moved }, detail);
     }
 
     // Moves a pre-rename install (GTFO Skin Forge -> ForgeSkin) to the new names: skins/ of plugins/SkinForge (packs get the
@@ -464,14 +521,17 @@ public static class Install
 
     static string ConfigFile(string profile) => Path.Combine(profile, "BepInEx", "config", "ForgeSkin.cfg");
 
-    // Removes the editor's plugin DLLs; installed skins stay, and so do ForgeCore and a ForgeSkin the mod manager installed
-    // (the mod manager owns them).
+    // Removes the ForgeSkin plugin the editor installed: its home copy unless a mod manager owns it (a Thunderstore manifest.json
+    // in NAinfini-ForgeSkin/), and what is left in the editor's former folder. Installed skins and ForgeCore stay.
     public static object PluginUninstall(string profile)
     {
-        var dir = Game.PluginDir(profile);
-        string[] files = [PluginDll, .. RetiredFiles, .. Texts(dir)];
-        foreach (var f in files) RequireUnlocked(Path.Combine(dir, f));
-        foreach (var f in files.Select(f => Path.Combine(dir, f)).Where(File.Exists)) File.Delete(f);
-        return new { removed = dir };
+        var home = Home(profile, "ForgeSkin");
+        var dirs = new List<string> { Game.PluginDir(profile) };
+        if (!File.Exists(Path.Combine(Path.GetDirectoryName(home)!, "manifest.json"))) dirs.Add(home);
+        else Log.Write($"plugin.uninstall {profile}: {home} kept, a mod manager installed it (remove it there)");
+        var files = dirs.SelectMany(dir => new[] { PluginDll }.Concat(RetiredFiles).Concat(Texts(dir)).Select(f => Path.Combine(dir, f))).ToList();
+        foreach (var f in files) RequireUnlocked(f);
+        foreach (var f in files.Where(File.Exists)) File.Delete(f);
+        return new { removed = dirs };
     }
 }

@@ -47,6 +47,8 @@ public static class MeshImport
             color = look.BaseColorFactor.All(v => v == 1) ? null : look.BaseColorFactor.Select((v, i) => i < 3 ? ForgeVisual.ColourSpace.ToSrgb(v) : v).ToArray(),
             emissive = emissive == null ? null : new { color = emissive.Select(ForgeVisual.ColourSpace.ToSrgb).ToArray(), intensity = look.EmissiveStrength },
             notes = look.Notes,
+            // A gun model's socket nodes (GunSwap), for the whole-gun model's hold points; a .forgeskinmesh keeps no nodes.
+            sockets = own ? new Dictionary<string, float[]>() : GunSwap.SocketsOf(glbPath),
         };
     }
 

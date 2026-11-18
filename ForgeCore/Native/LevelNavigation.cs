@@ -28,6 +28,20 @@ public static partial class Level
         return found;
     }
 
+    /// <summary>The radius of the navigation agent the level is baked for (agent type 0, 0.5 m, from the game's NavMeshProjectSettings): the mesh
+    /// stays this far from every wall, so a body wider than this needs more than the mesh's own edge distance.</summary>
+    public const float NavAgentRadius = 0.5f;
+
+    /// <summary>How wide an open circle of floor lies around <paramref name="floorPoint"/>: the distance to the nearest edge of the navigation
+    /// mesh (<c>NavMesh.FindClosestEdge</c>, every area type) plus <see cref="NavAgentRadius"/>, in metres, written to <paramref name="radius"/>.
+    /// False when the point is not on the mesh, so no distance can be read.</summary>
+    public static bool TryFreeRadius(Vector3 floorPoint, out float radius)
+    {
+        var found = NavMesh.FindClosestEdge(floorPoint, out var hit, -1);
+        radius = found ? hit.distance + NavAgentRadius : 0f;
+        return found;
+    }
+
     /// <summary>A complete path on the game's navigation mesh (<c>NavMesh.CalculatePath</c>, the surface the enemies walk on, closed doors
     /// included) from <paramref name="from"/> to <paramref name="to"/>, no longer than <paramref name="maxLength"/> metres, with every
     /// corner after the start written to <paramref name="corners"/> and their number to <paramref name="count"/>. Both ends are first

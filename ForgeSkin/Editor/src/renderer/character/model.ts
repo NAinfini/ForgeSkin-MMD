@@ -30,12 +30,12 @@ import {
   type Texture,
 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { matchHumanBones, matchHumanFingers } from '../../../../../../Web/src/forge/animation-bone-match';
-import { aimFollow, upgradeVrm, vrmJoints, type CharacterImport } from '../../../../../../Web/src/forge/character-import';
-import { characterBlend, characterBlendCutoff } from '../../../../../../Web/src/forge/imported-model-glb';
-import { readImportedModelDescriptor } from '../../../../../../Web/src/forge/imported-model-format';
-import { buildImportedScene } from '../../../../../../Web/src/shared/render/imported-model-build';
-import { HumanFingerJoints, HumanJoints } from '../../../../../../Web/src/generated/rig/animation-reference.js';
+import { matchHumanBones, matchHumanFingers } from '../../../../../Web/src/forge/animation-bone-match';
+import { aimFollow, upgradeVrm, vrmJoints, type CharacterImport } from '../../../../../Web/src/forge/character-import';
+import { characterBlend, characterBlendCutoff } from '../../../../../Web/src/forge/imported-model-glb';
+import { readImportedModelDescriptor } from '../../../../../Web/src/forge/imported-model-format';
+import { buildImportedScene } from '../../../../../Web/src/shared/render/imported-model-build';
+import { HumanFingerJoints, HumanJoints } from '../../../../../Web/src/generated/rig/animation-reference.js';
 import { friendly } from '../errors';
 import { t } from '../i18n';
 import { call, fileUrl, type Methods, type ProjectEntry, type SkinDocument } from '../protocol';

@@ -11,6 +11,7 @@ import {
   IconComponents,
   IconCrosshair,
   IconDeviceDesktop,
+  IconFocus2,
   IconFolderOpen,
   IconId,
   IconInfoCircle,
@@ -28,6 +29,8 @@ import { InspectorTabs, showTab, type InspectorTab } from './InspectorTabs';
 import { PartLayers } from './DynamicInspector';
 import { PartLivery, TextureSizeField } from './LiveryPanel';
 import { PartModel } from './PartModel';
+import { SightPanel } from './SightPanel';
+import { WholeGunPanel } from './WholeGunPanel';
 import { useState, type ReactElement } from 'react';
 import { MAX_SECONDS, playGroup, playSound, soundChance, soundGroupKey } from '../audio';
 import {
@@ -279,8 +282,9 @@ function MaterialParams({ material }: { material: string }) {
   );
 }
 
-/** A holographic sight's lens: its three reticle layers, each a picture with its colour, brightness, size and depth. */
-function ReticleSection({ material, part }: { material: string; part: string }) {
+/** A holographic sight's lens: its three reticle layers, each a picture with its colour, brightness, size and depth. The sight
+ *  group (SightPanel) shows it for the skin's own lens. */
+export function ReticleSection({ material, part }: { material: string; part: string }) {
   const { setReticle } = useStore.getState();
   const { m, preview } = useParams(material);
   const game = preview?.params[material]?.reticles;
@@ -805,6 +809,7 @@ function GunLook({ liveries }: { liveries: number }) {
   const unmatched = useStore((s) => s.unmatched);
   return (
     <>
+      {(item?.slot === 'main' || item?.slot === 'special') && <WholeGunPanel />}
       <div className="section">
         <Tooltip label={t('skinInspector.k44')} multiline w={280}>
           <UnstyledButton className="drop-card" onClick={pickTextureFolder}>
@@ -972,6 +977,7 @@ function Overview() {
   const item = useItem();
   const replaced = (doc.materials ?? []).reduce((n, m) => n + Object.keys(m?.textures ?? {}).length, 0);
   const soundsTab = useSoundsTab();
+  const sight = (doc.sight?.lens ? 1 : 0) + (doc.sight?.zoom != null ? 1 : 0);
   const counts = {
     texture: replaced,
     livery: (doc.materials ?? []).reduce((n, m) => n + (m?.livery ?? []).filter(Boolean).length, 0),
@@ -999,6 +1005,8 @@ function Overview() {
         id="skin"
         tabs={[
           { id: 'look', label: t('tabs.look'), icon: IconPalette, color: 'var(--paint)', content: <GunLook liveries={counts.livery} /> },
+          // A gun's sight (sight.ts): only guns aim through one.
+          ...(item?.slot === 'main' || item?.slot === 'special' ? [{ id: 'sight', label: t('tabs.sight'), icon: IconFocus2, color: 'var(--scan)', count: sight, content: <SightPanel /> }] : []),
           soundsTab,
           { id: 'info', label: t('tabs.info'), icon: IconInfoCircle, content: <GunInfo counts={counts} /> },
         ]}

@@ -272,27 +272,13 @@ function writable(path: string): boolean {
 const SERVED = /\.(png|jpe?g|tga|tiff?|bmp|webp|gif|exr|mp4|webm|mov|m4v|wav|mp3|ogg|flac|m4a|aac|opus|ttf|otf|woff2?|glb|gltf|vrm|bin|forgemesh)$|[\\/]character[\\/]model\.json$/i;
 
 // The development editor installs the plugin built from this checkout: before an install the user asked for, it runs
-// build-editor-release.ps1 -PluginOnly with the ForgeCore zip that script last used (left in artifacts/forge-skin-release/thunderstore/;
-// copied out first, as the script empties that folder), which stages artifacts/forge-skin-release/publish/plugin for the backend.
-async function stageDevPlugin(): Promise<{ ok: true } | { ok: false; reason: 'notDev' | 'noForgeCore' | 'failed'; detail?: string }> {
+// build-editor-release.ps1 -PluginOnly, which builds ForgeSkin and ForgeCore from source and stages
+// artifacts/forge-skin-release/publish/plugin for the backend. Nothing has to be packaged first. The script's whole output goes
+// to app.log; the window gets its last lines, the failed step as PowerShell's error box says it, for the log line it writes.
+async function stageDevPlugin(): Promise<{ ok: true } | { ok: false; reason: 'notDev' | 'failed'; detail?: string }> {
   if (edition !== 'dev') return { ok: false, reason: 'notDev' };
   const root = join(app.getAppPath(), '..', '..', '..');
-  const zips = join(root, 'artifacts', 'forge-skin-release', 'thunderstore');
-  const zip = existsSync(zips)
-    ? readdirSync(zips)
-        .filter((f) => /^NAinfini-ForgeCore-.*\.zip$/.test(f))
-        // Numbers compared as numbers, so 1.0.10 comes after 1.0.9.
-        .sort(new Intl.Collator('en', { numeric: true }).compare)
-        .pop()
-    : undefined;
-  if (!zip) return { ok: false, reason: 'noForgeCore', detail: zips };
-  // Under its own name: the script's release check knows a package by its file name (NAinfini-<name>-<version>.zip).
-  const temp = join(app.getPath('temp'), `forgeskin-${process.pid}`);
-  const copy = join(temp, zip);
-  mkdirSync(temp, { recursive: true });
-  cpSync(join(zips, zip), copy);
   const script = join(root, 'Mods', 'ForgeSkin', 'tools', 'build-editor-release.ps1');
-  // The toast names the failed step as the script's last output lines say it (PowerShell's error box reduced to its message).
   const tail = (text: string, n: number) =>
     text
       .split('\n')
@@ -300,9 +286,8 @@ async function stageDevPlugin(): Promise<{ ok: true } | { ok: false; reason: 'no
       .filter((l) => l && !/^[~\s]+$/.test(l) && !/^Line\s*\|?$/.test(l) && !/^\d+\s*\|/.test(l) && !/^Exception:/.test(l))
       .slice(-n);
   return new Promise((done) =>
-    execFile('pwsh', ['-NoProfile', '-File', script, '-PluginOnly', '-ForgeCore', copy], { cwd: root, windowsHide: true, maxBuffer: 64 << 20 }, (error, stdout, stderr) => {
-      rmSync(temp, { recursive: true, force: true });
-      appLog('plugin stage', `${zip}: ${error ? 'failed' : 'ok'}\n${stdout}${stderr}`);
+    execFile('pwsh', ['-NoProfile', '-File', script, '-PluginOnly'], { cwd: root, windowsHide: true, maxBuffer: 64 << 20 }, (error, stdout, stderr) => {
+      appLog('plugin stage', `${script} -PluginOnly: ${error ? 'failed' : 'ok'}\n${stdout}${stderr}`);
       done(error ? { ok: false, reason: 'failed', detail: [...tail(stdout, 2), ...tail(stderr, 1)].join('\n') } : { ok: true });
     }),
   );

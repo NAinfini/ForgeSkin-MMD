@@ -232,6 +232,7 @@ sealed partial class SkinnedGear
             foreach (var gear in Live)
                 if (gear._waiting) gear.Refresh(now);
         }
+        LensesSettled(now);
         if (now >= _nextRelease)
         {
             _nextRelease = now + 1f;
@@ -593,10 +594,10 @@ sealed partial class SkinnedGear
             if (weapon.Doc.Target.Key() != key)
                 throw new InvalidOperationException($"skin {weaponId} targets {weapon.Doc.Target.Key()}, not {key}");
             doc = _mate != null ? weapon.Painted(_dressed != null ? ulong.MaxValue : _owner, _mate.Picks, _mate.Version) : Skins.Painted(weapon); // stand-ins share one coloured copy
-            // An attachment's model takes its own override where the attachment is built (Attach).
-            foreach (var m in doc.Materials) if (m.Attached() == null) overrides[m.Material] = (weapon, m);
+            // An attachment's model takes its own override where the attachment is built (Attach), the sight lens where its look is made (SightLook).
+            foreach (var m in doc.Materials) if (m.Attached() == null && m.Material != Sight.LensMaterial) overrides[m.Material] = (weapon, m);
         }
-        if (overrides.Count == 0 && (doc == null || doc.Attachments.Count == 0 && doc.Parts.Count == 0 && doc.Sounds.Count == 0 && doc.Hands == null))
+        if (overrides.Count == 0 && (doc == null || doc.Attachments.Count == 0 && doc.Parts.Count == 0 && doc.Sounds.Count == 0 && doc.Hands == null && doc.Sight == null))
         {
             ForgeSkinPlugin.Info($"{_label}: skipped, no active skin for {key}");
             return;
@@ -610,9 +611,10 @@ sealed partial class SkinnedGear
         }
         SkinCasings(overrides);
         int attachments = 0;
+        var lens = weapon != null ? SightLook(weapon, doc!) : null;
         if (weapon != null)
             foreach (var a in doc!.Attachments)
-                if (a.Visible) { Attach(weapon, a, doc.Materials.Find(m => m.Attached() == a.Id)); attachments++; }
+                if (a.Visible) { Attach(weapon, a, doc.Materials.Find(m => m.Attached() == a.Id), a.Id == doc.Sight?.Lens?.Attachment ? lens : null); attachments++; }
         // The local player's first-person gear plays in their head; a teammate's gear at itself, only what this machine sees of
         // it (RemoteTriggers). The local player's own third-person copy plays nothing: it would play every sound a second time.
         // The sounds of one trigger (for Kill, of one enemy) are one group that plays one of them per firing; a LowAmmo
@@ -632,12 +634,14 @@ sealed partial class SkinnedGear
                     ForgeSkinPlugin.Info($"{_label}: sound {s.Id} ({s.Name}) {s.File} -> {s.Trigger}{(s.EnemyId is { } e ? " of enemy " + e : "")}, volume {s.Volume}, weight {s.Weight}");
                 }
             }
-        // After the attachments, so hiding a part also hides what is mounted under it. Other parts mounted under it
-        // (a sight on the receiver's sight align) are theirs to hide.
+        // Hiding a part hides the game's model there only: other parts mounted under it (a sight on the receiver's sight
+        // align) are theirs to hide, and the skin's own attachments have their own Visible (a whole-gun model hangs on a
+        // hidden part).
         int hidden = 0;
         var partRoots = new HashSet<IntPtr>();
         foreach (var (id, _) in Parts)
             if (PartObject(id) is { } root) partRoots.Add(root.transform.Pointer);
+        foreach (var (root, _, _) in _roots) partRoots.Add(root.transform.Pointer);
         if (weapon != null)
             foreach (var p in doc!.Parts)
             {
@@ -649,6 +653,8 @@ sealed partial class SkinnedGear
                 ForgeSkinPlugin.Info($"{_label}: pose {p.Part}/{p.Path ?? "."} written, now {pose.Describe()}");
                 if (p.Visible == false) hidden++;
             }
+        if (lens != null) PlaceLens(doc!.Sight!.Lens!, lens);
+        if (doc != null) SightZoom(doc);
         if (weapon != null && _holder != null && doc!.Hands is { } hands)
         {
             if (!(string.IsNullOrEmpty(hands.Left) && string.IsNullOrEmpty(hands.Right)))
@@ -715,6 +721,8 @@ sealed partial class SkinnedGear
     void Revert()
     {
         if (_item != null) Shells.Release(_item.Pointer);
+        TakeOffZoom();
+        _lensStyle = 0;
         ReleaseCodeEffects();
         // Last first: of two entries on one node, the first one saw the vanilla pose.
         for (int i = _poses.Count - 1; i >= 0; i--) _poses[i].Revert();
@@ -1016,15 +1024,15 @@ sealed partial class SkinnedGear
             }
             if (r == null) continue;
             var colour = "_ReticuleColor" + l;
-            if ((r.Color != null || r.Intensity != null) && Has(colour) is var tint and not 0)
+            // An off layer is drawn black (added onto the view by colour, so it adds nothing); with no colour given and not off the game's colour stays.
+            if ((r.Color != null || r.Intensity != null || r.Visible == false) && Has(colour) is var tint and not 0)
             {
                 var now = m.GetColor(tint);
                 var k = r.Intensity ?? 1f;
-                m.SetColor(tint, r.Color is { } c ? Glow.Value(m, colour, new Color(c[0], c[1], c[2], now.a), k) : new Color(now.r * k, now.g * k, now.b * k, now.a));
+                m.SetColor(tint, r.Visible == false ? new Color(0, 0, 0, now.a) : r.Color is { } c ? Glow.Value(m, colour, new Color(c[0], c[1], c[2], now.a), k) : new Color(now.r * k, now.g * k, now.b * k, now.a));
             }
             if (r.Scale is float scale && Has("_ReticuleScale" + l) is var s and not 0) m.SetFloat(s, scale);
             if (r.Offset is float offset && Has("_ReticuleOffset" + l) is var d and not 0) m.SetFloat(d, offset);
-            if (r.Visible is bool shown && Has("_Fade" + l) is var f and not 0) m.SetFloat(f, shown ? 1 : 0);
         }
         if (missing != null)
             ForgeSkinPlugin.Fail("skin-reticle-skipped", $"{_label}: material {o.Material} has no {string.Join(", ", missing)}; the skin's reticle there is left out");
@@ -1130,8 +1138,9 @@ sealed partial class SkinnedGear
 
     // ---- attachments and screens ----
 
-    // `paint`: the override whose layers play on the attachment's model (its livery is baked into the model's pictures).
-    void Attach(Skin skin, Attachment a, MaterialOverride? paint)
+    // `paint`: the override whose layers play on the attachment's model (its livery is baked into the model's pictures); `lens`: the
+    // sight lens look the model is drawn with instead of its own material (SkinnedGear.Sight.cs).
+    void Attach(Skin skin, Attachment a, MaterialOverride? paint, Material? lens = null)
     {
         var part = PartObject(a.Part) ?? throw new InvalidOperationException($"attachment {a.Id}: gear has no part {a.Part}");
         var anchor = a.Transform == null ? part.transform : part.transform.Find(a.Transform) ?? Find(part.transform, a.Transform)
@@ -1163,10 +1172,10 @@ sealed partial class SkinnedGear
         Mesh? model = null;
         if (a.Mesh != null)
         {
-            var surface = Surface(skin, a.Material ?? new AttachmentMaterial(), template, a.Hologram);
+            var surface = lens ?? Surface(skin, a.Material ?? new AttachmentMaterial(), template, a.Hologram);
             Child(body, "mesh", model = skin.Mesh(a.Mesh), surface, 0f);
             glowing.Add(surface);
-            if (paint != null) AddLayers(skin, surface, paint.Layers, a.Id);
+            if (paint != null && lens == null) AddLayers(skin, surface, paint.Layers, a.Id);
         }
         if (a.Screen != null)
         {
@@ -1386,6 +1395,7 @@ sealed partial class SkinnedGear
             pose.Write();
         }
         if (first) LogAttachments();
+        WearZoom();
     }
 
     // Where each attachment really is: after every apply and at the first wield (the pose differs while holstered).
@@ -1489,6 +1499,7 @@ sealed partial class SkinnedGear
         {
             if (_unequipFrame == frame) return;
             _unequipFrame = frame;
+            TakeOffZoom();
         }
         Raise(trigger, _on[(int)trigger], time);
         if (trigger == Trigger.Kill)

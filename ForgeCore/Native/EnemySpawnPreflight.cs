@@ -34,6 +34,18 @@ public static partial class EnemySpawn
         return SpawnRefusal.None;
     }
 
+    /// <summary>The radius of the space the enemy's body takes (<c>EnemyBalancingDataBlock.EnemyCollisionRadius</c> of the enemy's balancing
+    /// block, in metres), written to <paramref name="radius"/>. False when the enemy or its balancing block does not exist.</summary>
+    public static bool TryCollisionRadius(uint enemyId, out float radius)
+    {
+        radius = 0f;
+        var block = GameDataBlockBase<EnemyDataBlock>.GetBlock(enemyId);
+        var balancing = block == null ? null : EnemyBalancingDataBlock.GetBlock(block.BalancingDataId);
+        if (balancing == null) return false;
+        radius = balancing.EnemyCollisionRadius;
+        return true;
+    }
+
     private const string SquidBossBasePrefab = "Assets/AssetPrefabs/Characters/Enemies/Bases/SquidBossBase";
     private static readonly string[] SquidBossAnchors = { "StartArea", "TopArea", "MidArea", "BotArea" };
 }

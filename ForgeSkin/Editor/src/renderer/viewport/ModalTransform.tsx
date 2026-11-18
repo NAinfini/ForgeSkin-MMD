@@ -8,6 +8,7 @@ import { overridesFor, threeToUnity, unityDirToThree, type UnityPose, type Vec3 
 import { useStore } from '../store';
 import { displayOffset, layoutTarget, outlinedMeshes, viewRefs } from './refs';
 import { surfaceFrame } from './liveryGpu';
+import { lensTarget } from '../sight';
 
 type Tool = 'move' | 'rotate' | 'scale';
 type Axis = 'x' | 'y' | 'z' | null;
@@ -34,6 +35,7 @@ export interface Target {
 /** What the gizmo and the G/R/S keys act on: the selected attachment, part or sub-part. */
 export function selectedTarget(): Target | null {
   const sel = useStore.getState().selection;
+  if (sel?.kind === 'lens') return lensTarget();
   if (sel?.kind === 'attachment') {
     const g = viewRefs.attachments.get(sel.id);
     if (!g) return null;

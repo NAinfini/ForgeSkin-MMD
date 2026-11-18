@@ -36,6 +36,7 @@ import { LiveryPreview } from './liveryPreview';
 import { Compositor } from './WeaponModel';
 import { anchorObject, ATTACHMENT_EVENT, Loading, partBox, previewEvents, track, useSceneVersion, viewRefs, type CharmMotion } from './refs';
 import { t } from '../i18n';
+import { LENS } from '../sight';
 import { rampTexture } from '../hologram';
 import { notify } from '../ui/notify';
 
@@ -314,13 +315,17 @@ function MeshModel({ glb, attachment }: { glb: string; attachment: Attachment })
   const paint = usePaint(attachment);
   // Paint is drawn over the picture with a lit model's colour already in it (paintTint).
   const maps = useMemo(() => (paint ? { ...own, ...paint } : own), [own, paint]);
+  // The sight's lens on this model: drawn as the lens (sight.ts), as the plugin draws it instead of its own material.
+  const lens = useStore((s) => s.doc.sight?.lens?.attachment === attachment.id && !!s.preview?.params[LENS]);
   useEffect(() => {
     const m = attachment.material;
     const c = m?.color ?? [1, 1, 1, 1];
     const made: Material[] = [];
+    const lensLook = lens ? viewRefs.materials?.get(LENS) : undefined;
     scene.traverse((o) => {
       const mesh = o as Mesh;
       if (!mesh.isMesh || mesh.userData.sfFxShell) return; // a code effect's copy (CodeEffects.tsx) keeps its program
+      if (lensLook) return void (mesh.material = lensLook);
       const src = mesh.material as MeshStandardMaterial;
       const original = (mesh.userData.original ??= src) as MeshStandardMaterial;
       // A hologram glows additively in its colour, dimmed by its opacity; a second colour is a ramp up its UVs (hologram.ts),
@@ -352,7 +357,7 @@ function MeshModel({ glb, attachment }: { glb: string; attachment: Attachment })
     });
     // The next look (or leaving) replaces these copies; the loaded originals stay with the glTF.
     return () => made.forEach((x) => x.dispose());
-  }, [scene, maps, paint, attachment.material, attachment.hologram]); // eslint-disable-line react-hooks/exhaustive-deps -- the attachment is read through these two
+  }, [scene, maps, paint, attachment.material, attachment.hologram, lens]); // eslint-disable-line react-hooks/exhaustive-deps -- the attachment is read through these two
   return <primitive object={scene} />;
 }
 
