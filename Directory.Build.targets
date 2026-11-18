@@ -1,0 +1,19 @@
+<Project>
+  <!-- Build residue of a deleted project (an obj or bin folder with no project beside it) sits inside source folders that other
+       projects include by wildcard (../Network/**, Native/**, ../../ForgeMap/**), and its generated AssemblyInfo then duplicates
+       the including project's own. These are static items evaluated after the project body, so they never remove what a project
+       generates for itself while building. -->
+  <ItemGroup>
+    <Compile Remove="$(MSBuildThisFileDirectory)**/obj/**/*.cs;$(MSBuildThisFileDirectory)**/bin/**/*.cs" />
+  </ItemGroup>
+  <!-- Reproducible assemblies (Mods/Release/README.md, content pins): one commit and one toolchain build the same bytes in any
+       checkout, output directory or time. The compiler is deterministic by default; what still differed was the location: the
+       PDB path, the sources generated into obj and every [CallerFilePath] carry the checkout and the output directory. Both
+       are mapped to fixed prefixes here, after the project body, so a project cannot replace the map. The obj folder comes
+       first because the first matching prefix wins and it may sit inside the checkout. Test projects (under a tests folder)
+       ship nothing and find the checkout through [CallerFilePath], so they keep real paths. -->
+  <PropertyGroup Condition="!$(MSBuildProjectDirectory.Replace('\', '/').Contains('/tests/'))">
+    <PathMap>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)'))=/_obj/,$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..'))=/_/</PathMap>
+  </PropertyGroup>
+  <Import Project="Build/DiagnosticConstants.targets" />
+</Project>

@@ -428,6 +428,12 @@ with its `LICENSE.txt`. The mirror carries them. This repository's Git does not 
 into the mirror by `export-mirror.ps1`); a checkout without them stops with an error naming the missing file, and
 `-p:ForgeModsRoot=<a Mods folder that holds them, trailing slash>` points the build at a folder that has them.
 
+The release bytes (`ForgeCore.dll` of the Thunderstore package) come out identical from the mirror when the clone sits in a folder
+named `Mods` (`git clone https://github.com/NAinfini/GTFO-Forge-Mods.git Mods`; `Directory.Build.targets` maps the checkout to a fixed
+prefix, and `CallerFilePath` strings carry `Mods/...`), on Windows with Git's default CRLF checkout of the sources and the mirror's
+`.gitattributes` keeping `*.json` LF (embedded resources). Any other folder name or an all-LF checkout builds a working plugin whose
+bytes differ.
+
 The editor (`Editor/`) needs the .NET 10 SDK (`pnpm start` builds `Backend/` itself), Node 26.5.1 or newer and pnpm 11 (the
 versions in the repository root `package.json`), and builds the same way in this repository and in an export (the mirror and the
 friend's repository, `Mods/Release/README.md`). It needs no BepInEx profile and no local media. `pnpm install` and the first

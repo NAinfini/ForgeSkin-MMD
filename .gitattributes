@@ -1,0 +1,2 @@
+# Embedded JSON resources are compiled into ForgeCore.dll; keep them LF so the bytes match the release.
+*.json text eol=lf
