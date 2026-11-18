@@ -47,7 +47,8 @@ Forge provides the editor and this base mod; the skins themselves are mods their
 - **Share skins**: in the editor, **Export** → **Export as Thunderstore skin mod…** makes a zip ready for Thunderstore;
   upload it there yourself. Teammates see your skin once they install that mod.
 - **A single skin file**: a `.forgeskin` someone sent you goes into `BepInEx/ForgeSkin/skins/` of your profile.
-- **Source**: https://github.com/NAinfini/GTFO-Forge-Mods.
+- **Source**: https://github.com/NAinfini/GTFO-Forge-Mods. Building the plugin and the editor from it (a BepInEx profile for the plugin, an online
+  first start for Electron): the Build section of `DEVELOPERS.md`.
 
 下载编辑器：https://github.com/NAinfini/GTFO-Forge-Mods/releases/latest （安装版 `Setup.exe` 启动时只检查有没有新版本，点「更新」才下载；也有免安装 zip）。
 皮肤由作者各自发布在 Thunderstore，用模组管理器安装；自己做的皮肤在编辑器里点 **导出** → **导出为 Thunderstore 皮肤模组…**，

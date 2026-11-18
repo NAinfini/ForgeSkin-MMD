@@ -408,6 +408,13 @@ gun; the free-gun track (spin, flip, toss) is first-person only.
 
 ## Build
 
+Paths are the repository's (`Mods/ForgeSkin/...`). In the public mirror (`NAinfini/GTFO-Forge-Mods`) the package folders sit at the
+root, so drop the `Mods/` prefix (`ForgeSkin/ForgeSkin.csproj`, `ForgeSkin/tools/package_release.py`). Run the commands from the
+repository or mirror root.
+
+The plugin needs a BepInEx profile of GTFO (the build references its BepInEx, GTFO-API and game interop assemblies); without
+`-p:GTFOBepInExPath` those references do not resolve:
+
 ```
 dotnet build Mods/ForgeSkin/ForgeSkin.csproj -c Release --artifacts-path artifacts/dotnet -p:GTFOBepInExPath=<profile>/BepInEx
 python Mods/ForgeSkin/tools/package_release.py --artifacts-path artifacts/dotnet --output <folder>
@@ -415,9 +422,16 @@ python Mods/ForgeSkin/tools/package_release.py --artifacts-path artifacts/dotnet
 
 The pack reader (`Core/`) is compiled into `ForgeSkin.Plugin.dll`; the zip holds that one DLL, `lang/` and the metadata.
 
+The build also compiles ForgeCore, which embeds self-made media: the three sights' meshes and textures
+(`ForgeCore/Assets/Sights/*.forgemesh` and `*.t<index>.png`) and the effect bundle (`ForgeCore/Assets/Vfx/forge-vfx.bundle`), each folder
+with its `LICENSE.txt`. The mirror carries them. This repository's Git does not track them (local media of the maintainer's machine, put
+into the mirror by `export-mirror.ps1`); a checkout without them stops with an error naming the missing file, and
+`-p:ForgeModsRoot=<a Mods folder that holds them, trailing slash>` points the build at a folder that has them.
+
 The editor (`Editor/`) needs the .NET 10 SDK (`pnpm start` builds `Backend/` itself), Node 26.5.1 or newer and pnpm 11 (the
 versions in the repository root `package.json`), and builds the same way in this repository and in an export (the mirror and the
-friend's repository, `Mods/Release/README.md`):
+friend's repository, `Mods/Release/README.md`). It needs no BepInEx profile and no local media. `pnpm install` and the first
+`pnpm start` download Electron, so the machine must be online then:
 
 ```
 pnpm install --frozen-lockfile    # in Editor/, its own lockfile; nothing above Editor/ is read
@@ -425,7 +439,12 @@ pnpm lint                         # eslint and tsc; also writes src/renderer/gen
 pnpm start
 ```
 
-The editor imports site code from `Web/src` by relative path. Every npm package that code imports (`zod`, `i18next`, `fast-png`,
+The editor imports site code from `Web/src` by relative path (the character editor and the model import use it), so an export root
+holds a `Web/` folder beside the package folders: the transitive closure of those imports (about 36 files of shared site modules,
+among them `Web/src/forge/generated/wire.ts`), which `export-mirror.ps1` writes whenever it exports ForgeSkin. Without it `pnpm lint`
+fails with "Cannot find module '../../../../../Web/src/...'" and `pnpm start` cannot bundle the renderer. The editor also reads
+`ForgeCore/Visual/Data/fx-programs.json` and `ForgeCore/Visual/tools/shaders/ForgeFxPrograms.hlsl`, so ForgeCore sits beside ForgeSkin.
+The dev server takes port 5190 (`FORGESKIN_DEV_PORT` sets another). Every npm package that code imports (`zod`, `i18next`, `fast-png`,
 `three`, `@gltf-transform/core`, `@gltf-transform/extensions`) is declared in `Editor/package.json`, resolved from the editor's
 own `node_modules` by `paths` in `Editor/tsconfig.json` (type check) and `resolve.dedupe` in `Editor/vite.renderer.config.ts`
 (bundle); a new package in that code goes into all three, and `export-mirror.ps1` fails when one is missing from `package.json`.
