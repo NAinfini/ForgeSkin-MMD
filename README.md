@@ -1,3 +1,46 @@
+# ForgeSkin MMD 版
+
+GTFO 的人物模型 + 舞蹈编辑器（Thunderstore 上 ForgeSkin / ForgeCore 的 MMD 定制版）。
+
+- **人物**：导入 `.glb` / `.vrm` 人物模型，挑骨骼、编辑头发/裙摆弹簧物理（ChainSpec 全套参数 + 3D 选中发束）、量取贴合表面的身体碰撞壳，导出 `.forgeskin` 包应用到游戏。
+- **舞蹈**：导入 VMD 动作 / VMD 镜头 / 表情 / 同名 `.wav` 音乐，三轨剪辑（动作、镜头、音乐各自裁切拖动），导出 `.dance` / `.cam` / `.face`，游戏里按 F9 播放。
+- 依赖只有 BepInEx 6 (IL2CPP) 和 GTFO_API，其余不自动安装。
+
+## 目录
+
+| 路径 | 内容 |
+|---|---|
+| `ForgeSkin/Editor` | 编辑器本体（Electron + Vite + React 19 + Mantine + three.js） |
+| `ForgeSkin/Backend` | 编辑器的 JSON-RPC 后端（.NET 10，打包 .forgeskin、调用 Blender 烘焙） |
+| `ForgeSkin` | 游戏内 ForgeSkin 插件（人物皮肤 / 模型替换）与打包工具 |
+| `ForgeCore` | 共享运行时（导入模型、ChainPhysics 弹簧物理、表情） |
+| `Web` | 编辑器用到的 Web 端模块 |
+| `CHANGELOG-MMD.md` | 相对开源版的全部改动 |
+
+## 编译与运行
+
+```bash
+# 后端
+dotnet build ForgeSkin/Backend/ForgeSkin.Backend.csproj -c Release
+
+# 编辑器（开发模式会自动启动上面的后端）
+cd ForgeSkin/Editor && npm install && npm start
+
+# 游戏插件（把 <profile> 换成你的 r2modman / Thunderstore 配置目录）
+dotnet build ForgeSkin/ForgeSkin.csproj -c Release -p:GTFOBepInExPath="<profile>/BepInEx"
+```
+
+舞蹈烘焙需要本机装 **Blender 4.x/5.x + mmd_tools**，在编辑器设置里指定 `blender.exe`。
+
+## 仓库里没有的文件
+
+- `ForgeSkin/Editor/resources/dance/reference.pmx`：舞蹈烘焙用的参考 MMD 模型（鳴潮_鎖暝）。这是第三方模型，不随仓库分发；把它放回该路径后烘焙才可用。
+- 人物模型、导出的 `.forgeskin` 包、音乐和发布压缩包都太大或不适合公开分发，本地自行准备。
+
+---
+
+以下是原开源版的说明。
+
 # GTFO Forge Mods
 
 Source code and release notes for NAinfini's GTFO mods, published on Thunderstore.

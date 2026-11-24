@@ -2,7 +2,7 @@
   "name": "forgeskin",
   "productName": "ForgeSkin",
   "version": "1.1.5",
-  "description": "GTFO 武器皮肤工坊",
+  "description": "GTFO 人物模型与舞蹈编辑器",
   "private": true,
   "type": "module",
   "main": ".vite/build/main.cjs",
