@@ -1259,7 +1259,14 @@ public sealed class ChainState
                 int p = data.Nearest(lx, ly, lz, double.MaxValue, -1); // the whole cloud: this runs once
                 if (p < 0) continue;
                 int q = p * 6;
-                double inside = (lx - data.Points[q]) * data.Points[q + 3] + (ly - data.Points[q + 1]) * data.Points[q + 4] + (lz - data.Points[q + 2]) * data.Points[q + 5];
+                double ox = lx - data.Points[q], oy = ly - data.Points[q + 1], oz = lz - data.Points[q + 2];
+                double inside = ox * data.Points[q + 3] + oy * data.Points[q + 4] + oz * data.Points[q + 5];
+                // Behind the nearest point only if mostly along its normal: a node past an open surface's edge (a skirt bone in the
+                // pelvis, over the rim of a thigh's surface) is behind the rim's sideways normal without being inside that surface,
+                // and taking that as its bound depth let the thigh pass through the skirt by as much. It is outside, as far as it is
+                // from the surface.
+                double off = ox * ox + oy * oy + oz * oz;
+                if (inside < 0 && inside * inside < 0.5 * off) inside = Math.Sqrt(off);
                 _shRestNear[slot] = p;
                 // Bound outside the surface: the node may gain a little clearance over the bind (up to the standoff), so a raised radius
                 // works where it matters and a bone bound close to the body does not fight its way out of the cloth's own style — that

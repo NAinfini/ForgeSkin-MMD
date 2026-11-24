@@ -280,6 +280,26 @@ internal static class ChainChecks
             }
             double kept = Largest(plain.Nodes, bound.Nodes);
             check(kept < 0.02, $"chain: a strand bound inside a surface keeps its shape ({kept * 1000:F0} mm off the same strand without it)");
+
+            // A strand bound above an open surface's rim (a skirt's bones in the pelvis, over the top of a thigh's surface): it is
+            // not inside that surface, only past its edge, so when the thigh later comes at it from the side it is kept out like any
+            // strand, not let in as deep as the rim's sideways normal said it was at the bind.
+            var past = new ChainState(shape, ChainSpec.Skirt()) { Shells = 1 };
+            past.SetShellData(0, new ChainShellData(Tube(3000, 0.07, 0.7, 1.0)));
+            double tubeIn = 0;
+            for (int i = 0; i <= 480; i++)
+            {
+                double tx = i < 240 ? 0 : 0.25 * Math.Min(1, (i - 240) / 240.0);
+                double ax = i < 60 ? 0 : 0.25 * Math.Min(1, (i - 60) / 60.0), ay = i < 120 ? 1.4 : 1.4 - 0.4 * Math.Min(1, (i - 120) / 60.0);
+                past.SetShellPose(0, SpherePose(tx, 0, 0));
+                past.Update(i / 60.0, Moved(ax - 0.25, ay, 0.03), new[] { ax - 0.25, ay - 0.4, 0.03 });
+                if (i < 240) continue;
+                var p = past.Nodes;
+                for (int k = 1; k < 6; k++)
+                    if (p[k * 3 + 1] > 0.72 && p[k * 3 + 1] < 0.98)
+                        tubeIn = Math.Max(tubeIn, 0.07 - Math.Sqrt(Math.Pow(p[k * 3] - tx, 2) + Math.Pow(p[k * 3 + 2], 2)));
+            }
+            check(tubeIn < 0.01, $"chain: a strand bound past a surface's edge is kept out when it comes at it ({tubeIn * 1000:F1} mm in at most)");
         }
         {
             // The cloth between two bones: a skin point comes up between two nodes (a leg under a skirt) and the piece itself, not
@@ -602,6 +622,21 @@ internal static class ChainChecks
             int o = i * 6;
             points[o] = x * r; points[o + 1] = y * r; points[o + 2] = z * r;
             points[o + 3] = x; points[o + 4] = y; points[o + 5] = z;
+        }
+        return points;
+    }
+
+    // An open vertical tube round the Y axis between two heights (a thigh's surface: its top belongs to the hip), outward normals.
+    static double[] Tube(int n, double r, double bottom, double top)
+    {
+        var points = new double[n * 6];
+        int rings = (int)Math.Sqrt(n), round = n / rings;
+        for (int i = 0; i < n; i++)
+        {
+            double a = 2 * Math.PI * (i % round) / round, y = bottom + (top - bottom) * Math.Min(1, (i / round) / (double)(rings - 1));
+            int o = i * 6;
+            points[o] = Math.Cos(a) * r; points[o + 1] = y; points[o + 2] = Math.Sin(a) * r;
+            points[o + 3] = Math.Cos(a); points[o + 4] = 0; points[o + 5] = Math.Sin(a);
         }
         return points;
     }
