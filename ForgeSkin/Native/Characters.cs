@@ -318,7 +318,7 @@ static class Characters
             var shells = new List<ChainShell>();
             foreach (var s in character.Springs.Shell)
                 if (target.Bone(Array.IndexOf(ClipRig.Names, s.Joint)) is { } on && CharacterRig.ShellPoints(s.Data, out var points))
-                    shells.Add(new ChainShell(on, new ChainShellData(points)));
+                    shells.Add(new ChainShell(on, new ChainShellData(points) { Drives = CharacterRig.DrivesChains(s.Joint) }));
 
             foreach (var chain in character.Springs.Chains)
             {

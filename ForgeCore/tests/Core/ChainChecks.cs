@@ -240,6 +240,7 @@ internal static class ChainChecks
             var s = ChainSpec.Skirt();
             s.Gravity = 0.6;
             s.Restore = 0;
+            s.StyleLeash = 0; // the surface alone: a surface that drives nothing sweeps the strand further than its leash allows
             var shape = new ChainShape();
             int node = shape.AddRoot(0.25, 0, 0);
             for (int i = 0; i < 5; i++) node = shape.Add(node, 0.06, 0, -1, 0);
@@ -284,7 +285,9 @@ internal static class ChainChecks
             // A strand bound above an open surface's rim (a skirt's bones in the pelvis, over the top of a thigh's surface): it is
             // not inside that surface, only past its edge, so when the thigh later comes at it from the side it is kept out like any
             // strand, not let in as deep as the rim's sideways normal said it was at the bind.
-            var past = new ChainState(shape, ChainSpec.Skirt()) { Shells = 1 };
+            var pastSpec = ChainSpec.Skirt();
+            pastSpec.StyleLeash = 0; // the surface alone, as above
+            var past = new ChainState(shape, pastSpec) { Shells = 1 };
             past.SetShellData(0, new ChainShellData(Tube(3000, 0.07, 0.7, 1.0)));
             double tubeIn = 0;
             for (int i = 0; i <= 480; i++)
@@ -335,6 +338,43 @@ internal static class ChainChecks
                 }
             }
             check(fabricIn < 0.005 && stretch < 0.001, $"chain: fabric is kept out of a thigh that swings into it, by swinging the strand ({fabricIn * 1000:F1} mm in at most, pieces off length {stretch * 1000:F2} mm)");
+
+            // The same strand against a thigh that drives it (ChainShellData.Drives): the thigh turns 50 degrees forward about the hip,
+            // into the fabric. The strand's target turns with it, so the fabric stays out of the thigh and the strand's tip follows
+            // where the thigh carries it; without the drive the same thigh swings through the fabric.
+            (double In, double Off) Driven(bool drives)
+            {
+                var spec = ChainSpec.Skirt();
+                spec.Gravity = 0.2;
+                var strand = new ChainState(shape, spec) { Shells = 1 };
+                strand.SetShellData(0, new ChainShellData(Tube(3000, 0.07, 0.6, 1.1)) { Drives = drives });
+                double deepest = 0, off = 0;
+                for (int i = 0; i <= 360; i++)
+                {
+                    double th = 50 * Math.PI / 180 * Math.Clamp((i - 60) / 60.0, 0, 1), c = Math.Cos(th), sn = Math.Sin(th);
+                    strand.SetShellPose(0, new double[] { c, sn, 0, 0, -sn, c, 0, 0, 0, 0, 1, 0, 1.1 * sn, 1.1 - 1.1 * c, 0, 1 });
+                    strand.Update(i / 60.0, Moved(0, 1.15, 0), new[] { 0, 0.75, 0.0 });
+                    if (i < 120) continue;
+                    var p = strand.Nodes;
+                    for (int k = 1; k <= 5; k++)
+                    {
+                        int a = (k - 1) * 3, b = k * 3;
+                        double dx = p[b] - p[a], dy = p[b + 1] - p[a + 1], dz = p[b + 2] - p[a + 2], len = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+                        double vx = dx / len, vy = dy / len, vz = dz / len, cc = -vy, kx = -vz, kz = vx, kr = kx * 0.09 / (1 + cc);
+                        double fx = (p[a] + p[b]) / 2 + 0.09 * cc + kx * kr, fy = (p[a + 1] + p[b + 1]) / 2 + kz * 0.09, fz = (p[a + 2] + p[b + 2]) / 2 + kz * kr;
+                        // Into the thigh's own space: turned back about the hip.
+                        double rx = fx, ry = fy - 1.1, lx = c * rx + sn * ry, ly = -sn * rx + c * ry + 1.1;
+                        if (ly > 0.62 && ly < 1.08) deepest = Math.Max(deepest, 0.07 - Math.Sqrt(lx * lx + fz * fz));
+                    }
+                    // The tip against its bound place carried by the thigh (it was bound at (0, -0.25) from the anchor at y 1.15).
+                    double bx = 0, by = 0.9 - 1.1, tx = c * bx - sn * by, ty = sn * bx + c * by + 1.1;
+                    off = Math.Max(off, Math.Sqrt(Math.Pow(p[15] - tx, 2) + Math.Pow(p[16] - ty, 2) + p[17] * p[17]));
+                }
+                return (deepest, off);
+            }
+            var driven = Driven(true);
+            var loose = Driven(false);
+            check(driven.In < 0.005 && driven.Off < 0.05 && loose.In > 0.02, $"chain: a strand driven by the thigh it hangs against follows it and stays out ({driven.In * 1000:F1} mm in, tip {driven.Off * 1000:F0} mm off the thigh's carry; undriven {loose.In * 1000:F0} mm in)");
         }
         {
             // The cloth between two bones: a skin point comes up between two nodes (a leg under a skirt) and the piece itself, not
@@ -369,9 +409,11 @@ internal static class ChainChecks
             var cloth = ChainSpec.Skirt();
             cloth.Gravity = 0.4;
             cloth.Restore = 0;
+            cloth.StyleLeash = 0; // the surface alone, as above
             var plain = ChainSpec.Skirt();
             plain.Gravity = 0.4;
             plain.Restore = 0;
+            plain.StyleLeash = 0;
             plain.CollideCloth = false;
             double without = MidPenetration(plain), with = MidPenetration(cloth);
             check(without > 0.02, $"chain: a piece between two nodes sinks into a surface without the cloth pass ({without * 1000:F0} mm)");

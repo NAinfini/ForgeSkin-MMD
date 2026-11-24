@@ -254,6 +254,10 @@ public static class CharacterRig
         return wrong.Trim();
     }
 
+    // The body joints whose surfaces drive the chains hanging against them (ChainShellData.Drives): the legs a skirt or a twin tail
+    // swings with. The editor's preview and the game both take it from here.
+    public static bool DrivesChains(string? joint) => joint is "leftUpperLeg" or "leftLowerLeg" or "rightUpperLeg" or "rightLowerLeg";
+
     // A shell's points as doubles, six per point: base64 of x, y, z, nx, ny, nz float32 little-endian. False when the data is not.
     public static bool ShellPoints(string data, out double[] points)
     {

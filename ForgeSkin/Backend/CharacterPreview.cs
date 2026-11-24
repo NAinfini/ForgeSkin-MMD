@@ -16,8 +16,9 @@ public static class CharacterPreview
     public sealed record Node(int Parent, double[] At, double[]? Fabric = null);
     public sealed record Frame(double Time, double[] M, double[] Body, List<double[]>? Capsules = null, List<double[]>? Shells = null);
     /// <summary>A surface: the document's points, and where its bone stands in the model's bind pose (the depth every node keeps
-    /// from it is measured there, not on the first frame of a clip).</summary>
-    public sealed record Shell(string Data, double[]? Rest = null, string? Tris = null);
+    /// from it is measured there, not on the first frame of a clip). `Joint` is the canonical joint it is the skin of; a leg drives the
+    /// chains hanging against it (CharacterRig.DrivesChains).</summary>
+    public sealed record Shell(string Data, double[]? Rest = null, string? Tris = null, string? Joint = null);
 
     public const int MaxFrames = 1200;
     static readonly double[] ZeroMatrix = new double[16];
@@ -71,7 +72,7 @@ public static class CharacterPreview
         state.Shells = given.Count;
         for (var i = 0; i < given.Count; i++)
             if (CharacterRig.ShellPoints(given[i].Data, out var at))
-                state.SetShellData(i, new ChainShellData(at));
+                state.SetShellData(i, new ChainShellData(at) { Drives = CharacterRig.DrivesChains(given[i].Joint) });
 
         if (state.Shells > 0)
         {
