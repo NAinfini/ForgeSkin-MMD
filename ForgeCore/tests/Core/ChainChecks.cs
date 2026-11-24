@@ -302,6 +302,41 @@ internal static class ChainChecks
             check(tubeIn < 0.01, $"chain: a strand bound past a surface's edge is kept out when it comes at it ({tubeIn * 1000:F1} mm in at most)");
         }
         {
+            // Fabric: a cloth strand hung from the pelvis whose bones run down the middle of a thigh (as a skirt's do) with its fabric 2 cm
+            // outside the skin. The thigh swings 4 cm into the fabric: the fabric is kept out by swinging the strand, and its pieces
+            // keep their lengths (the bones that draw the cloth turn, they cannot stretch).
+            var shape = new ChainShape();
+            int last = shape.AddRoot(0, 0, 0);
+            for (int k = 0; k < 5; k++)
+            {
+                last = shape.Add(last, 0.05, 0, -1, 0);
+                shape.Fabric(last, 0.5, 0.09, 0, 0);
+            }
+            var cloth = new ChainState(shape, ChainSpec.Skirt()) { Shells = 1 };
+            cloth.SetShellData(0, new ChainShellData(Tube(3000, 0.07, 0.6, 1.1)));
+            double fabricIn = 0, stretch = 0;
+            for (int i = 0; i <= 360; i++)
+            {
+                double tx = 0.04 * Math.Clamp((i - 60) / 120.0, 0, 1);
+                cloth.SetShellPose(0, SpherePose(tx, 0, 0));
+                cloth.Update(i / 60.0, Moved(0, 1.15, 0), new[] { 0, 0.75, 0.0 });
+                if (i < 120) continue;
+                var p = cloth.Nodes;
+                for (int k = 1; k <= 5; k++)
+                {
+                    int a = (k - 1) * 3, b = k * 3;
+                    double dx = p[b] - p[a], dy = p[b + 1] - p[a + 1], dz = p[b + 2] - p[a + 2], len = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+                    stretch = Math.Max(stretch, Math.Abs(len - 0.05));
+                    // The fabric where the solver keeps it: the offset turned the shortest way from straight down onto the piece
+                    // (Rodrigues with k = (0, -1, 0) x v).
+                    double vx = dx / len, vy = dy / len, vz = dz / len, c = -vy, kx = -vz, kz = vx, kr = kx * 0.09 / (1 + c);
+                    double fx = (p[a] + p[b]) / 2 + 0.09 * c + kx * kr, fy = (p[a + 1] + p[b + 1]) / 2 + kz * 0.09, fz = (p[a + 2] + p[b + 2]) / 2 + kz * kr;
+                    if (fy > 0.62 && fy < 1.08) fabricIn = Math.Max(fabricIn, 0.07 - Math.Sqrt(Math.Pow(fx - tx, 2) + fz * fz));
+                }
+            }
+            check(fabricIn < 0.005 && stretch < 0.001, $"chain: fabric is kept out of a thigh that swings into it, by swinging the strand ({fabricIn * 1000:F1} mm in at most, pieces off length {stretch * 1000:F2} mm)");
+        }
+        {
             // The cloth between two bones: a skin point comes up between two nodes (a leg under a skirt) and the piece itself, not
             // only its nodes, is kept out of the surface. Without the cloth pass the same strand's middle sinks into the sphere; the
             // nodes never get near it, so only the piece's own test can catch this.

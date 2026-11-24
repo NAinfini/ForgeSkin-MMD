@@ -126,6 +126,11 @@ public sealed class SpringChain
     public int? Iterations { get; set; }
     /// <summary>Exact-length sweeps a sub-step, 1 to 8.</summary>
     public int? LengthPasses { get; set; }
+    /// <summary>Where the cloth each strand bone carries lies (the editor measures it from the skin weights): bone name to points of four
+    /// numbers each, t, x, y, z — t of the way from the bone to the next one in its strand (past the last, to its tip), then (x, y, z)
+    /// off that point in the bone's own space. A set with fabric keeps those points out of the body's skin instead of its bones, which
+    /// may lie inside the legs.</summary>
+    public Dictionary<string, float[]>? Fabric { get; set; }
 
     // The ForgeCore spec: the preset with the author's values over it.
     public ChainSpec Spec()
