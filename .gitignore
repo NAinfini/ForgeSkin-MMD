@@ -7,3 +7,16 @@ UserSettings/
 bin/
 obj/
 *.csproj.user
+# the development editor's staged plugin build (build-editor-release.ps1 output)
+artifacts/
+node_modules/
+# local work: backups, scratch builds and the release zips never go in the source repo
+_work/
+发布/
+*.7z
+ForgeSkin/Editor/.tmp/
+ForgeSkin/Editor/.backups/
+*.bak-*
+# third-party MMD model the Blender bake kit opens; not ours to redistribute
+ForgeSkin/Editor/resources/dance/reference.pmx
+*.lnk

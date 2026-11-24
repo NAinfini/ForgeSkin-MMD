@@ -13,27 +13,43 @@ namespace ForgeSkin.Backend;
 public static class CharacterPreview
 {
     public sealed record Node(int Parent, double[] At);
-    public sealed record Frame(double Time, double[] M, double[] Body, List<double[]>? Capsules);
+    public sealed record Frame(double Time, double[] M, double[] Body, List<double[]>? Capsules = null, List<double[]>? Shells = null);
+    /// <summary>A surface: the document's points, and where its bone stands in the model's bind pose (the depth every node keeps
+    /// from it is measured there, not on the first frame of a clip).</summary>
+    public sealed record Shell(string Data, double[]? Rest = null, string? Tris = null);
 
     public const int MaxFrames = 1200;
+    static readonly double[] ZeroMatrix = new double[16];
 
     /// <summary>The author values each preset starts from, for the editor's sliders (the format's own preset rule, SpringChain.Spec).</summary>
     public static object Presets() => Enum.GetValues<SpringKind>().ToDictionary(k => JsonNamingPolicy.CamelCase.ConvertName(k.ToString()), k =>
     {
         var s = new SpringChain { Kind = k }.Spec();
-        return new { stiffness = s.Stiffness, damping = s.Damping, weight = s.Weight, gravity = s.Gravity, radius = s.Radius };
+        return new
+        {
+            stiffness = s.Stiffness, damping = s.Damping, weight = s.Weight, gravity = s.Gravity, radius = s.Radius, angleLimit = s.AngleLimit,
+            restore = s.Restore, styleLeash = s.StyleLeash, inertia = s.Inertia, azimuthLimit = s.AzimuthLimit,
+            collide = s.Collide, collideCloth = s.CollideCloth, selfCollide = s.SelfCollide,
+            step = s.Step, iterations = s.Iterations, lengthPasses = s.LengthPasses,
+        };
     });
 
     /// <summary>Node world positions per frame (base64 little-endian float32, three per node in the order of `nodes`): the chain set
     /// `chain` (the document's own entry, its kind and author values) with its bones at rest as `nodes` in the anchor's frame, the
-    /// strands' node indices (root down) for a side-linked set.</summary>
-    public static object Simulate(SpringChain chain, List<Node> nodes, List<int[]>? strands, List<Frame> frames)
+    /// strands' node indices (root down) for a side-linked set, kept out of the capsules or the shell `shells` (the body's skin as a
+    /// joint's points, as the document holds them) each frame places them. `rest`: the anchor's bind-pose matrix; with it the chain
+    /// is laid at rest beside the shells' own bind poses, so the depths it keeps from the surface are the bind pose's.</summary>
+    public static object Simulate(SpringChain chain, List<Node> nodes, List<int[]>? strands, List<Frame> frames, List<Shell>? shells = null,
+        double[]? rest = null, double? scale = null)
     {
         if (frames.Count is 0 or > MaxFrames) throw new BackendException("bad-request", $"frames: 1 to {MaxFrames}");
-        if (frames.Any(f => f.M is not { Length: 16 } || f.Body is not { Length: 3 } || f.Capsules?.Any(c => c is not { Length: 7 }) == true))
-            throw new BackendException("bad-request", "frames: m has 16 numbers, body 3, a capsule 7");
+        if (frames.Any(f => f.M is not { Length: 16 } || f.Body is not { Length: 3 } || f.Capsules?.Any(c => c is not { Length: 7 }) == true
+                || f.Shells?.Any(s => s is not { Length: 16 }) == true))
+            throw new BackendException("bad-request", "frames: m has 16 numbers, body 3, a capsule 7, a shell pose 16");
         if (nodes.Count < 2 || nodes[0].Parent != -1) throw new BackendException("bad-request", "nodes: a root first, two or more");
         var spec = chain.Spec();
+        // As the game's Characters.Wear does: the author's radius and gravity are model metres, so the worn size multiplies them.
+        if (scale is { } worn) { spec.Radius *= worn; spec.Gravity *= worn; }
         var shape = new ChainShape();
         foreach (var n in nodes)
         {
@@ -47,10 +63,30 @@ public static class CharacterPreview
             shape.Add(n.Parent, length, dx, dy, dz);
         }
         if (chain.LinkSide && strands is { Count: > 1 }) shape.LinkSide(strands, chain.Loop);
-        var state = new ChainState(shape, spec);
+        var state = new ChainState(shape, spec) { Scale = scale ?? 1 };
+        var given = shells ?? [];
+        state.Shells = given.Count;
+        for (var i = 0; i < given.Count; i++)
+            if (CharacterRig.ShellPoints(given[i].Data, out var at))
+                state.SetShellData(i, new ChainShellData(at));
+
+        if (state.Shells > 0)
+        {
+            // The depths are measured on the bind pose the editor sent, before any frame poses the model (a caller without one
+            // gets the first frame's, as it was before). The chain is laid at the anchor's bind pose with them: the first frame's
+            // anchor can be a whole pose away from the bind, and depths measured across that gap fit nothing.
+            for (var i = 0; i < given.Count; i++)
+            {
+                if (given[i].Rest is { Length: 16 } pose) state.SetShellPose(i, pose);
+                else if (frames[0].Shells is { } first && i < first.Count) state.SetShellPose(i, first[i]);
+            }
+            var bind = rest is { Length: 16 } && rest.All(double.IsFinite) ? rest : frames[0].M;
+            state.Rest(bind);
+        }
         var bytes = new byte[state.Count * 3 * 4];
         var floats = new float[state.Count * 3];
         var output = new List<string>(frames.Count);
+        var pushes = new List<double>(frames.Count);
         foreach (var f in frames)
         {
             var caps = f.Capsules ?? [];
@@ -60,12 +96,15 @@ public static class CharacterPreview
                 var c = caps[i];
                 state.SetCapsule(i, c[0], c[1], c[2], c[3], c[4], c[5], c[6]);
             }
+            var poses = f.Shells ?? [];
+            for (var i = 0; i < state.Shells; i++) state.SetShellPose(i, i < poses.Count ? poses[i] : ZeroMatrix);
             state.Update(f.Time, f.M, f.Body);
             for (var i = 0; i < floats.Length; i++) floats[i] = (float)state.Nodes[i];
             Buffer.BlockCopy(floats, 0, bytes, 0, bytes.Length);
             output.Add(Convert.ToBase64String(bytes));
+            pushes.Add(state.DebugPushMax);
         }
-        return new { frames = output };
+        return new { frames = output, pushes };
     }
 
 

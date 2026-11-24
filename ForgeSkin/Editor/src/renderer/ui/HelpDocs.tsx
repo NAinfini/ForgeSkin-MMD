@@ -5,21 +5,18 @@
 //   ## Heading           a section of the page, listed under "On this page" and found by the search
 //   ![caption](shot:x)   a picture from docs/images (<lang>/x.webp, else common/x.webp), with its caption; click to zoom
 //   > [!TIP] / [!NOTE] / [!WARNING]   a callout box
-//   [text](editor:livery)   closes the tutorial and opens that tab of the right panel (any tab id of InspectorTabs)
-//   [text](editor:character-bones)   closes the tutorial and opens that step of the 人物模型 side (any step of character/state)
+//   [text](editor:character-bones)   closes the guide and opens that step of the character side (any step of character/state)
 //   <!-- ... -->         a note for the authors, not shown (a place kept for a part still to be written)
 // The pictures are made by scripts/docs-shots.mjs from the running editor and are not kept in Git (a missing one shows as
 // a placeholder with its caption).
-import { ActionIcon, Badge, Button, Group, Menu, Modal, NavLink, ScrollArea, Text, TextInput, Tooltip } from '@mantine/core';
-import { IconArrowLeft, IconArrowRight, IconBook, IconHelp, IconSchool, IconSearch, IconX } from '@tabler/icons-react';
-import { CHAPTERS, type Chapter } from '../tour/steps';
+import { ActionIcon, Badge, Button, Group, Modal, NavLink, ScrollArea, Text, TextInput, Tooltip } from '@mantine/core';
+import { IconArrowLeft, IconArrowRight, IconBook, IconSearch, IconX } from '@tabler/icons-react';
 import { Marked, type Tokens } from 'marked';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import en from '../docs/en.md?raw';
 import zh from '../docs/zh.md?raw';
 import { t, useLang, type Lang } from '../i18n';
-import { useStore } from '../store';
 import { STEPS as CHARACTER_STEPS, useCharacter } from '../character/state';
 import './help.css';
 
@@ -106,51 +103,23 @@ const useHelp = create<{ page: string | null; anchor: string | null }>(() => ({ 
 /** Opens the tutorial, at `page` or the first one. */
 export const openHelp = (page?: string) => useHelp.setState({ page: page ?? PAGES.zh[0].id, anchor: null });
 
-/** The help menu: the written tutorial, and each guided tutorial on its own. */
+/** The guide's button in the top bar. */
 export function HelpButton() {
   return (
-    <Menu position="bottom-end" width={240}>
-      <Menu.Target>
-        <Tooltip label={t('help.title')}>
-          <ActionIcon size={30} variant="subtle" color="gray" aria-label={t('help.title')} data-tour="help">
-            <IconBook size={19} />
-          </ActionIcon>
-        </Tooltip>
-      </Menu.Target>
-      <Menu.Dropdown>
-        <Menu.Item leftSection={<IconBook size={14} />} onClick={() => openHelp()}>
-          {t('help.docs')}
-        </Menu.Item>
-        <Menu.Divider />
-        <Menu.Label>{t('help.tours')}</Menu.Label>
-        {(Object.keys(CHAPTERS) as Chapter[]).map((c) => (
-          <Menu.Item key={c} leftSection={<IconSchool size={14} />} onClick={() => useStore.setState({ tour: c })}>
-            {t(`tour.chapter.${c}`)}
-          </Menu.Item>
-        ))}
-      </Menu.Dropdown>
-    </Menu>
+    <Tooltip label={t('help.title')}>
+      <ActionIcon size={30} variant="subtle" color="gray" aria-label={t('help.title')} data-tour="help" onClick={() => openHelp()}>
+        <IconBook size={19} />
+      </ActionIcon>
+    </Tooltip>
   );
 }
 
-/** `editor:<tab>`: shows that tab of the right panel on the 武器 side; a part's tab selects the first part when no part is
- * selected. `editor:character-<step>`: shows that step of the 人物模型 side. */
-const TABS = ['texture', 'livery', 'layers', 'attach', 'place', 'sounds', 'look', 'screen', 'effects', 'overview'] as const;
+/** `editor:character-<step>`: closes the guide and shows that step of the character side. */
 function openEditorTab(name: string) {
   const step = CHARACTER_STEPS.find((x) => `character-${x}` === name);
-  if (step) {
-    useHelp.setState({ page: null });
-    return useCharacter.setState({ mode: 'character', step });
-  }
-  const tab = TABS.find((x) => x === name);
-  if (!tab) return;
+  if (!step) return;
   useHelp.setState({ page: null });
-  useCharacter.setState({ mode: 'weapon' });
-  const s = useStore.getState();
-  const partTab = TABS.indexOf(tab) < 5;
-  const first = s.catalog.find((c) => c.id === s.weaponId)?.parts[0]?.id;
-  if (partTab && s.selection?.kind !== 'part' && first) s.select({ kind: 'part', id: first });
-  setTimeout(() => document.querySelector<HTMLElement>(`.rail-tab[aria-label="${CSS.escape(t(`tabs.${tab}`))}"]`)?.click(), 60);
+  useCharacter.setState({ step });
 }
 
 export function HelpDocs() {
@@ -222,9 +191,6 @@ export function HelpDocs() {
               </Text>
             )}
           </ScrollArea>
-          <Button variant="light" color="cyan" leftSection={<IconHelp size={14} />} onClick={() => (useHelp.setState({ page: null }), useStore.setState({ tour: 'basics' }))}>
-            {t('welcome.reopen')}
-          </Button>
         </nav>
         <div className="help-body" ref={body}>
           <article className="help-article">

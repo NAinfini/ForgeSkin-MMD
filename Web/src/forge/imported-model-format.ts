@@ -6,7 +6,7 @@ import {isRecord} from './lib/is-record.ts';
 
 /** 格式只有技术上限（`ImportedModelFormat.cs` 的 `Max*`）：mesh 旁文件整份读成一个字节数组、子网格建成一个索引数组（.NET 最大数组长度），
  *  骨骼下标是 16 位，贴图边长是 Unity Direct3D 11 的上限。材质数、贴图数、文件大小没有上限。 */
-const formatLimits = {arrayBytes: 0x7fffffc7, textureSide: 16384, bones: 65536};
+const formatLimits = {arrayBytes: 0x7fffffc7, textureSide: 16384, bones: 65536, morphs: 256, morphName: 200};
 
 /** 导入器的界限；转换器、本机库读同一份。`advised` 是网站建议值，超出只给提示（`importedModelAdvice`），不拒绝；
  *  服务器的上传限额是它自己的存储与解码策略（`upload-policy.cts`）。 */
@@ -61,14 +61,16 @@ export type ImportedModelMaterial = {
 };
 /** 一根蒙皮骨骼：`parent` 是骨骼表里更靠前的下标（根为 -1），`rest` 是它在模型自身坐标（游戏轴）里的静止姿态，列主序 4×4。 */
 export type ImportedModelBone = {name: string; parent: number; rest: number[]};
-/** 格式 1 是静态模型；格式 2 多一份蒙皮骨架 `skin`，mesh 旁文件也是格式 2（多每顶点的四骨权重）。 */
+/** 格式 1 是静态模型；格式 2 多一份蒙皮骨架 `skin`，mesh 旁文件也是格式 2（多每顶点的四骨权重）；
+ *  格式 3 在蒙皮上再带表情/形态键 `morphs`（名字顺序），mesh 旁文件版本 3 在末尾按同一顺序带每个表情的稀疏顶点位移。 */
 export type ImportedModelDescriptor = {
-    format: 1 | 2;
+    format: 1 | 2 | 3;
     mesh: {sha256: string; vertices: number; indices: number};
     submeshes: {start: number; count: number; material: number}[];
     materials: ImportedModelMaterial[];
     textures: {sha256: string; width: number; height: number}[];
     skin?: {bones: ImportedModelBone[]};
+    morphs?: string[];
 };
 
 const hashPattern = /^[0-9a-f]{64}$/;
@@ -103,8 +105,9 @@ function fields(value: unknown, names: readonly string[], code: string): asserts
 
 /** 描述符的结构读法，规则与 ForgeVisual `ImportedModelDescriptor.Parse` 一致；多余字段、缺字段、越界都拒绝。 */
 export function readImportedModelDescriptor(value: unknown): ImportedModelDescriptor {
-    requireImported(isRecord(value) && (value.format === 1 || value.format === 2), 'descriptor-shape');
-    fields(value, ['format', 'mesh', 'submeshes', 'materials', 'textures', ...(value.format === 2 ? ['skin'] : [])], 'descriptor-shape');
+    requireImported(isRecord(value) && (value.format === 1 || value.format === 2 || value.format === 3), 'descriptor-shape');
+    const skinned = value.format !== 1;
+    fields(value, ['format', 'mesh', 'submeshes', 'materials', 'textures', ...(skinned ? ['skin'] : []), ...(value.format === 3 ? ['morphs'] : [])], 'descriptor-shape');
     const mesh = value.mesh;
     fields(mesh, ['sha256', 'vertices', 'indices'], 'descriptor-shape');
     requireImported(typeof mesh.sha256 === 'string' && hashPattern.test(mesh.sha256), 'descriptor-hash');
@@ -112,7 +115,7 @@ export function readImportedModelDescriptor(value: unknown): ImportedModelDescri
         indices = mesh.indices;
     requireImported(Number.isSafeInteger(vertices) && (vertices as number) >= 3, 'descriptor-mesh');
     requireImported(Number.isSafeInteger(indices) && (indices as number) >= 3 && (indices as number) % 3 === 0, 'descriptor-mesh');
-    requireImported(importedMeshFits(vertices as number, indices as number, value.format === 2), 'descriptor-mesh');
+    requireImported(importedMeshFits(vertices as number, indices as number, skinned), 'descriptor-mesh');
     requireImported(Array.isArray(value.textures), 'descriptor-texture');
     const textures = value.textures.map(texture => {
         fields(texture, ['sha256', 'width', 'height'], 'descriptor-texture');
@@ -197,14 +200,29 @@ export function readImportedModelDescriptor(value: unknown): ImportedModelDescri
         return {start, count, material};
     });
     const out: ImportedModelDescriptor = {
-        format: value.format as 1 | 2,
+        format: value.format as 1 | 2 | 3,
         mesh: {sha256: mesh.sha256 as string, vertices: vertices as number, indices: indices as number},
         submeshes,
         materials,
         textures
     };
-    if (value.format === 2) out.skin = {bones: readBones(value.skin)};
+    if (skinned) out.skin = {bones: readBones(value.skin)};
+    if (value.format === 3) out.morphs = readMorphNames(value.morphs);
     return out;
+}
+
+/** 表情/形态键的名字，顺序与 mesh 旁文件里的位移顺序一致：1 到 256 个，名字唯一、可打印。 */
+function readMorphNames(value: unknown): string[] {
+    requireImported(Array.isArray(value) && value.length >= 1 && value.length <= formatLimits.morphs, 'descriptor-morph');
+    const names = new Set<string>();
+    return value.map(name => {
+        requireImported(
+            typeof name === 'string' && name.length > 0 && name.length <= formatLimits.morphName && !/[\u0000-\u001f\u007f]/.test(name) && !names.has(name),
+            'descriptor-morph'
+        );
+        names.add(name);
+        return name;
+    });
 }
 
 /** 蒙皮骨架：1 到 65536 根（骨骼下标 16 位），名字唯一，父骨在前，静止姿态 16 个有限数。规则与 ForgeVisual 一致。 */
@@ -279,24 +297,35 @@ export interface ImportedMeshSkin {
     joints: Uint16Array;
     weights: Float32Array;
 }
+/** 一个表情/形态键的稀疏位移：`vertices[i]` 顶点的位置加 `deltas[i*3..]`（模型自身坐标，米）。 */
+export interface ImportedMeshMorph {
+    vertices: Uint32Array;
+    deltas: Float32Array;
+}
+const morphBytes = (morphs: readonly ImportedMeshMorph[]) => 4 + morphs.reduce((total, morph) => total + 4 + morph.vertices.length * 16, 0);
 const meshBytes = (vertices: number, indices: number, skinned: boolean) =>
     importedMeshHeaderBytes + vertices * importedMeshVertexBytes + indices * 4 + (skinned ? vertices * importedMeshSkinBytes : 0);
-/** 这些顶点与索引的 mesh 旁文件能否被游戏整份读成一个字节数组。 */
-export const importedMeshFits = (vertices: number, indices: number, skinned: boolean) => meshBytes(vertices, indices, skinned) <= formatLimits.arrayBytes;
-/** mesh 旁文件：`FMSH`、格式（1 静态、2 蒙皮）、顶点数、索引数（各 uint32 小端），然后每顶点 8 个 float，然后 uint32 索引；
- *  格式 2 再接每顶点 4 个 uint16 骨骼下标与 4 个 float 权重。 */
+/** 这些顶点与索引的 mesh 旁文件能否被游戏整份读成一个字节数组（表情部分按实际位移计）。 */
+export const importedMeshFits = (vertices: number, indices: number, skinned: boolean, morphs?: readonly ImportedMeshMorph[]) =>
+    meshBytes(vertices, indices, skinned) + (morphs ? morphBytes(morphs) : 0) <= formatLimits.arrayBytes;
+/** mesh 旁文件：`FMSH`、格式（1 静态、2 蒙皮、3 蒙皮+表情）、顶点数、索引数（各 uint32 小端），然后每顶点 8 个 float，然后 uint32 索引；
+ *  格式 2 再接每顶点 4 个 uint16 骨骼下标与 4 个 float 权重；格式 3 最后接表情：uint32 个数，每个表情 uint32 位移数，
+ *  再每个位移 uint32 顶点下标 + 3 个 float。 */
 export function writeImportedMesh(
     positions: Float32Array,
     normals: Float32Array,
     uvs: Float32Array,
     indices: Uint32Array,
-    skin?: ImportedMeshSkin
+    skin?: ImportedMeshSkin,
+    morphs?: readonly ImportedMeshMorph[]
 ): Uint8Array {
+    requireImported(!morphs || !!skin, 'mesh-morph');
     const vertices = positions.length / 3,
-        bytes = new Uint8Array(meshBytes(vertices, indices.length, !!skin)),
+        version = morphs ? 3 : skin ? 2 : 1,
+        bytes = new Uint8Array(meshBytes(vertices, indices.length, !!skin) + (morphs ? morphBytes(morphs) : 0)),
         view = new DataView(bytes.buffer);
     view.setUint32(0, meshMagic, true);
-    view.setUint32(4, skin ? 2 : 1, true);
+    view.setUint32(4, version, true);
     view.setUint32(8, vertices, true);
     view.setUint32(12, indices.length, true);
     let at = importedMeshHeaderBytes;
@@ -311,6 +340,18 @@ export function writeImportedMesh(
             for (let k = 0; k < 4; k++, at += 2) view.setUint16(at, skin.joints[vertex * 4 + k]!, true);
             for (let k = 0; k < 4; k++, at += 4) view.setFloat32(at, skin.weights[vertex * 4 + k]!, true);
         }
+    if (morphs) {
+        view.setUint32(at, morphs.length, true);
+        at += 4;
+        for (const morph of morphs) {
+            view.setUint32(at, morph.vertices.length, true);
+            at += 4;
+            for (let i = 0; i < morph.vertices.length; i++, at += 16) {
+                view.setUint32(at, morph.vertices[i]!, true);
+                for (let k = 0; k < 3; k++) view.setFloat32(at + 4 + k * 4, morph.deltas[i * 3 + k]!, true);
+            }
+        }
+    }
     return bytes;
 }
 
@@ -320,12 +361,15 @@ export interface ImportedMeshData {
     uvs: Float32Array;
     indices: Uint32Array;
     skin?: ImportedMeshSkin;
+    morphs?: ImportedMeshMorph[];
 }
 /** 读 mesh 旁文件并做 ForgeVisual 同样的检查：长度、文件头、有限数、可用法线、索引不越过顶点；蒙皮的骨骼下标在骨骼表内、权重非负且和为 1。 */
 export function readImportedMesh(bytes: Uint8Array, descriptor: ImportedModelDescriptor): ImportedMeshData {
     const {vertices, indices} = descriptor.mesh,
         bones = descriptor.skin?.bones.length ?? 0;
-    requireImported(bytes.length === meshBytes(vertices, indices, bones > 0), 'mesh-size');
+    // 格式 3 的表情在末尾且是稀疏的：先查前缀，读完再要求恰好用完。
+    const baseBytes = meshBytes(vertices, indices, bones > 0);
+    requireImported(descriptor.format === 3 ? bytes.length >= baseBytes : bytes.length === baseBytes, 'mesh-size');
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     requireImported(view.getUint32(0, true) === meshMagic && view.getUint32(4, true) === descriptor.format, 'mesh-header');
     requireImported(view.getUint32(8, true) === vertices && view.getUint32(12, true) === indices, 'mesh-header');
@@ -368,7 +412,35 @@ export function readImportedMesh(bytes: Uint8Array, descriptor: ImportedModelDes
         }
         requireImported(Math.abs(sum - 1) <= 0.01, 'mesh-skin', {vertex});
     }
-    return {positions, normals, uvs, indices: triangles, skin: {joints, weights}};
+    if (descriptor.format !== 3) {
+        requireImported(at === bytes.length, 'mesh-size');
+        return {positions, normals, uvs, indices: triangles, skin: {joints, weights}};
+    }
+    const morphCount = view.getUint32(at, true);
+    at += 4;
+    requireImported(morphCount === descriptor.morphs?.length, 'mesh-morph');
+    const morphs: ImportedMeshMorph[] = [];
+    for (let m = 0; m < morphCount; m++) {
+        requireImported(at + 4 <= bytes.length, 'mesh-morph');
+        const deltas = view.getUint32(at, true);
+        at += 4;
+        requireImported(deltas <= vertices && at + deltas * 16 <= bytes.length, 'mesh-morph');
+        const movedVertices = new Uint32Array(deltas),
+            moved = new Float32Array(deltas * 3);
+        for (let i = 0; i < deltas; i++, at += 16) {
+            const vertex = view.getUint32(at, true);
+            requireImported(vertex < vertices, 'mesh-morph', {vertex});
+            movedVertices[i] = vertex;
+            for (let k = 0; k < 3; k++) {
+                const value = view.getFloat32(at + 4 + k * 4, true);
+                requireImported(Number.isFinite(value), 'mesh-morph', {vertex});
+                moved[i * 3 + k] = value;
+            }
+        }
+        morphs.push({vertices: movedVertices, deltas: moved});
+    }
+    requireImported(at === bytes.length, 'mesh-size');
+    return {positions, normals, uvs, indices: triangles, skin: {joints, weights}, morphs};
 }
 
 /** 包围盒尺寸（米）：单件资源引用的快照带它，模型被删后用来画占位框。 */

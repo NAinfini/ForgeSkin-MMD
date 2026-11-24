@@ -2,7 +2,7 @@
 // moving the thing through a space the view does not show. The chain's frames come back from the backend and are drawn in the
 // still space, so the gun or the character stays put on screen while what hangs on it swings as it would in the game.
 import { Matrix4, Vector3, type Object3D } from 'three';
-import type { CharmMotion } from './refs';
+import type { CharmMotion } from '../character/state';
 
 const SHAKE_SECONDS = 0.6,
   RUN_SECONDS = 2.6,

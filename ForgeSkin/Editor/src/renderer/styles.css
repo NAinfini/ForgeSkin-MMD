@@ -57,8 +57,46 @@ body {
 /* ---------- shell ---------- */
 .shell {
   display: grid;
-  grid-template-rows: 44px 1fr 28px;
+  grid-template-rows: 44px minmax(0, 1fr);
   height: 100%;
+}
+/* The log dock takes its height out of the stage row while it is open. */
+.shell.has-log {
+  grid-template-rows: 44px minmax(0, 1fr) 260px;
+}
+.log-dock {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--line-soft);
+  background: var(--panel);
+}
+.log-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  height: 38px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12px;
+  color: var(--dust);
+}
+.log-dock-head b {
+  margin-right: 6px;
+  font-weight: 600;
+  color: var(--text);
+}
+.log-dock-body {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 14px 12px;
+}
+/* Wraps the panels: one row, full height (a second, empty row here shows as a window-sized black band). */
+.main-row {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
 }
 .panes {
   min-height: 0;
@@ -526,7 +564,17 @@ body {
   position: relative;
   height: 100%;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: radial-gradient(120% 90% at 50% 38%, #3a3e44 0%, #24272b 52%, #16181b 100%);
+}
+/* The picture itself: everything the 3D view draws lives here, and the 剪辑 strip below takes its own room so a
+   camera view is framed inside what is left rather than running behind the timeline. */
+.stage-view {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 .stage {
   container-type: inline-size;
@@ -544,6 +592,31 @@ body {
 }
 .stage-head > * {
   pointer-events: auto;
+}
+/* The 舞蹈 view switch: the picked side wears the flare orange, like the top bar's tabs. */
+.view-toggle .mantine-SegmentedControl-indicator {
+  background: var(--flare-soft);
+  box-shadow: inset 0 -2px 0 var(--flare);
+}
+.view-toggle .mantine-SegmentedControl-label[data-active] {
+  color: var(--flare);
+}
+/* The frame button mirrors the camera segment beside it: flare wash and underline when on, quiet otherwise. */
+/* Off, it sits on the same dark track as the segment beside it, so the icon stays readable over bright video. */
+.frame-toggle {
+  color: rgba(233, 228, 216, 0.72);
+  background: #101214; /* sampled from the segment track beside it */
+  box-shadow: none;
+}
+.frame-toggle:hover {
+  color: var(--bone);
+  background: var(--raised);
+}
+.frame-toggle[data-on='true'],
+.frame-toggle[data-on='true']:hover {
+  color: var(--flare);
+  background: var(--flare-soft);
+  box-shadow: inset 0 -2px 0 var(--flare);
 }
 .stage-title {
   padding: 4px 8px;
@@ -654,6 +727,404 @@ body {
   position: static;
   max-width: 100%;
   pointer-events: auto;
+}
+/* The dance player, pinned to the stage's bottom edge like a video player's controls. */
+.timeline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 34px 20px 8px;
+  background: linear-gradient(to top, rgba(8, 9, 11, 0.86) 0%, rgba(8, 9, 11, 0.46) 58%, rgba(8, 9, 11, 0) 100%);
+  pointer-events: auto;
+}
+.timeline-controls {
+  margin-bottom: 2px;
+  position: relative;
+}
+/* The volume sits at the row's right end without pulling the play button off centre. */
+.timeline-volume {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.timeline-bar {
+  padding: 4px 6px 0;
+}
+.timeline-bar .mantine-Slider-track {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.timeline-bar .mantine-Slider-bar {
+  background: var(--flare);
+}
+.timeline-bar .mantine-Slider-thumb {
+  width: 13px;
+  height: 13px;
+  border-width: 2px;
+}
+.timeline-clock {
+  padding: 0 6px;
+}
+/* The 剪辑 step's track strip, standing where the plain playback row stands in the other steps — but in the flow, under
+   the picture, so the stage (and a camera view inside it) gives up exactly the room the strip needs. */
+.tracks {
+  position: relative;
+  flex: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 11, 13, 0.94);
+  border-top: 1px solid var(--line-soft);
+  pointer-events: auto;
+}
+.tracks-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 46px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.tracks-clock {
+  font-size: 12px;
+  color: var(--bone);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tracks-trimmed {
+  font-size: 12px;
+  color: var(--dust);
+  white-space: nowrap;
+}
+.tracks-body {
+  display: flex;
+  min-height: 0;
+}
+.tracks-names {
+  flex: none;
+  width: 150px;
+  border-right: 1px solid var(--line-soft);
+}
+.tracks-names .ruler-space {
+  height: 22px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.track-name {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 44px;
+  padding: 0 6px 0 10px;
+  font-size: 12px;
+  color: var(--dust);
+  border-bottom: 1px solid var(--line-soft);
+}
+.track-icon {
+  margin-right: 2px;
+}
+.track-name {
+  cursor: pointer;
+  user-select: none;
+}
+.track-name.is-selected {
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--bone);
+}
+.track-name-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tracks-sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  background: var(--line-soft);
+}
+.track-eye {
+  flex: none;
+}
+.tracks-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tracks-plot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  /* Scrolled sideways when the time axis is stretched; the bar under the lanes is drawn by hand (.tracks-scroll), so the
+     native one stays hidden and the wheel pans as before. */
+  overflow-x: hidden;
+  overflow-y: hidden;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+  background: rgba(255, 255, 255, 0.015);
+  scrollbar-width: none;
+}
+.tracks-plot.is-zoomed {
+  overflow-x: auto;
+}
+.tracks-plot::-webkit-scrollbar {
+  height: 0;
+}
+/* The sideways scrollbar under the lanes: a thumb that mirrors the plot, draggable at any zoom. It only draws itself when
+   the axis is stretched past the window, so a timeline that fits stays clean. */
+.tracks-scroll {
+  position: relative;
+  flex: none;
+  height: 12px;
+  cursor: pointer;
+}
+.tracks-scroll.is-on {
+  background: rgba(255, 255, 255, 0.045);
+}
+.tracks-scroll-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.28);
+}
+.tracks-scroll:hover .tracks-scroll-thumb {
+  background: rgba(255, 255, 255, 0.45);
+}
+/* The small colour square in the clip inspector's header, matching the lane colour of the strip it describes. */
+.clip-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+  display: inline-block;
+}
+/* The axis itself: exactly as wide as the stretched time area, and the thing everything in the plot is placed on. */
+.tracks-canvas {
+  position: relative;
+  min-width: 100%;
+  height: 100%;
+}
+.tracks-zoomx {
+  min-width: 34px;
+  font-size: 11px;
+  color: var(--dust);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.track-ruler {
+  position: relative;
+  height: 22px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.track-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.07);
+}
+.track-tick-label {
+  position: absolute;
+  left: 5px;
+  top: 4px;
+  font-size: 10px;
+  color: var(--dust);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.track-lane {
+  position: relative;
+  height: 44px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.track-clip {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  color: var(--bone);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.track-clip svg {
+  flex: none;
+  opacity: 0.9;
+}
+/* Strips read like a cutting app's: one neutral slate block per clip instead of three coloured bars — the track's colour
+   stays on its icon and name, and the song shows as a cool white envelope on the music strip. */
+.clip-camera,
+.clip-action,
+.clip-music {
+  background: #2b3038;
+  border-color: rgba(255, 255, 255, 0.13);
+}
+.clip-camera {
+  background: #2c313c;
+}
+.clip-action {
+  background: #2f3037;
+}
+/* The song's name rides along the top of its strip, above the envelope, the way a cutting app names its audio. */
+.clip-music {
+  align-items: flex-start;
+  padding-top: 1px;
+}
+.clip-music .clip-label {
+  font-size: 10px;
+  opacity: 0.92;
+}
+/* The song's envelope, painted across the strip behind its label. */
+.clip-wave {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+/* The strip's own words never take a click — they can sit over its edges, and the edges are for trimming. */
+.track-clip > span:not(.clip-handle) {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+.clip-label {
+  flex: none;
+  /* Readable over the song's bright envelope without plating the strip in a second colour. */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+.clip-note {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--dust);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Picking a strip, its edges and the add button — the cutting-app gestures live here. */
+.track-clip {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.track-clip:active {
+  cursor: grabbing;
+}
+.track-clip.is-selected {
+  border-color: #fff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.clip-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 1;
+}
+.clip-handle::after {
+  content: '';
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.55);
+}
+.clip-handle:hover::after {
+  background: #fff;
+}
+.clip-handle.clip-in {
+  left: 0;
+}
+.clip-handle.clip-out {
+  right: 0;
+}
+.clip-add {
+  position: absolute;
+  left: 6px;
+  top: 9px;
+  bottom: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  font-size: 11px;
+  color: var(--dust);
+}
+.clip-add:hover {
+  color: var(--bone);
+  border-color: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.04);
+}
+.track-shade {
+  position: absolute;
+  bottom: 0;
+  background: rgba(6, 7, 9, 0.62);
+  pointer-events: none;
+  z-index: 2;
+}
+.trim-handle {
+  position: absolute;
+  top: 22px;
+  bottom: 0;
+  width: 11px;
+  margin-left: -5px;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+}
+.trim-handle::before {
+  content: '';
+  width: 3px;
+  height: 100%;
+  background: var(--flare);
+  box-shadow: 0 0 0 1px rgba(8, 9, 11, 0.5);
+}
+.trim-handle:hover::before {
+  background: #ffa15c;
+}
+/* The line a dragged edge latched onto — a neighbour's edge or the playhead — while snapping is on. */
+.track-snap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--flare);
+  box-shadow: 0 0 6px rgba(255, 122, 47, 0.7);
+  pointer-events: none;
+  z-index: 5;
+}
+.track-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.45);
+  pointer-events: none;
+  z-index: 4;
 }
 .overlay.motions {
   display: flex;
@@ -1336,17 +1807,32 @@ button.section-toggle:hover .chev {
 }
 
 /* ---------- status ---------- */
-.status {
+/* The status line rides the top bar beside the logo: a row of its own under the window cost 28px of stage for one line
+   nobody read there. The bar's free middle stays draggable; its buttons and bars do not. */
+.topbar > .topbar-status {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 0 10px;
-  border-top: 1px solid var(--line-soft);
+  gap: 12px;
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 64%;
+  height: 100%;
+  padding-left: 16px;
   font-size: 12px;
   color: var(--dust);
+  overflow: hidden;
 }
-.status .grow {
-  flex: 1;
+.topbar-status .grow {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.topbar-status .work-name {
+  flex: none;
+  max-width: 240px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -2183,11 +2669,11 @@ button.section-toggle:hover .chev {
   border-radius: 50%;
   background: var(--warn);
 }
-.status .hot {
+.topbar-status .hot {
   color: var(--dust);
   white-space: nowrap;
 }
-.status .hot.live {
+.topbar-status .hot.live {
   color: var(--flare);
 }
 

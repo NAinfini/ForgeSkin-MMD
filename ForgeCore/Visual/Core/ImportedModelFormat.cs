@@ -68,8 +68,10 @@ public sealed record ImportedBone(string Name, int Parent, float[] Rest);
 /// The description of an imported model, the part of the Forge model package that is JSON: which mesh bytes it draws (by
 /// content hash, vertex and index counts), how the indices split into submeshes, the material of each submesh and the textures the
 /// materials use. Format 1 is a still model; format 2 adds the skeleton its mesh is skinned to (<c>"skin": { "bones": [ { "name",
-/// "parent", "rest" } ] }</c>, parents first), and its mesh carries four bone weights per vertex. The mesh itself and the PNGs travel
-/// beside it as bytes the caller read and checked against these hashes; this library reads no file and computes no hash.
+/// "parent", "rest" } ] }</c>, parents first), and its mesh carries four bone weights per vertex; format 3 adds the model's expressions
+/// (morph targets, the names in <c>"morphs"</c>), whose sparse position deltas follow the mesh's weights in the mesh file. The mesh
+/// itself and the PNGs travel beside it as bytes the caller read and checked against these hashes; this library reads no file and
+/// computes no hash.
 /// <code>
 /// { "format": 1,
 ///   "mesh": { "sha256": "…", "vertices": 5124, "indices": 11718 },
@@ -81,16 +83,17 @@ public sealed record ImportedBone(string Name, int Parent, float[] Rest);
 /// </summary>
 public sealed class ImportedModelDescriptor
 {
-    /// <summary>The still format; <see cref="SkinnedFormat"/> adds a skeleton.</summary>
-    public const int Format = 1, SkinnedFormat = 2;
+    /// <summary>The still format; <see cref="SkinnedFormat"/> adds a skeleton; <see cref="MorphFormat"/> adds the expressions on top of it.</summary>
+    public const int Format = 1, SkinnedFormat = 2, MorphFormat = 3;
     // The only bounds, each a technical one: the mesh file is read as one byte array and its submeshes build one index array (.NET's
     // largest array, Array.MaxLength); a bone index is 16 bits in the mesh file; a texture side is what Unity's Direct3D 11 takes.
-    public const int MaxArray = 0x7FFFFFC7, MaxTextureSide = 16384, MaxBones = 65536;
+    public const int MaxArray = 0x7FFFFFC7, MaxTextureSide = 16384, MaxBones = 65536, MaxMorphs = 256, MaxMorphName = 200;
 
-    private ImportedModelDescriptor(string key, string meshSha256, int vertices, int indices, ImportedSubmesh[] submeshes, ImportedMaterial[] materials, ImportedTexture[] textures, ImportedBone[]? bones)
+    private ImportedModelDescriptor(string key, string meshSha256, int vertices, int indices, ImportedSubmesh[] submeshes, ImportedMaterial[] materials, ImportedTexture[] textures, ImportedBone[]? bones, string[]? morphs)
     {
         Key = key;
         Bones = bones;
+        Morphs = morphs;
         MeshSha256 = meshSha256;
         Vertices = vertices;
         Indices = indices;
@@ -120,6 +123,9 @@ public sealed class ImportedModelDescriptor
     /// <summary>The skeleton of a skinned model (format 2), parents first; null for a still one.</summary>
     public IReadOnlyList<ImportedBone>? Bones { get; }
 
+    /// <summary>The expressions (format 3) in the mesh file's order; null when the model has none.</summary>
+    public IReadOnlyList<string>? Morphs { get; }
+
     /// <summary>Whether any material has a normal map: the built mesh then carries tangents.</summary>
     public bool HasNormalMap { get; }
 
@@ -143,6 +149,7 @@ public sealed class ImportedModelDescriptor
         public MaterialEntry[]? materials { get; set; }
         public TextureEntry[]? textures { get; set; }
         public SkinEntry? skin { get; set; }
+        public string[]? morphs { get; set; }
     }
 
     private sealed class SkinEntry { public BoneEntry[]? bones { get; set; } }
@@ -175,8 +182,25 @@ public sealed class ImportedModelDescriptor
         try { d = JsonSerializer.Deserialize<Document>(json); }
         catch (JsonException error) { failure = Refuse("the descriptor is not valid JSON: " + error.Message); return null; }
         if (d == null) { failure = Refuse("the descriptor is empty"); return null; }
-        if (d.format != Format && d.format != SkinnedFormat) { failure = Refuse("descriptor format " + d.format + " is not " + Format + " or " + SkinnedFormat); return null; }
-        if ((d.skin != null) != (d.format == SkinnedFormat)) { failure = Refuse("a skeleton comes with format " + SkinnedFormat + " and only with it"); return null; }
+        if (d.format is not (Format or SkinnedFormat or MorphFormat)) { failure = Refuse("descriptor format " + d.format + " is not " + Format + ", " + SkinnedFormat + " or " + MorphFormat); return null; }
+        var skinned = d.format != Format;
+        if ((d.skin != null) != skinned) { failure = Refuse("a skeleton comes with format " + SkinnedFormat + " and later"); return null; }
+        string[]? morphs = null;
+        if (d.format == MorphFormat)
+        {
+            var rows = d.morphs;
+            if (rows is not { Length: >= 1 and <= MaxMorphs }) { failure = Refuse("format " + MorphFormat + " needs 1 to " + MaxMorphs + " expressions"); return null; }
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            morphs = new string[rows.Length];
+            for (var i = 0; i < rows.Length; i++)
+            {
+                var name = rows[i];
+                if (string.IsNullOrEmpty(name) || name.Length > MaxMorphName || !names.Add(name)) { failure = Refuse("expression " + i + " has no name of its own"); return null; }
+                foreach (var c in name) if (c < ' ' || c == '\u007f') { failure = Refuse("expression " + i + " has a name with control characters"); return null; }
+                morphs[i] = name;
+            }
+        }
+        else if (d.morphs != null) { failure = Refuse("expressions come with format " + MorphFormat + " and only with it"); return null; }
         if (d.mesh == null || !IsHash(d.mesh.sha256)) { failure = Refuse("the mesh has no SHA-256"); return null; }
         if (d.mesh.vertices < 3) { failure = Refuse("the mesh has " + d.mesh.vertices + " vertices (3 or more)"); return null; }
         if (d.mesh.indices < 3 || d.mesh.indices % 3 != 0) { failure = Refuse("the mesh has " + d.mesh.indices + " indices (a multiple of 3)"); return null; }
@@ -245,7 +269,7 @@ public sealed class ImportedModelDescriptor
                 bones[i] = new ImportedBone(b.name, b.parent, (float[])rest.Clone());
             }
         }
-        return new ImportedModelDescriptor(JsonSerializer.Serialize(d), d.mesh.sha256!, d.mesh.vertices, d.mesh.indices, submeshes, materials, textures, bones);
+        return new ImportedModelDescriptor(JsonSerializer.Serialize(d), d.mesh.sha256!, d.mesh.vertices, d.mesh.indices, submeshes, materials, textures, bones, morphs);
     }
 
     /// <summary>Whether the files beside the descriptor are what building the model reads them as, short of the GPU: as many textures as it
@@ -303,7 +327,7 @@ internal sealed class ImportedMesh
     public const uint Magic = 0x48534D46;
     private const float MinNormalSquared = 0.25f;
 
-    private ImportedMesh(float[] positions, float[] normals, float[] uvs, int[] indices, int[]? boneIndices, float[]? boneWeights)
+    private ImportedMesh(float[] positions, float[] normals, float[] uvs, int[] indices, int[]? boneIndices, float[]? boneWeights, ImportedMorph[]? morphs)
     {
         Positions = positions;
         Normals = normals;
@@ -311,7 +335,14 @@ internal sealed class ImportedMesh
         Indices = indices;
         BoneIndices = boneIndices;
         BoneWeights = boneWeights;
+        Morphs = morphs;
     }
+
+    /// <summary>One expression's sparse position deltas (format 3), in the vertices' order.</summary>
+    public sealed record ImportedMorph(int[] Vertices, float[] Deltas);
+
+    /// <summary>The expressions in the descriptor's order; null when the model has none.</summary>
+    public ImportedMorph[]? Morphs { get; }
 
     /// <summary>Four per vertex, into the descriptor's bones; null for a still mesh.</summary>
     public int[]? BoneIndices { get; }
@@ -337,9 +368,10 @@ internal sealed class ImportedMesh
         var vertices = descriptor.Vertices;
         var indices = descriptor.Indices;
         var bones = descriptor.Bones?.Count ?? 0;
-        var version = (uint)(bones == 0 ? ImportedModelDescriptor.Format : ImportedModelDescriptor.SkinnedFormat);
+        var version = (uint)(bones == 0 ? ImportedModelDescriptor.Format : descriptor.Morphs == null ? ImportedModelDescriptor.SkinnedFormat : ImportedModelDescriptor.MorphFormat);
         var size = Bytes(vertices, indices, bones != 0);
-        if (bytes.Length != size)
+        // 格式 3 在蒙皮之后再接表情：先按前面的定长部分检查，读完再要求恰好用完（表情是稀疏的，长度在文件里）。
+        if (bytes.Length < size || (version != ImportedModelDescriptor.MorphFormat && bytes.Length != size))
         {
             failure = Bad("the mesh is " + bytes.Length + " bytes, the descriptor's " + vertices + " vertices and " + indices + " indices make " + size);
             return null;
@@ -369,7 +401,7 @@ internal sealed class ImportedMesh
             if (index >= (uint)vertices) { failure = Bad("index " + i + " is " + index + ", past the " + vertices + " vertices"); return null; }
             triangles[i] = (int)index;
         }
-        if (bones == 0) return new ImportedMesh(positions, normals, uvs, triangles, null, null);
+        if (bones == 0) return new ImportedMesh(positions, normals, uvs, triangles, null, null, null);
         var boneIndices = new int[vertices * 4];
         var boneWeights = new float[vertices * 4];
         for (var v = 0; v < vertices; v++)
@@ -385,7 +417,41 @@ internal sealed class ImportedMesh
             }
             if (Math.Abs(sum - 1f) > 0.01f) { failure = Bad("vertex " + v + " has bone weights that sum to " + sum); return null; }
         }
-        return new ImportedMesh(positions, normals, uvs, triangles, boneIndices, boneWeights);
+        if (version != ImportedModelDescriptor.MorphFormat)
+        {
+            if (at != bytes.Length) { failure = Bad("the mesh has " + (bytes.Length - at) + " bytes past its indices and weights"); return null; }
+            return new ImportedMesh(positions, normals, uvs, triangles, boneIndices, boneWeights, null);
+        }
+        var names = descriptor.Morphs!;
+        if (at + 4 > bytes.Length) { failure = Bad("the mesh ends before its expressions"); return null; }
+        var morphCount = BitConverter.ToUInt32(bytes, at);
+        at += 4;
+        if (morphCount != (uint)names.Count) { failure = Bad("the mesh has " + morphCount + " expressions, the descriptor names " + names.Count); return null; }
+        var morphs = new ImportedMorph[names.Count];
+        for (var m = 0; m < morphs.Length; m++)
+        {
+            if (at + 4 > bytes.Length) { failure = Bad("expression " + m + " ends early"); return null; }
+            var moved = BitConverter.ToUInt32(bytes, at);
+            at += 4;
+            if (moved > (uint)vertices || at + (long)moved * 16 > bytes.Length) { failure = Bad("expression '" + names[m] + "' moves " + moved + " vertices, the mesh has " + vertices); return null; }
+            var spots = new int[moved];
+            var deltas = new float[moved * 3];
+            for (var i = 0; i < spots.Length; i++, at += 16)
+            {
+                var vertex = BitConverter.ToUInt32(bytes, at);
+                if (vertex >= (uint)vertices) { failure = Bad("expression '" + names[m] + "' moves vertex " + vertex + ", past the " + vertices + " vertices"); return null; }
+                spots[i] = (int)vertex;
+                for (var k = 0; k < 3; k++)
+                {
+                    var value = BitConverter.ToSingle(bytes, at + 4 + k * 4);
+                    if (!float.IsFinite(value)) { failure = Bad("expression '" + names[m] + "' gives vertex " + vertex + " a number that is not finite"); return null; }
+                    deltas[i * 3 + k] = value;
+                }
+            }
+            morphs[m] = new ImportedMorph(spots, deltas);
+        }
+        if (at != bytes.Length) { failure = Bad("the mesh has " + (bytes.Length - at) + " bytes past its expressions"); return null; }
+        return new ImportedMesh(positions, normals, uvs, triangles, boneIndices, boneWeights, morphs);
     }
 
     private static ImportedModelFailure Bad(string detail) => new(ImportedModelCodes.Mesh, detail);

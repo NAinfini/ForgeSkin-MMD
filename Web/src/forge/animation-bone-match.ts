@@ -8,9 +8,34 @@ interface Bone {
 type Side = 'left' | 'right';
 type Part = 'hand' | 'foot' | 'head' | 'neck' | 'hip';
 
+/** MMD（PMX）标准日文骨骼名换成英文词，下面的通用规则才认得出左右、部位和辅助骨（足首/手首必须先于首，腰キャンセル 里藏着腰）。 */
+const mmdWords: readonly [RegExp, string][] = [
+    [/つま先/g, 'toe'],
+    [/足首/g, 'ankle'],
+    [/手首/g, 'wrist'],
+    [/ひざ|膝/g, 'knee'],
+    [/ひじ|肘/g, 'elbow'],
+    [/頭/g, 'head'],
+    [/首/g, 'neck'],
+    [/肩/g, 'shoulder'],
+    [/腕/g, 'arm'],
+    [/上半身/g, 'spine'],
+    [/下半身/g, 'hips'],
+    [/腰/g, 'waist'],
+    [/人指/g, 'index'],
+    [/中指/g, 'middle'],
+    [/薬指/g, 'ring'],
+    [/小指/g, 'pinky'],
+    [/親指/g, 'thumb'],
+    [/ＩＫ|IK/g, 'ik'],
+    [/捩/g, 'twist'],
+    [/左/g, 'left'],
+    [/右/g, 'right']
+];
 /** 名字拆成小写词：`Bip01 L UpperArm` → bip01 l upper arm，`thigh_l` → thigh l，`lThighBend` → l thigh bend。命名空间前缀不算。 */
 function words(name: string): string[] {
-    const own = name.slice(name.lastIndexOf(':') + 1).replace(/^mixamorig\d*/i, '');
+    let own = name.slice(name.lastIndexOf(':') + 1).replace(/^mixamorig\d*/i, '');
+    for (const [pattern, word] of mmdWords) own = own.replace(pattern, ` ${word} `);
     return own
         .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
         .toLowerCase()
@@ -75,8 +100,66 @@ export interface BoneMatch<T> {
     bones: Map<string, T>;
     missing: string[];
 }
+
+/** MMD（PMX）标准骨骼名的直接对应表：这套名字一出现就按名字对，不再走链猜——MMD 的 肩P/肩C/腕捩/手捩/腰キャンセル
+ * 这些辅助骨会让走链法把 胸、肩、脊柱 认错。 */
+const mmdBodyJoints: readonly [string, readonly string[]][] = [
+    // 髋取 センター（MMD 的身体根，在骨盆高度）：MMD 里 上半身 和 下半身 的起点几乎重合（这个模型差 0.3 mm），
+    // 拿 下半身 当髋时「髋→脊柱」方向是一串噪声，编辑器和游戏会按这个方向把髋扭过去（63°），整个人就变形了；
+    // センター→上半身 基本朝正上方（1° 左右）。没有 センター 再退到 腰、下半身。
+    ['hip', ['センター', '腰', '下半身']],
+    ['spine0', ['上半身']],
+    ['spine1', ['上半身2']],
+    ['neck', ['首']],
+    ['head', ['頭']]
+];
+const mmdLimbs: readonly [string, readonly string[], readonly string[]][] = [
+    ['Shoulder', ['肩.L', '左肩', '肩C.L'], ['肩.R', '右肩', '肩C.R']],
+    ['UpperArm', ['腕.L', '左腕'], ['腕.R', '右腕']],
+    ['LowerArm', ['ひじ.L', '左ひじ', '肘.L'], ['ひじ.R', '右ひじ', '肘.R']],
+    ['Hand', ['手首.L', '左手首'], ['手首.R', '右手首']],
+    // 腿优先用 D（変形用）链：有 足D/ひざD/足首D 的模型，顶点权重都在这条链上，足/ひざ/足首 只是 IK 控制骨（权重为 0），
+    // 动它们网格不会跟着动。没有 D 链的模型再退回普通名字。
+    ['UpperLeg', ['足D.L', '足.L', '左足D', '左足'], ['足D.R', '足.R', '右足D', '右足']],
+    ['LowerLeg', ['ひざD.L', 'ひざ.L', '左ひざD', '左ひざ', '膝D.L', '膝.L'], ['ひざD.R', 'ひざ.R', '右ひざD', '右ひざ', '膝D.R', '膝.R']],
+    ['Foot', ['足首D.L', '足首.L', '左足首D', '左足首'], ['足首D.R', '足首.R', '右足首D', '右足首']]
+];
+/** 有 下半身 与 上半身 的骨架当作 MMD 骨架；否则返回 null，交给下面的通用走链。 */
+function matchMmdBones<T extends Bone>(root: T): BoneMatch<T> | null {
+    const bones = allBones(root),
+        by = new Map<string, Bone>();
+    for (const bone of bones) if (!by.has(bone.name)) by.set(bone.name, bone);
+    if (!by.has('下半身') || !by.has('上半身')) return null;
+    const found = new Map<string, Bone>(),
+        missing = new Set<string>();
+    const take = (joint: string, names: readonly string[]) => {
+        const bone = names.map(name => by.get(name)).find((candidate): candidate is Bone => !!candidate);
+        if (bone) found.set(joint, bone);
+        else missing.add(joint);
+    };
+    for (const [joint, names] of mmdBodyJoints) take(joint, names);
+    // 最上一节脊柱：有的模型在 上半身2 之上叫 上半身3，有的叫 上半身1；都没有就取 首 的上一根。
+    const top = by.get('上半身3') ?? by.get('上半身1'),
+        neck = by.get('首'),
+        upper = neck?.parent && !isHelper(neck.parent) ? neck.parent : undefined;
+    if (top) found.set('spine2', top);
+    else if (upper && upper !== found.get('spine1')) found.set('spine2', upper);
+    else missing.add('spine2');
+    for (const [part, left, right] of mmdLimbs) {
+        take('left' + part, left);
+        take('right' + part, right);
+    }
+    for (const side of ['left', 'right'] as const) {
+        const hand = found.get(side + 'Hand');
+        if (hand) for (const [joint, bone] of matchHumanFingers(hand, side)) found.set(joint, bone);
+    }
+    return {bones: found as Map<string, T>, missing: [...missing]};
+}
+
 /** 人形的 20 个规范关节（`HumanJoints`）加手掌的三根手指（有就带上，转换用它们量手掌朝向）。认不出的关节列在 `missing`。 */
 export function matchHumanBones<T extends Bone>(root: T): BoneMatch<T> {
+    const mmd = matchMmdBones(root);
+    if (mmd) return mmd;
     const bones = allBones(root),
         found = new Map<string, Bone>(),
         missing = new Set<string>();

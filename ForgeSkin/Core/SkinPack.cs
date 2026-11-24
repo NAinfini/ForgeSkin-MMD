@@ -308,12 +308,16 @@ public sealed class SkinPack : IDisposable
             foreach (var s in chains)
             {
                 static bool In(float? v, float min, float max) => v is not { } x || x >= min && x <= max;
+                static bool InCount(int? v, int min, int max) => v is not { } x || x >= min && x <= max;
                 if (string.IsNullOrWhiteSpace(s.Id) || !ids.Add(s.Id) || string.IsNullOrWhiteSpace(s.Anchor) || !Enum.IsDefined(s.Kind))
                     Bad("bad-character-spring", $"spring {s.Id}: an id of its own, an anchor bone and a kind");
                 if (s.Strands.Count < 1 || s.Strands.Any(b => b.Count < 2 || b.Any(string.IsNullOrWhiteSpace)))
                     Bad("bad-character-spring", $"spring {s.Id}: one or more strands of two or more bones");
-                if (!In(s.Weight, 0.1f, 3) || !In(s.Damping, 0, 1) || !In(s.Stiffness, 0, 1) || !In(s.Gravity, 0, 3) || !In(s.Radius, 0, CharacterSkin.MaxRadius))
-                    Bad("bad-character-spring", $"spring {s.Id}: weight 0.1 to 3, damping and stiffness 0 to 1, gravity 0 to 3, radius 0 to {CharacterSkin.MaxRadius}");
+                if (!In(s.Weight, 0.1f, 3) || !In(s.Damping, 0, 1) || !In(s.Stiffness, 0, 1) || !In(s.Gravity, 0, 3) || !In(s.Radius, 0, CharacterSkin.MaxRadius) || !In(s.AngleLimit, 0, 180))
+                    Bad("bad-character-spring", $"spring {s.Id}: weight 0.1 to 3, damping and stiffness 0 to 1, gravity 0 to 3, radius 0 to {CharacterSkin.MaxRadius}, bend limit 0 to 180");
+                if (!In(s.Restore, 0, 1) || !In(s.StyleLeash, 0, 1) || !In(s.Inertia, 0, 1) || !In(s.AzimuthLimit, 0, 180)
+                    || !In(s.Step, 1f / 480, 1f / 60) || !InCount(s.Iterations, 1, 12) || !InCount(s.LengthPasses, 1, 8))
+                    Bad("bad-character-spring", $"spring {s.Id}: restore, style leash and inertia 0 to 1, azimuth limit 0 to 180, step 1/480 to 1/60 s, iterations 1 to 12, length passes 1 to 8");
             }
             foreach (var k in c.Springs.Capsules)
             {
@@ -321,6 +325,10 @@ public sealed class SkinPack : IDisposable
                 Vec(k.A, 3, $"capsule on {k.Joint}");
                 Vec(k.B, 3, $"capsule on {k.Joint}");
             }
+            foreach (var k in c.Springs.Shell)
+                if (!c.Bones.ContainsKey(k.Joint) || !CharacterRig.ShellPoints(k.Data, out var shellAt)
+                    || (k.Tris is { Length: > 0 } shellTris && !CharacterRig.ShellTriangles(shellTris, shellAt.Length / 6, out _)))
+                    Bad("bad-character-shell", $"shell on {k.Joint}: a mapped joint, points as base64 float32 x, y, z, nx, ny, nz and, when set, triangles as base64 uint32 three point indices");
             foreach (var m in c.Materials)
                 if (m.Shader is not (CharacterMaterial.Lit or CharacterMaterial.Toon) || (m.Params ?? new()).Values.Any(v => v.Length is < 1 or > 4 || !v.All(float.IsFinite)))
                     Bad("bad-character-material", $"material {m.Name}: shader lit or toon, each parameter one to four finite numbers");

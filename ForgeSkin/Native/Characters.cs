@@ -314,13 +314,25 @@ static class Characters
             foreach (var k in character.Springs.Capsules)
                 if (target.Bone(Array.IndexOf(ClipRig.Names, k.Joint)) is { } on)
                     capsules.Add(new ChainCapsule(on, new Vector3(k.A[0], k.A[1], k.A[2]), new Vector3(k.B[0], k.B[1], k.B[2]), k.Radius * size));
+            // The body as its skin: each joint's points are in that joint's bone space, which the world scale takes along itself.
+            var shells = new List<ChainShell>();
+            foreach (var s in character.Springs.Shell)
+                if (target.Bone(Array.IndexOf(ClipRig.Names, s.Joint)) is { } on && CharacterRig.ShellPoints(s.Data, out var points))
+                    shells.Add(new ChainShell(on, new ChainShellData(points)));
+
             foreach (var chain in character.Springs.Chains)
             {
+                var anchor = bones[chain.Anchor];
+                // A spare copy of the model on a degenerate skeleton (a ghost scaled a thousand times off-screen) is not worth
+                // chains: they would simulate nonsense and only pollute the diagnostics.
+                var e = anchor.lossyScale;
+                float anchorScale = (Mathf.Abs(e.x) + Mathf.Abs(e.y) + Mathf.Abs(e.z)) / 3f;
+                if (!(anchorScale > 0.1f) || anchorScale > 20f) break;
                 var spec = chain.Spec();
                 spec.Radius *= size;
                 spec.Gravity *= size;
-                worn.Chains.Add(Chains.Bind(bones[chain.Anchor], chain.Strands.Select(s => s.Select(n => bones[n]).ToArray()).ToList(), spec, capsules,
-                    chain.LinkSide, chain.Loop, agent != null ? agent.transform : body.transform, renderer));
+                worn.Chains.Add(Chains.Bind(anchor, chain.Strands.Select(s => s.Select(n => bones[n]).ToArray()).ToList(), spec, capsules,
+                    chain.LinkSide, chain.Loop, agent != null ? agent.transform : body.transform, Near(shells, chain, bones, 0.25f * size), chain.Id));
             }
             worn.Copy = Models.CopyPose(body, target, HumanRig.ArmReach, label) ?? throw new InvalidOperationException("the body's pose cannot be copied (ForgeCore logged why)");
             worn.Copy.Follow();
@@ -372,6 +384,42 @@ static class Characters
         ForgeSkinPlugin.Fail("skin-character-part-skipped", $"character {skin.Doc.Id}: the {(model > 0 ? "body's" : "model's")} height cannot be measured (the head must be mapped and rest above the feet, or above the model's floor without feet), so the model is not fitted to the body's height; it shows at its own size");
         var own = body.transform.lossyScale.x / Math.Max(1e-4f, body.transform.localScale.x);
         return own * height;
+    }
+
+    // The surfaces a set can reach, out of every one the character has: those whose bounds meet the set's own bones at the bind, grown
+    // by `margin` for what swings past them. A ponytail is kept out of the head and back, not out of the feet — a set holding every
+    // surface the character has multiplies the whole body by the number of sets every layer of the solve, and the frame with it.
+    static List<ChainShell> Near(List<ChainShell> shells, SpringChain chain, Dictionary<string, Transform> bones, float margin)
+    {
+        var min = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+        var max = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+        var any = false;
+        void Add(string name)
+        {
+            if (!bones.TryGetValue(name, out var t)) return;
+            var p = t.position;
+            min = Vector3.Min(min, p);
+            max = Vector3.Max(max, p);
+            any = true;
+        }
+        Add(chain.Anchor);
+        foreach (var strand in chain.Strands) foreach (var name in strand) Add(name);
+        if (!any) return shells;
+        min -= new Vector3(margin, margin, margin);
+        max += new Vector3(margin, margin, margin);
+        var mine = new List<ChainShell>();
+        foreach (var shell in shells)
+        {
+            var scale = shell.Bone.lossyScale;
+            float unit = (Mathf.Abs(scale.x) + Mathf.Abs(scale.y) + Mathf.Abs(scale.z)) / 3f;
+            var c = shell.Bone.TransformPoint(new Vector3((float)shell.Data.Center[0], (float)shell.Data.Center[1], (float)shell.Data.Center[2]));
+            float r = (float)shell.Data.Radius * unit;
+            float dx = Mathf.Max(0f, Mathf.Max(min.x - c.x, c.x - max.x));
+            float dy = Mathf.Max(0f, Mathf.Max(min.y - c.y, c.y - max.y));
+            float dz = Mathf.Max(0f, Mathf.Max(min.z - c.z, c.z - max.z));
+            if (dx * dx + dy * dy + dz * dz <= r * r) mine.Add(shell);
+        }
+        return mine;
     }
 
     // The local player's own arms in first person: a second instance of the model cut to its arms, worn on the game's first-person arms

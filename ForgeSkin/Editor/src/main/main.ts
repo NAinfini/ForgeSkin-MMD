@@ -1,11 +1,14 @@
 import { app, autoUpdater, BrowserWindow, dialog, ipcMain, net, protocol, shell, type OpenDialogOptions } from 'electron';
 import { execFile } from 'node:child_process';
+import { createReadStream } from 'node:fs';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
+import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, extname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
+import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import squirrelStartup from 'electron-squirrel-startup';
 import { Backend } from './backend';
+import { bakeDance, blenderVersion, findBlender, type BakeRequest } from './dance';
 import { dataDir, edition, moveData, moveInstallData } from './dataDir';
 
 // The installer runs the app once per install, update and uninstall to make or remove its shortcuts; it quits then. The
@@ -25,30 +28,13 @@ function movePreRenameUserData(): void {
 }
 movePreRenameUserData();
 
-// `--ai-control[=<port>]` (default 9333) opens the Chromium DevTools protocol on 127.0.0.1 so an AI agent can drive the
-// window, and the renderer then offers window.forgeAI (renderer/aiControl.ts); without it no debugging port is open. The
-// environment variable FORGESKIN_AI_CONTROL (a port, or 1 for the default) does the same, for launches that cannot pass
-// arguments (the Start-menu shortcut). It has to be appended before the app is ready.
-// File dialogs stay the system's; an agent answers them beforehand (see pickPaths).
-const aiControl =
-  process.argv.find((a) => a === '--ai-control' || a.startsWith('--ai-control=')) ??
-  (process.env.FORGESKIN_AI_CONTROL ? `--ai-control=${process.env.FORGESKIN_AI_CONTROL === '1' ? 9333 : process.env.FORGESKIN_AI_CONTROL}` : undefined);
-let aiControlOn = false;
-if (aiControl) {
-  const port = aiControl === '--ai-control' ? 9333 : Number(aiControl.slice('--ai-control='.length));
-  if (Number.isInteger(port) && port >= 1024 && port <= 65535) {
-    app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
-    app.commandLine.appendSwitch('remote-debugging-port', String(port));
-    // A window behind others counts as hidden and Chromium then stops animation frames, so menus never open: keep it live.
-    app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
-    app.commandLine.appendSwitch('disable-renderer-backgrounding');
-    aiControlOn = true;
-  } else appLog('ai-control', `ignored ${aiControl}: the port must be an integer from 1024 to 65535`);
-}
-
 // Chromium's HTTP disk cache only ever holds what comes over http (a development run's modules): the app's own files are
 // file:// and sf:// and never cached. Kept small.
 app.commandLine.appendSwitch('disk-cache-size', String(32 << 20));
+
+// A development door for testing: with FORGESKIN_CDP_PORT set, Chromium serves the DevTools protocol on that port and the
+// window can be screenshotted and driven without touching the real mouse or stealing focus. A plain run never sets it.
+if (process.env.FORGESKIN_CDP_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.FORGESKIN_CDP_PORT);
 
 /**
  * V8's code cache keeps the compiled scripts of every app version (and development build): deleted when the version
@@ -155,20 +141,9 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      // A minimized or covered window keeps running its frames and timers for an agent that drives it.
-      backgroundThrottling: !aiControlOn,
     },
   });
   win.once('ready-to-show', () => win?.show());
-  // The hidden card window goes with the editor's (it would keep the app running).
-  win.on(
-    'closed',
-    () =>
-      void cards?.then(
-        (w) => w.destroy(),
-        () => undefined,
-      ),
-  );
   win.on('maximize', () => send('win:maximized', true));
   win.on('unmaximize', () => send('win:maximized', false));
   // A dead renderer is reloaded; the store then reopens the last weapon from its autosave.
@@ -177,6 +152,12 @@ function createWindow() {
     if (d.reason !== 'clean-exit' && !quitting) setTimeout(() => win?.webContents.reload(), 500);
   });
   win.webContents.on('unresponsive', () => appLog('renderer unresponsive', ''));
+  // The renderer's own errors and warnings go to the app log: a character that fails to open leaves the panel empty, and the
+  // reason (a thrown message, a refused call) was otherwise only visible in a devtools console nobody keeps open.
+  win.webContents.on('console-message', (e) => {
+    if (e.level !== 'error' && e.level !== 'warning') return;
+    appLog(`renderer ${e.level}`, `${e.message} (${e.sourceId}:${e.lineNumber})`);
+  });
   // A first load can fail (a cold dev server, a crashed network service) and would leave the window blank: retry a few times.
   let loadTries = 0;
   let loaded = false;
@@ -204,52 +185,6 @@ function createWindow() {
   });
 }
 
-// Card pictures (the work list's and the gallery's) are drawn in a hidden second window of the same renderer (renderer/viewport/
-// CardWindow.tsx, the page's `#card`), with the 3D view's own stage, so drawing them never holds up the editor window. It opens
-// with the first picture asked for, draws one at a time and closes after a minute without work.
-let cards: Promise<BrowserWindow> | null = null;
-const cardJobs = new Map<number, (result: unknown) => void>();
-let cardSeq = 0;
-let cardIdle: NodeJS.Timeout | undefined;
-
-function cardWindow(): Promise<BrowserWindow> {
-  cards ??= new Promise<BrowserWindow>((ready, failed) => {
-    const w = new BrowserWindow({
-      show: false,
-      width: 600,
-      height: 400,
-      webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false },
-    });
-    // Ready once its page listens for jobs (card:ready); a job sent before that would be lost.
-    const onReady = (e: Electron.IpcMainEvent) => e.sender === w.webContents && (ipcMain.off('card:ready', onReady), ready(w));
-    ipcMain.on('card:ready', onReady);
-    const gone = () => {
-      ipcMain.off('card:ready', onReady);
-      cards = null;
-      failed(new Error('card window closed'));
-      for (const done of cardJobs.values()) done(null);
-      cardJobs.clear();
-    };
-    w.on('closed', gone);
-    w.webContents.on('render-process-gone', (_e, d) => (appLog('card window gone', d), w.destroy()));
-    if (MAIN_WINDOW_VITE_DEV_SERVER_URL) void w.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#card`).catch(() => w.destroy());
-    else void w.loadFile(join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`), { hash: 'card' }).catch(() => w.destroy());
-  });
-  return cards;
-}
-
-async function drawCard(job: unknown): Promise<unknown> {
-  clearTimeout(cardIdle);
-  const w = await cardWindow();
-  const id = ++cardSeq;
-  const result = await new Promise((done) => {
-    cardJobs.set(id, done);
-    w.webContents.send('card:job', id, job);
-  });
-  if (!cardJobs.size) cardIdle = setTimeout(() => void cards?.then((x) => x.destroy()), 60_000);
-  return result;
-}
-
 // The renderer may only write files inside the data dir (autosaved skins and their frames live there), and next to a skin
 // project saved elsewhere (a folder holding a .forgeskinproj) its generated frames (`.frames/`) and converted sounds
 // (`sounds/*.ogg`).
@@ -269,7 +204,7 @@ function writable(path: string): boolean {
 
 // sf:// serves what the editor shows (textures, models, videos, sounds, fonts, and a character work's converted model: its
 // descriptor and mesh, drawn when the work came from a pack) wherever the user keeps them, and no other kind of file.
-const SERVED = /\.(png|jpe?g|tga|tiff?|bmp|webp|gif|exr|mp4|webm|mov|m4v|wav|mp3|ogg|flac|m4a|aac|opus|ttf|otf|woff2?|glb|gltf|vrm|bin|forgemesh)$|[\\/]character[\\/]model\.json$/i;
+const SERVED = /\.(png|jpe?g|tga|tiff?|bmp|webp|gif|exr|mp4|webm|mov|m4v|wav|mp3|ogg|flac|m4a|aac|opus|ttf|otf|woff2?|glb|gltf|vrm|bin|forgemesh|dance|cam|vmd|danceproj)$|[\\/]character[\\/]model\.json$/i;
 
 // The development editor installs the plugin built from this checkout: before an install the user asked for, it runs
 // build-editor-release.ps1 -PluginOnly, which builds ForgeSkin and ForgeCore from source and stages
@@ -277,6 +212,15 @@ const SERVED = /\.(png|jpe?g|tga|tiff?|bmp|webp|gif|exr|mp4|webm|mov|m4v|wav|mp3
 // to app.log; the window gets its last lines, the failed step as PowerShell's error box says it, for the log line it writes.
 async function stageDevPlugin(): Promise<{ ok: true } | { ok: false; reason: 'notDev' | 'failed'; detail?: string }> {
   if (edition !== 'dev') return { ok: false, reason: 'notDev' };
+  // MMD 版是独立仓库布局：ForgeSkin/ 就在仓库根（没有 Mods/），也没有 PowerShell 7，跑不了上游那份打包脚本。
+  // 插件由 ForgeSkin/tools/stage-plugin-standalone.py 从源码构建并暂存到 artifacts/forge-skin-release/publish/plugin
+  // （见 CHANGELOG-MMD.md 第 3 节），这里直接用构建好的那一份；C# 改动后重跑那个脚本即可。
+  const checkout = join(app.getAppPath(), '..', '..');
+  const staged = join(checkout, 'artifacts', 'forge-skin-release', 'publish', 'plugin');
+  if (['ForgeSkin/ForgeSkin.Plugin.dll', 'ForgeCore/ForgeCore.dll'].every((file) => existsSync(join(staged, ...file.split('/'))))) {
+    appLog('plugin stage', `reusing the plugin built from source at ${staged}`);
+    return { ok: true };
+  }
   const root = join(app.getAppPath(), '..', '..', '..');
   const script = join(root, 'Mods', 'ForgeSkin', 'tools', 'build-editor-release.ps1');
   const tail = (text: string, n: number) =>
@@ -303,8 +247,32 @@ function registerIpc() {
   );
   ipcMain.handle('app:dataDir', () => dataDir());
   ipcMain.handle('app:edition', () => edition);
-  ipcMain.handle('app:aiControl', () => aiControlOn);
   ipcMain.handle('plugin:stage', () => stageDevPlugin());
+  // Blender, where the bake kit's script runs: the dance's 50 joints are solved the way MMD solves them.
+  ipcMain.handle('dance:blender', async (_e, preferred?: string) => {
+    const file = findBlender(preferred);
+    return file ? { file, version: await blenderVersion(file) } : null;
+  });
+  // A picked source file (a VMD, a song) is copied into the dance's own folder, so the dance stays whole when copied. Written
+  // under a temporary name and renamed into place, so a second copy of the same file (two clicks, or React running an effect
+  // twice in development) always lands a complete file, never half of one.
+  ipcMain.handle('dance:copy', async (_e, from: string, to: string) => {
+    if (!writable(to)) throw new Error(`refused copy to ${to}`);
+    if (!existsSync(from)) throw new Error(`no file to copy: ${from}`);
+    await mkdir(dirname(to), { recursive: true });
+    const temp = `${to}.copy-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+    await copyFile(from, temp);
+    await rename(temp, to).catch(async (e: unknown) => {
+      await rm(temp, { force: true });
+      throw e;
+    });
+    return to;
+  });
+  ipcMain.handle('dance:bake', async (_e, request: BakeRequest) => {
+    const result = await bakeDance(request, (line) => win?.webContents.send('dance:progress', line));
+    appLog('dance bake', { vmd: request.vmd, name: request.name, ...result });
+    return result;
+  });
   // The window saves first and reloads after a move (its open skin and paths name the old folder).
   ipcMain.handle('data:move', async (_e, to: string) => {
     if (edition === 'dev') return { ok: false, reason: 'dev' };
@@ -337,11 +305,6 @@ function registerIpc() {
     remember(key, dirname(path));
     return path;
   });
-  ipcMain.handle('dialog:preset', (_e, paths: string[]) => {
-    if (!aiControlOn) throw new Error('dialog:preset needs --ai-control');
-    if (!paths.length || paths.some((p) => !isAbsolute(p))) throw new Error('dialog:preset takes absolute paths');
-    presetPaths.push(paths.map((p) => normalize(p)));
-  });
   ipcMain.handle('files:write', async (_e, path: string, data: Uint8Array) => {
     if (!writable(path)) throw new Error(`refused write outside frames/data dir: ${path}`);
     await mkdir(dirname(path), { recursive: true });
@@ -360,8 +323,53 @@ function registerIpc() {
     const s = await stat(path).catch(() => null);
     return s?.isFile() ? [s.size, s.mtimeMs] : null;
   });
+  // The plain files of one folder — the dance tab lists its projects from the folder itself, so a project copied in
+  // from outside (or one an older index forgot) still shows up.
+  ipcMain.handle('files:list', (_e, dir: string) => {
+    if (!isAbsolute(dir)) return [];
+    const out: { name: string; time: number }[] = [];
+    let entries: import('node:fs').Dirent[] = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    for (const e of entries) {
+      if (!e.isFile()) continue;
+      const s = statSync(join(dir, e.name), { throwIfNoEntry: false });
+      out.push({ name: e.name, time: s?.mtimeMs ?? 0 });
+    }
+    return out;
+  });
   ipcMain.on('app:log', (_e, kind: string, detail: string) => appLog(kind, detail));
   ipcMain.handle('files:exists', (_e, path: string) => existsSync(path));
+  // Keeps a cache folder (the drawn pack pictures) under `limit` bytes: the least recently used files go first. Only allowed
+  // inside the data dir, and only there.
+  ipcMain.handle('files:prune', (_e, dir: string, limit: number) => {
+    const p = isAbsolute(dir) ? normalize(dir) : '';
+    if (!p.startsWith(resolve(dataDir()) + sep)) throw new Error(`refused prune outside the data dir: ${dir}`);
+    if (!existsSync(p)) return 0;
+    const infos = readdirSync(p, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile())
+      .map((e) => {
+        const file = join(e.parentPath, e.name);
+        return { file, size: statSync(file).size, time: statSync(file).mtimeMs };
+      })
+      .sort((a, b) => a.time - b.time);
+    let total = infos.reduce((n, x) => n + x.size, 0);
+    let freed = 0;
+    for (const x of infos) {
+      if (total <= limit) break;
+      try {
+        rmSync(x.file);
+        total -= x.size;
+        freed += x.size;
+      } catch {
+        // open: kept for the next prune
+      }
+    }
+    return freed;
+  });
   ipcMain.handle('files:watch', (_e, paths: string[]) => watchFiles(paths));
   ipcMain.handle('profile:watch', (_e, profile: string | null) => watchProfile(profile));
   // A folder opens in Explorer; a file is only shown in its folder, never launched.
@@ -394,11 +402,6 @@ function registerIpc() {
     autoUpdater.checkForUpdates();
   });
   ipcMain.handle('app:version', () => app.getVersion());
-  ipcMain.handle('card:draw', (_e, job: unknown) => drawCard(job).catch(() => null));
-  ipcMain.on('card:done', (_e, id: number, result: unknown) => {
-    cardJobs.get(id)?.(result);
-    cardJobs.delete(id);
-  });
 }
 
 const updateLog = (message: string) => appLog('update', message);
@@ -468,15 +471,11 @@ async function watchDownload() {
 }
 
 // Every file the editor asks for comes through pickPaths: the system's dialog, with the file types and, for 'files', several
-// at once. An empty answer is a cancel. With --ai-control an agent may answer the next dialog beforehand (forgeAI pickNext),
-// since a protocol client cannot drive the system's dialog; nothing is shown in the window for it.
+// at once. An empty answer is a cancel.
 type PathKind = 'folder' | 'files' | 'file' | 'save';
 type FileFilters = OpenDialogOptions['filters'];
-const presetPaths: string[][] = [];
 
 async function pickPaths(kind: PathKind, filters: FileFilters, start: string | undefined): Promise<string[]> {
-  const preset = presetPaths.shift();
-  if (preset) return preset;
   if (kind === 'save') {
     const r = await dialog.showSaveDialog(win!, { defaultPath: start, filters });
     return r.canceled || !r.filePath ? [] : [r.filePath];
@@ -582,12 +581,50 @@ function watchProfile(profile: string | null) {
   }
 }
 
+/** What the media element needs from us: a type, a length, and byte ranges (see `serve`). */
+const MEDIA: Record<string, string> = {
+  '.m4a': 'audio/mp4',
+  '.mp4': 'audio/mp4',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac',
+};
+
+/**
+ * One file from `sf://local/`. Media is served with byte ranges: an `<audio>` seeks by asking for a range, and a plain
+ * 200 answer to that leaves it unable to jump past what it has buffered — Chromium then drops the seek and carries on
+ * from where it was, which read as the playhead snapping back when the scrubber was dragged.
+ */
+function serve(path: string, range: string | null): Response | null {
+  const type = MEDIA[extname(path).toLowerCase()];
+  // Everything else (pictures, the model) is fetched the usual way.
+  if (!range && !type) return null;
+  const size = statSync(path).size;
+  const headers = new Headers({ 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes' });
+  if (type) headers.set('Content-Type', type);
+  const m = range ? /^bytes=(\d*)-(\d*)$/.exec(range.trim()) : null;
+  if (!m || (m[1] === '' && m[2] === '')) {
+    headers.set('Content-Length', String(size));
+    return new Response(Readable.toWeb(createReadStream(path)) as ReadableStream, { status: 200, headers });
+  }
+  const tail = m[1] === '';
+  const start = tail ? Math.max(0, size - Number(m[2])) : Number(m[1]);
+  const end = tail || m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+  if (start >= size || start > end) return new Response(null, { status: 416, headers: new Headers({ 'Content-Range': `bytes */${size}` }) });
+  headers.set('Content-Range', `bytes ${start}-${end}/${size}`);
+  headers.set('Content-Length', String(end - start + 1));
+  return new Response(Readable.toWeb(createReadStream(path, { start, end })) as ReadableStream, { status: 206, headers });
+}
+
 app.whenReady().then(async () => {
   // Before anything writes into the data folder.
   if (!squirrelRun) await moveInstallData((line) => appLog('data folder', line));
   protocol.handle('sf', async (req) => {
     const path = decodeURIComponent(new URL(req.url).pathname.slice(1));
     if (!isAbsolute(path) || !SERVED.test(path)) return new Response(null, { status: 403 });
+    const ranged = serve(path, req.headers.get('range'));
+    if (ranged) return ranged;
     const r = await net.fetch(pathToFileURL(path).toString(), { headers: req.headers });
     const headers = new Headers(r.headers);
     headers.set('Cache-Control', 'no-store');

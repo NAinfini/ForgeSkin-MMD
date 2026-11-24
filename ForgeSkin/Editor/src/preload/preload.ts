@@ -22,8 +22,14 @@ const api = {
   edition: (): Promise<'dev' | 'installed' | 'portable'> => ipcRenderer.invoke('app:edition'),
   /** Development editor only: builds and stages the plugin from the checkout before an install (main.ts stageDevPlugin). */
   stagePlugin: (): Promise<{ ok: true } | { ok: false; reason: 'notDev' | 'failed'; detail?: string }> => ipcRenderer.invoke('plugin:stage'),
-  /** Whether the editor was started with --ai-control (the renderer then installs window.forgeAI). */
-  aiControl: (): Promise<boolean> => ipcRenderer.invoke('app:aiControl'),
+  /** Copies a file the author picked into the dance's folder (main guards the destination). */
+  copyFile: (from: string, to: string): Promise<string> => ipcRenderer.invoke('dance:copy', from, to),
+  /** Where Blender is (a path from settings first), with its version line; null when none was found. */
+  blender: (preferred?: string): Promise<{ file: string; version: string } | null> => ipcRenderer.invoke('dance:blender', preferred),
+  /** Bakes a VMD into the game's .dance (src/main/dance.ts); one at a time, and onDanceProgress carries Blender's lines. */
+  bakeDance: (request: { vmd: string; out: string; name: string; blender?: string }): Promise<{ ok: true; blender: string } | { ok: false; reason: 'blender' | 'failed' | 'busy'; detail?: string }> =>
+    ipcRenderer.invoke('dance:bake', request),
+  onDanceProgress: (cb: (line: string) => void) => subscribe('dance:progress', cb),
   /** Moves the data folder (main/dataDir.ts moveData); the window reloads after a move that worked. */
   moveDataDir: (to: string): Promise<{ ok: true; adopted?: boolean; leftover?: string } | { ok: false; reason: 'dev' | 'same' | 'nested' | 'notEmpty' | 'failed'; detail?: string }> =>
     ipcRenderer.invoke('data:move', to),
@@ -31,14 +37,16 @@ const api = {
   /** The system's dialog: 'file' one file, 'files' one or more. */
   openDialog: (kind: 'folder' | 'files' | 'file', filters?: FileFilter[], purpose?: string): Promise<string[]> => ipcRenderer.invoke('dialog:open', kind, filters, purpose),
   saveDialog: (defaultPath: string, filters: FileFilter[]): Promise<string | null> => ipcRenderer.invoke('dialog:save', defaultPath, filters),
-  /** With --ai-control: the answer of the next file dialog, which then does not open (forgeAI pickNext). */
-  presetPaths: (paths: string[]): Promise<void> => ipcRenderer.invoke('dialog:preset', paths),
   writeFile: (path: string, data: Uint8Array): Promise<void> => ipcRenderer.invoke('files:write', path, data),
   exists: (path: string): Promise<boolean> => ipcRenderer.invoke('files:exists', path),
+  /** Keeps a cache folder inside the data dir under `limit` bytes (least recently used first); returns the bytes freed. */
+  pruneCache: (dir: string, limit: number): Promise<number> => ipcRenderer.invoke('files:prune', dir, limit),
   /** A text file where writeFile may write, null when it is missing. */
   readText: (path: string): Promise<string | null> => ipcRenderer.invoke('files:readText', path),
   /** [size, write time in ms] of a file, null when it is not one. */
   stat: (path: string): Promise<[number, number] | null> => ipcRenderer.invoke('files:stat', path),
+  /** The plain files of a folder with their write times, [] when it cannot be read. */
+  list: (dir: string): Promise<{ name: string; time: number }[]> => ipcRenderer.invoke('files:list', dir),
   openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:open', path),
   showInFolder: (path: string): Promise<void> => ipcRenderer.invoke('shell:show', path),
   /** Appends an error line to GTFO_UserData/logs/app.log. */
@@ -66,15 +74,6 @@ const api = {
   watchProfile: (profile: string | null): Promise<void> => ipcRenderer.invoke('profile:watch', profile),
   onProfileChanged: (cb: () => void) => subscribe('profile:changed', cb),
   restartToUpdate: (): Promise<void> => ipcRenderer.invoke('update:restart'),
-  /** Draws a card picture in the hidden card window (renderer/viewport/CardWindow.tsx); null when it could not be drawn. */
-  drawCard: (job: unknown): Promise<unknown> => ipcRenderer.invoke('card:draw', job),
-  /** The card window: takes the jobs (after saying it is ready) and hands back each picture under its job's id. */
-  onCardJob: (cb: (id: number, job: unknown) => void) => {
-    const off = subscribe('card:job', cb);
-    ipcRenderer.send('card:ready');
-    return off;
-  },
-  cardDone: (id: number, result: unknown): void => ipcRenderer.send('card:done', id, result),
 };
 
 export type ForgeApi = typeof api;

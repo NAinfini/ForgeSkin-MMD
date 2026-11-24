@@ -214,7 +214,8 @@ sealed class Skin
         var build = System.Diagnostics.Stopwatch.StartNew();
         var result = _models.Create(_model.Model!, _model.Mesh, _model.ModelTextures);
         if (result.Failure.Code == ImportedModelCodes.ShaderUnavailable) return null;
-        ForgeSkinPlugin.Info($"character model of {Doc.Id}: pictures decoded {decoded} ms after the load began, built in {build.ElapsedMilliseconds} ms in one frame");
+        ForgeSkinPlugin.Info($"character model of {Doc.Id}: pictures decoded {decoded} ms after the load began, built in {build.ElapsedMilliseconds} ms in one frame" +
+            (_model.Model!.Morphs is { Count: > 0 } expressions ? $", {expressions.Count} expressions" : ""));
         if (result.Model is not { Skinned: true } built)
             return new SkinFormatException(result.Failure.Code == ImportedModelCodes.CutoutUnsupported ? "unsupported-character-material" : "bad-character-model", result.Failure.ToString());
         try { Links = CharacterRig.Links(Doc.Character!, _model.Model!); }

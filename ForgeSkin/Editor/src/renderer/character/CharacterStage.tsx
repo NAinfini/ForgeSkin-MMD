@@ -1,14 +1,14 @@
 // The 人物模型 tab's 3D view: the imported model, its matched joints (the one picked on the figure highlighted), the spring sets
 // drawn on their bones (picked and added there), the body colliders, the moves played on it (clips.ts) and the spring bones played back from the backend's frames along them.
 import { CameraControls, Grid, Html } from '@react-three/drei';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber';
 import { Button, Group, Loader, Paper, SegmentedControl, Stack, Switch, Text, Title, Tooltip } from '@mantine/core';
 import { IconPlayerPause, IconPlayerPlay, IconUpload } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Box3, BufferAttribute, BufferGeometry, SkeletonHelper, Vector3, type Bone, type Mesh, type SkinnedMesh } from 'three';
+import { Box3, BufferAttribute, BufferGeometry, DoubleSide, SkeletonHelper, Vector3, type Bone, type Mesh, type Object3D, type SkinnedMesh } from 'three';
 import type CameraControlsImpl from 'camera-controls';
 import { t } from '../i18n';
-import type { CharmMotion } from '../viewport/refs';
+import { frameFigure } from './stageCamera';
 import { MOTION_SECONDS, PREVIEW_FPS, SETTLE_SECONDS } from '../viewport/motion';
 import {
   addSpring,
@@ -22,15 +22,16 @@ import {
   modelVersion,
   onModel,
   pose,
-  reopenCharacter,
   restPose,
+  shellPoints,
   showBody,
   simulate,
   springLabel,
+  toggleShellPart,
   type SpringFrames,
 } from './model';
 import { clipPlayer, MOTIONS, motionShipped, type ClipPlayer, type MotionGroup } from './clips';
-import { matchOf, matchReady, useCharacter } from './state';
+import { matchOf, matchReady, useCharacter, type CharmMotion } from './state';
 
 const useModel = () => {
   useSyncExternalStore(onModel, modelVersion);
@@ -70,9 +71,17 @@ function Joints({ size }: { size: number }) {
   );
 }
 
-const hoverOn = (id: string) => (on: boolean) => useCharacter.setState((s) => (on ? { hover: id } : s.hover === id ? { hover: null } : {}));
+const hoverOn = (id: string) => (on: boolean) => useCharacter.setState((s) => (on ? { hover: id } : s.hover === id ? { hover: null, hoverStrand: null } : {}));
+/** A bone's own hover: names its set and the strand the bone is on, so the strand lights up in the figure while the pointer crosses it. */
+const hoverStrandOn = (id: string, strand: number) => (on: boolean) =>
+  useCharacter.setState((s) => (on ? { hover: id, hoverStrand: strand } : s.hover === id && s.hoverStrand === strand ? { hoverStrand: null } : {}));
 const strandBones = (names: string[][]) => names.map((strand) => strand.map(boneOf).filter((b): b is Bone => !!b));
 const at = new Vector3();
+
+/** One strand of a set as a line from bone to bone, redrawn every frame: the one picked under the pointer or in the list. */
+function StrandLine({ names, color }: { names: string[]; color: string }) {
+  return <StrandLines names={[names]} color={color} />;
+}
 
 /** A set's strands as lines from bone to bone, redrawn every frame. */
 function StrandLines({ names, color }: { names: string[][]; color: string }) {
@@ -110,19 +119,23 @@ function Springs({ size }: { size: number }) {
       {s.springs.map((sp) => {
         const lit = s.spring === sp.id || s.hover === sp.id;
         const color = lit ? LIT : '#b48cff';
+        const picked = s.spring === sp.id ? s.strand : null;
+        const hoveredStrand = s.hover === sp.id ? s.hoverStrand : null;
+        const strand = hoveredStrand ?? picked;
         return (
           <group key={sp.id}>
             <StrandLines names={sp.strands} color={color} />
-            {strandBones(sp.strands).flatMap((strand, i) =>
-              strand.map((bone, k) => (
+            {strand != null && sp.strands[strand] && <StrandLine names={sp.strands[strand]!} color={LIT} />}
+            {strandBones(sp.strands).flatMap((bones, i) =>
+              bones.map((bone, k) => (
                 <BoneDot
                   key={`${i}-${k}`}
                   bone={bone}
-                  radius={size * (lit ? 0.007 : 0.0045)}
-                  color={color}
+                  radius={size * (i === strand ? 0.008 : lit ? 0.007 : 0.0045)}
+                  color={i === strand ? LIT : color}
                   label={s.hover === sp.id && !i && !k ? springLabel(s.springs, sp.id) : undefined}
-                  onPick={() => useCharacter.setState({ spring: sp.id })}
-                  onHover={hoverOn(sp.id)}
+                  onPick={() => useCharacter.setState({ spring: sp.id, strand: i })}
+                  onHover={hoverStrandOn(sp.id, i)}
                 />
               )),
             )}
@@ -145,10 +158,66 @@ function Springs({ size }: { size: number }) {
 }
 
 const UP = new Vector3(0, 1, 0);
+/** Metres the body's surface is drawn outside the skin. */
+const SHELL_LIFT = 0.0025;
+
+/** The body's surface as it is kept out of the spring bones: each joint's triangles over its bone — the model's own surface — or its
+ * points for a shell from before version 6 (off, or with the file's own capsules, nothing). */
+function Shell() {
+  const shell = useCharacter((s) => s.shell);
+  const capsules = useCharacter((s) => s.capsules);
+  const auto = useCharacter((s) => s.auto);
+  const picked = useCharacter((s) => s.picked);
+  const surfaces = useMemo(
+    () =>
+      shellPoints().map(({ joint, bone, points, tris }) => {
+        // Lifted off the skin along its own normal: the surface is the model's face itself, and drawn exactly on it the two fight for
+        // the same depth (a mottle of skin and shell) and every millimetre the skin wins as the joints blend reads as a hole.
+        const lifted = new Float32Array(points.length);
+        for (let i = 0; i < points.length; i += 6) {
+          lifted[i] = points[i]! + points[i + 3]! * SHELL_LIFT;
+          lifted[i + 1] = points[i + 1]! + points[i + 4]! * SHELL_LIFT;
+          lifted[i + 2] = points[i + 2]! + points[i + 5]! * SHELL_LIFT;
+        }
+        const geometry = new BufferGeometry();
+        geometry.setAttribute('position', new BufferAttribute(lifted, 3));
+        if (tris) geometry.setIndex(new BufferAttribute(tris, 1));
+        return { joint, bone, geometry, mesh: !!tris };
+      }),
+    [shell, capsules, auto, picked], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const clouds = useRef<(Object3D | null)[]>([]);
+  // Each surface rides its bone: its matrix is the bone's world matrix, so the surface follows every move exactly.
+  useFrame(() =>
+    surfaces.forEach(({ bone }, i) => {
+      const cloud = clouds.current[i];
+      if (!cloud) return;
+      bone.updateWorldMatrix(true, false);
+      cloud.matrix.copy(bone.matrixWorld);
+      cloud.matrixAutoUpdate = false;
+      cloud.matrixWorldNeedsUpdate = true;
+    }),
+  );
+  return (
+    <>
+      {surfaces.map(({ joint, geometry, mesh }, i) =>
+        mesh ? (
+          <mesh key={joint} ref={(o) => void (clouds.current[i] = o)} geometry={geometry} frustumCulled={false}>
+            <meshBasicMaterial color="#45e0b0" transparent opacity={0.18} depthWrite={false} side={DoubleSide} />
+          </mesh>
+        ) : (
+          <points key={joint} ref={(o) => void (clouds.current[i] = o)} geometry={geometry} frustumCulled={false}>
+            <pointsMaterial color="#45e0b0" size={2.5} sizeAttenuation={false} transparent opacity={0.6} depthWrite={false} />
+          </points>
+        ),
+      )}
+    </>
+  );
+}
 
 function Colliders() {
   const s = useCharacter();
-  const caps = useMemo(() => colliders(), [s.colliders, s.capsules, s.auto, s.picked]); // eslint-disable-line react-hooks/exhaustive-deps
+  const caps = useMemo(() => colliders(), [s.colliders, s.capsules, s.shell, s.auto, s.picked]); // eslint-disable-line react-hooks/exhaustive-deps
   const meshes = useRef<(Mesh | null)[]>([]);
   // Each capsule is put between its bones every frame, so it follows the moves.
   useFrame(() =>
@@ -198,6 +267,7 @@ function Motion() {
   const springs = useCharacter((s) => s.springs);
   const coll = useCharacter((s) => s.colliders);
   const capsules = useCharacter((s) => s.capsules);
+  const shell = useCharacter((s) => s.shell);
   const motion = useCharacter((s) => s.motion);
   const clipId = useCharacter((s) => s.clip);
   const loop = useCharacter((s) => s.loop);
@@ -241,7 +311,7 @@ function Motion() {
       live = false;
       clearTimeout(id);
     };
-  }, [springs, coll, capsules, motion, player, loop]);
+  }, [springs, coll, capsules, shell, motion, player, loop]);
   useFrame((_, delta) => {
     const frames = sets.current.model === modelVersion() ? sets.current.frames : [];
     if (!player) {
@@ -302,23 +372,33 @@ function Scene() {
   const scene = useModel();
   const showBones = useCharacter((s) => s.showBones);
   const step = useCharacter((s) => s.step);
+  const shellOn = useCharacter((s) => !!s.shell?.on);
   const helper = useMemo(() => (scene ? new SkeletonHelper(scene) : null), [scene]);
   const controls = useRef<CameraControlsImpl>(null);
   const box = useMemo(() => (scene ? new Box3().setFromObject(scene) : null), [scene]);
-  // Frames a newly imported model whatever its size, its feet clear of the moves bar along the bottom.
+  // Frames a newly imported model the way the 舞蹈 tab also frames it, its feet clear of the moves bar along the bottom.
   useEffect(() => {
-    if (box) void controls.current?.fitToBox(box, false, { paddingTop: 0.1, paddingBottom: 0.35 * (box.max.y - box.min.y) });
-  }, [box]);
+    if (box) frameFigure(controls.current, scene);
+  }, [box, scene]);
+  // In the springs step a click on the model picks that part's material into the collider surface, or out of it again — the parts the
+  // author chooses, right on the figure (a drag of the view is not a click).
+  const pickPart = (e: ThreeEvent<MouseEvent>) => {
+    if (e.delta > 4 || !shellOn) return;
+    const mesh = e.object as Mesh;
+    const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+    if (material?.name) toggleShellPart(material.name);
+  };
   return (
     <>
       <ambientLight intensity={CHARACTER_LIGHTS.ambient} />
       <directionalLight position={CHARACTER_LIGHTS.key.position} intensity={CHARACTER_LIGHTS.key.intensity} />
       <directionalLight position={CHARACTER_LIGHTS.fill.position} intensity={CHARACTER_LIGHTS.fill.intensity} />
       <Grid args={[10, 10]} cellSize={0.25} sectionSize={1} cellColor="#2a3340" sectionColor="#3b4a5c" fadeDistance={12} infiniteGrid />
-      {scene && <primitive object={scene} />}
+      {scene && <primitive object={scene} onClick={step === 'springs' ? pickPart : undefined} />}
       {scene && showBones && helper && <primitive object={helper} />}
       {scene && <Motion />}
       {scene && step === 'springs' && <Colliders />}
+      {scene && step === 'springs' && <Shell />}
       {box && showBones && step === 'bones' && <Joints size={box.max.y - box.min.y} />}
       {box && showBones && step === 'springs' && <Springs size={box.max.y - box.min.y} />}
       {scene && <ArmsView controls={controls} />}
@@ -433,8 +513,6 @@ export function CharacterStage() {
   const view = useCharacter((s) => s.view);
   const ready = useCharacter((s) => matchReady(s.check));
   const arms = useCharacter((s) => !!s.check?.arms);
-  // The character skin edited last comes back when the tab first shows.
-  useEffect(() => void reopenCharacter(), []);
   return (
     <main className="stage">
       <Canvas gl={{ preserveDrawingBuffer: true, antialias: true, alpha: true }} dpr={[1, 2]} camera={{ position: [0, 1.2, 3.2], fov: 40 }}>

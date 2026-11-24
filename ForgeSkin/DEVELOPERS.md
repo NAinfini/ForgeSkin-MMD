@@ -282,9 +282,11 @@ may give any joint a bone or leave it out) and asks the backend how the game wil
 (the hip: the only thing that blocks), the joints the game leaves in their rest pose, whether the model wears its own
 first-person arms, which hands reach for the grip, and, for the author only, `RigMap.Check`'s findings as kinds the editor
 words itself and whether the body faces backwards.
-Spring bones are previewed like charms: `springs.simulate { chain, nodes, strands?, frames }` runs ForgeCore's linked
-`ChainPhysics.cs` with the document's own `SpringChain` (its `Spec()` is the preset with the author's values) on the anchor bone's
-path for a preview motion (`viewport/motion.ts`, shared with the charm preview) and returns node positions per frame;
+Spring bones are previewed like charms: `springs.simulate { chain, nodes, strands?, rest?, frames, shells? }` runs ForgeCore's
+linked `ChainPhysics.cs` with the document's own `SpringChain` (its `Spec()` is the preset with the author's values) on the anchor
+bone's path for a preview motion (`viewport/motion.ts`, shared with the charm preview) and returns node positions per frame;
+`shells` is the body's surface (`springs.shell`, each a joint's points with its bind-pose matrix) and `rest` the anchor's bind
+pose, where every node's standoff from the surface is measured — the clip's first frame can be a whole pose away from the bind;
 `springs.presets` gives each kind's starting values. Exporting a character pack is not wired yet.
 
 The motion row under the preview plays moves the way the game does. A clip plays on a hidden canonical body, the skeleton the

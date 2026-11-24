@@ -59,7 +59,7 @@ public static class Install
         WriteActive(profile, json);
     }
 
-    static void RequireProfile(string profile)
+    internal static void RequireProfile(string profile)
     {
         if (!Directory.Exists(Path.Combine(profile, "BepInEx"))) throw new BackendException("not-found", $"{profile} has no BepInEx folder");
     }
@@ -80,7 +80,7 @@ public static class Install
         OldSkinMove.Run(profile);
         var dir = Skins(profile);
         Directory.CreateDirectory(dir);
-        var target = Path.Combine(dir, Preview.Safe(doc.Id) + SkinPack.Extension);
+        var target = Path.Combine(dir, Names.Safe(doc.Id) + SkinPack.Extension);
         using (var file = new AtomicFile(target))
         {
             File.Copy(pack, file.Temp, true);
@@ -116,7 +116,7 @@ public static class Install
         var dropped = new Dictionary<string, string[]>();
         foreach (var group in packs.Where(p => p.Doc != null).GroupBy(p => p.Doc!.Id).Where(g => g.Count() > 1))
         {
-            var keep = group.FirstOrDefault(p => Path.GetFileName(p.File).Equals(Preview.Safe(group.Key) + SkinPack.Extension, StringComparison.OrdinalIgnoreCase)).File
+            var keep = group.FirstOrDefault(p => Path.GetFileName(p.File).Equals(Names.Safe(group.Key) + SkinPack.Extension, StringComparison.OrdinalIgnoreCase)).File
                 ?? group.MaxBy(p => File.GetLastWriteTimeUtc(p.File)).File;
             var gone = new List<string>();
             foreach (var (file, _, _) in group.Where(p => p.File != keep).ToList())
@@ -162,7 +162,7 @@ public static class Install
     }
 
     static string SourceOf(string file, string? id, string? mod) =>
-        mod != null ? "mod" : id != null && Path.GetFileName(file).Equals(Preview.Safe(id) + SkinPack.Extension, StringComparison.OrdinalIgnoreCase) ? "editor" : "hand";
+        mod != null ? "mod" : id != null && Path.GetFileName(file).Equals(Names.Safe(id) + SkinPack.Extension, StringComparison.OrdinalIgnoreCase) ? "editor" : "hand";
 
     static string? Stamp(string file)
     {
@@ -410,7 +410,7 @@ public static class Install
         Directory.Exists(Path.Combine(folder, "lang")) ? Directory.GetFiles(Path.Combine(folder, "lang"), "*.forge").Select(f => Path.Combine("lang", Path.GetFileName(f))) : [];
 
     // Refuses while GTFO runs and holds the DLL.
-    static void RequireUnlocked(string dll)
+    internal static void RequireUnlocked(string dll)
     {
         if (!File.Exists(dll) || !Game.Running) return;
         try { using var _ = File.Open(dll, FileMode.Open, FileAccess.ReadWrite, FileShare.None); }

@@ -142,16 +142,6 @@ public static class Program
         for (int i = 0; i < args.Length - 1; i++)
             if (args[i] == "--data-dir") Paths.Data = Path.GetFullPath(args[i + 1]);
             else if (args[i] == "--former-data-dir") Paths.FormerData.Add(Path.GetFullPath(args[i + 1]));
-        // Release step: the keys of the located game's own textures, for its revision (GameAssets.IsVanilla).
-        if (Array.IndexOf(args, "--write-vanilla-textures") is var at and >= 0 && at + 1 < args.Length)
-        {
-            var list = args[at + 1];
-            var (revision, keys) = Methods.WithGame(g => (g.Revision, Preview.TextureKeys(g)));
-            AtomicFile.WriteText(Path.GetFullPath(list), JsonSerializer.Serialize(new Dictionary<string, SortedSet<string>> { [revision] = keys },
-                new JsonSerializerOptions { WriteIndented = true, NewLine = "\n" }) + "\n"); // LF: the file is eol=lf in Git
-            Console.WriteLine($"{keys.Count} textures of game revision {revision} -> {list}");
-            return;
-        }
         Directory.CreateDirectory(Paths.Data);
         Paths.MovePreRenameData();
         PackBuilder.PruneCache();

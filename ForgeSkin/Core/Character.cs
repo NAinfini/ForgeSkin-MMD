@@ -18,7 +18,8 @@ namespace ForgeSkin.Format;
 //     "springs": {
 //       "chains": [ { "id": "ponytail", "kind": "longHair", "anchor": "Head", "strands": [["Hair1", "Hair2", "Hair3"]],
 //                     "linkSide": false, "loop": false, "weight": 1, "damping": 0.4, "stiffness": 0.35, "gravity": 1, "radius": 0.015 } ],
-//       "capsules": [ { "joint": "head", "a": [0, 0.08, 0], "b": [0, 0.08, 0], "radius": 0.1 } ] },
+//       "capsules": [ { "joint": "head", "a": [0, 0.08, 0], "b": [0, 0.08, 0], "radius": 0.1 } ],
+//       "shell": [ { "joint": "head", "data": "AAAA..." } ] },
 //     "hide": [2],
 //     "height": 1,
 //     "picture": "character/picture.png",
@@ -81,6 +82,8 @@ public sealed class CharacterSprings
     public List<SpringChain> Chains { get; set; } = new();
     // Shared by every chain: what they are kept out of.
     public List<SpringCapsule> Capsules { get; set; } = new();
+    // The same as a surface measured on the skin: when set, the chains are kept out of it instead of the capsules.
+    public List<SpringShell> Shell { get; set; } = new();
 }
 
 // ForgeCore ChainSpec's presets, the solver's starting point: long hair or a ponytail, short hair, a skirt, a tail or ribbon.
@@ -88,8 +91,9 @@ public enum SpringKind { LongHair, ShortHair, Skirt, Tail }
 
 // Spring bones moved by ForgeCore's chain physics after the pose copy. Anchor is the model bone the strands hang from (the head, the
 // hips); each strand its bones from the root down, at least two, each a descendant of Anchor; LinkSide links neighbouring strands
-// node to node (a skirt), Loop the last to the first too. The author values override the preset's when set: weight 0.1 to 3, damping and
-// stiffness 0 to 1, gravity 0 to 3 times real gravity, radius 0 to MaxRadius metres.
+// node to node (a skirt), Loop the last to the first too. The author values override the preset's when set: weight 0.1 to 3, damping,
+// stiffness, restore, style leash and inertia 0 to 1, gravity 0 to 3 times real gravity, radius 0 to MaxRadius metres, bend limit and
+// azimuth limit 0 to 180 degrees, step 1/480 to 1/60 s, iterations 1 to 12, length passes 1 to 8.
 public sealed class SpringChain
 {
     public string Id { get; set; } = "";
@@ -103,6 +107,25 @@ public sealed class SpringChain
     public float? Stiffness { get; set; }
     public float? Gravity { get; set; }
     public float? Radius { get; set; }
+    /// <summary>Degrees one bone of a strand may swing from the one above it; 0 removes the limit. Null: the kind's preset.</summary>
+    public float? AngleLimit { get; set; }
+    /// <summary>How strongly a piece is pulled back toward its bound direction, 0 to 1.</summary>
+    public float? Restore { get; set; }
+    /// <summary>How far past its bound reach a node may drift before the leash pulls it back, as a share of that reach, 0 to 1.</summary>
+    public float? StyleLeash { get; set; }
+    /// <summary>How much of the body's move the chain does not ride along with, 0 to 1.</summary>
+    public float? Inertia { get; set; }
+    /// <summary>Degrees a piece may swing around its parent's axis from the bound radial plane (a skirt's panels); 0 removes the limit.</summary>
+    public float? AzimuthLimit { get; set; }
+    public bool? Collide { get; set; }
+    public bool? CollideCloth { get; set; }
+    public bool? SelfCollide { get; set; }
+    /// <summary>The solver's sub-step in seconds, 1/480 to 1/60.</summary>
+    public float? Step { get; set; }
+    /// <summary>Constraint rounds a sub-step, 1 to 12.</summary>
+    public int? Iterations { get; set; }
+    /// <summary>Exact-length sweeps a sub-step, 1 to 8.</summary>
+    public int? LengthPasses { get; set; }
 
     // The ForgeCore spec: the preset with the author's values over it.
     public ChainSpec Spec()
@@ -113,6 +136,17 @@ public sealed class SpringChain
         if (Stiffness is { } s) spec.Stiffness = s;
         if (Gravity is { } g) spec.Gravity = g;
         if (Radius is { } r) spec.Radius = r;
+        if (AngleLimit is { } a) spec.AngleLimit = a;
+        if (Restore is { } re) spec.Restore = re;
+        if (StyleLeash is { } sl) spec.StyleLeash = sl;
+        if (Inertia is { } i) spec.Inertia = i;
+        if (AzimuthLimit is { } az) spec.AzimuthLimit = az;
+        if (Collide is { } co) spec.Collide = co;
+        if (CollideCloth is { } cc) spec.CollideCloth = cc;
+        if (SelfCollide is { } sc) spec.SelfCollide = sc;
+        if (Step is { } st) spec.Step = st;
+        if (Iterations is { } it) spec.Iterations = it;
+        if (LengthPasses is { } lp) spec.LengthPasses = lp;
         return spec;
     }
 }
@@ -124,6 +158,18 @@ public sealed class SpringCapsule
     public float[] A { get; set; } = { 0, 0, 0 };
     public float[] B { get; set; } = { 0, 0, 0 };
     public float Radius { get; set; } = 0.08f;
+}
+
+// One joint's skin as its surface: points with outward normals, six float32 per point (x, y, z, nx, ny, nz), base64, in the model
+// bone of `joint`'s own space (the same frame in the game as in the editor: a model-wide mirror cancels out of bone-local frames), and
+// optionally the triangles over those points, three uint32 point indices each, base64: the model's own surface, with no gap between
+// its vertices. A chain node nearer than its own radius to the surface, behind its normal, is moved out along that normal.
+public sealed class SpringShell
+{
+    public string Joint { get; set; } = "";
+    public string Data { get; set; } = "";
+    /// <summary>The surface's triangles over its points, three uint32 indices each, base64; null or empty: the points alone (a point cloud).</summary>
+    public string? Tris { get; set; }
 }
 
 public sealed class CharacterMaterial
@@ -190,11 +236,61 @@ public static class CharacterRig
                 if (!index.ContainsKey(bone)) wrong += $" spring {chain.Id}: the skeleton has no bone {bone}.";
         foreach (var capsule in character.Springs.Capsules)
             if (Array.IndexOf(ClipRig.Names, capsule.Joint) is var j && (j < 0 || !present[j])) wrong += $" capsule on {capsule.Joint}: that joint is not mapped.";
+        foreach (var shell in character.Springs.Shell)
+        {
+            if (Array.IndexOf(ClipRig.Names, shell.Joint) is var j && (j < 0 || !present[j])) wrong += $" shell on {shell.Joint}: that joint is not mapped.";
+            if (!ShellPoints(shell.Data, out var points)) wrong += $" shell on {shell.Joint}: its points are not base64 of x, y, z, nx, ny, nz float32.";
+            else if (shell.Tris is { Length: > 0 } tris && !ShellTriangles(tris, points.Length / 6, out _)) wrong += $" shell on {shell.Joint}: its triangles are not base64 of three point indices each (uint32).";
+        }
         if (character.Materials.Count > 0 && character.Materials.Count != model.Materials.Count)
             wrong += $" {character.Materials.Count} materials for the model's {model.Materials.Count}.";
         foreach (var i in character.Hide ?? new()) if (i < 0 || i >= model.Materials.Count) wrong += $" hide: the model has no material {i}.";
         if (!float.IsFinite(character.Height) || character.Height <= 0) wrong += $" height {character.Height} is not a positive number.";
         return wrong.Trim();
+    }
+
+    // A shell's points as doubles, six per point: base64 of x, y, z, nx, ny, nz float32 little-endian. False when the data is not.
+    public static bool ShellPoints(string data, out double[] points)
+    {
+        points = Array.Empty<double>();
+        if (string.IsNullOrWhiteSpace(data)) return false;
+        try
+        {
+            var bytes = Convert.FromBase64String(data);
+            if (bytes.Length == 0 || bytes.Length % 24 != 0) return false;
+            var values = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(bytes);
+            points = new double[values.Length];
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (!float.IsFinite(values[i])) return false;
+                points[i] = values[i];
+            }
+            return true;
+        }
+        catch (FormatException) { return false; }
+    }
+
+    // A shell's triangles as ints, three per triangle: base64 of uint32 point indices. False when the data is not, or an index names a
+    // point the shell does not have.
+    public static bool ShellTriangles(string data, int points, out int[] tris)
+    {
+        tris = Array.Empty<int>();
+        if (string.IsNullOrWhiteSpace(data)) return false;
+        try
+        {
+            var bytes = Convert.FromBase64String(data);
+            if (bytes.Length == 0 || bytes.Length % 12 != 0) return false;
+            var values = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint>(bytes);
+            var read = new int[values.Length];
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (values[i] >= (uint)points) return false;
+                read[i] = (int)values[i];
+            }
+            tris = read;
+            return true;
+        }
+        catch (FormatException) { return false; }
     }
 
     // Null when the mesh and textures are the ones the descriptor names and ForgeCore can build them (its one file check,

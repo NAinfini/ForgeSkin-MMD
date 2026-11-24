@@ -6,7 +6,14 @@ import {
     type Skin as GltfSkin,
     type Texture as GltfTexture
 } from '@gltf-transform/core';
-import {KHRMaterialsEmissiveStrength, KHRMaterialsIOR, KHRMaterialsSpecular, type EmissiveStrength} from '@gltf-transform/extensions';
+import {
+    KHRMaterialsClearcoat,
+    KHRMaterialsEmissiveStrength,
+    KHRMaterialsIOR,
+    KHRMaterialsSpecular,
+    type Clearcoat,
+    type EmissiveStrength
+} from '@gltf-transform/extensions';
 import {sha256Bytes} from './lib/hash.ts';
 import {cofactors3, invertAffine, multiplyMatrices} from './affine-matrix.ts';
 import {bakeOcclusion, decodePixels, encodePixels, packMetalSmooth, scaleNormals, tintPixels, type Pixels} from './imported-model-surface.ts';
@@ -28,8 +35,17 @@ import {
 // character-import.ts）都直接调用它。先在原始 JSON 上做全部拒收与边界检查（文件大小、accessor 范围、贴图尺寸），通过之后才用
 // gltf-transform 读数据；不合格一律按名字拒收并说明原因，绝不换成白模或默认材质。
 
-/** 允许出现的 glTF 扩展：折射率、镜面强度只带本导入器忽略的参数，不改变基础色、金属度、粗糙度；自发光强度乘进自发光颜色。 */
-export const importedModelAllowedExtensions = ['KHR_materials_ior', 'KHR_materials_specular', 'KHR_materials_emissive_strength'] as const;
+/** 允许出现的 glTF 扩展：折射率、镜面强度只带本导入器忽略的参数，不改变基础色、金属度、粗糙度；自发光强度乘进自发光颜色。
+ *  MMD/二次元模型导出的常见标记也忽略：无光照（unlit）、清漆（clearcoat）、透射（transmission）——材质仍用游戏的装备着色器
+ *  按基础色/贴图绘制（透射按不透明画）。 */
+export const importedModelAllowedExtensions = [
+    'KHR_materials_ior',
+    'KHR_materials_specular',
+    'KHR_materials_emissive_strength',
+    'KHR_materials_unlit',
+    'KHR_materials_clearcoat',
+    'KHR_materials_transmission'
+] as const;
 const compressionExtensions = ['KHR_draco_mesh_compression', 'EXT_meshopt_compression', 'KHR_texture_basisu', 'EXT_texture_webp', 'EXT_texture_avif'];
 
 /** 把一张 PNG 或 JPEG 变成 8 位、非隔行的 PNG 并报告尺寸；浏览器里由画布实现，测试里注入。 */
@@ -38,7 +54,7 @@ export type ImportedImageCodec = (bytes: Uint8Array, mime: 'image/png' | 'image/
 /**
  * A character (the ForgeSkin character tab): its skins are joined into one skeleton (a bone two skins share must have the same rest pose),
  * `bones` (node indices: humanoid and spring bones) join the skeleton even when no skin lists them, and a rigid mesh follows its nearest
- * bone. What a character does not carry is left out instead of refused: animations, morph targets, a second UV set, the extensions named in
+ * bone. What a character does not carry is left out instead of refused: animations, a second UV set, the extensions named in
  * `ignore`, an identity KHR_texture_transform; a see-through (BLEND) material is cut out at half alpha when it has a colour map, drawn opaque
  * when its colour is at least half opaque and left out otherwise. `turn` turns the model half round about the vertical axis (a model built
  * facing the other way), so every character faces the same way. `follow` (node index to node index) hangs a bone under another bone than
@@ -51,7 +67,7 @@ export interface GlbCharacter {
     follow?: ReadonlyMap<number, number>;
 }
 
-/** The model's three files: the descriptor, the mesh sidecar and the PNGs in the descriptor's order. */
+/** The model's three files: the descriptor, the mesh sidecar (with its expression deltas when it has any) and the PNGs in the descriptor's order. */
 export interface ConvertedGlb {
     descriptor: ImportedModelDescriptor;
     mesh: Uint8Array;
@@ -478,7 +494,8 @@ interface Skeleton {
     nodeBone: Map<GltfNode, number>;
 }
 
-/** Vertex attributes gathered so far; `skeleton` is null for a model without a skin. */
+/** Vertex attributes gathered so far; `skeleton` is null for a model without a skin. `morphs` holds each expression's sparse
+ * position deltas by name, in the order the names were first met. */
 interface Collected {
     positions: number[];
     normals: number[];
@@ -487,9 +504,19 @@ interface Collected {
     joints: number[];
     weights: number[];
     skeleton: Skeleton | null;
+    morphs: Map<string, {vertices: number[]; deltas: number[]}>;
 }
 
 const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+/** The morph target names of a mesh: glTF keeps them in `mesh.extras.targetNames` (Blender writes them); unnamed targets get `target<n>`. */
+function targetNamesOf(mesh: {getExtras(): unknown; listPrimitives(): Primitive[]}): string[] | null {
+    const extras = mesh.getExtras() as {targetNames?: unknown} | null,
+        names = extras && Array.isArray(extras.targetNames) ? (extras.targetNames as unknown[]).map(value => (typeof value === 'string' ? value : '')) : null;
+    const most = Math.max(0, ...mesh.listPrimitives().map(primitive => primitive.listTargets().length));
+    if (most === 0) return null;
+    return Array.from({length: most}, (_, index) => names?.[index] || 'target' + index);
+}
+
 function collect(node: GltfNode, out: Collected, materialIds: Map<GltfMaterial, number>, character: GlbCharacter | undefined): void {
     const mesh = node.getMesh();
     if (mesh) {
@@ -508,6 +535,7 @@ function collect(node: GltfNode, out: Collected, materialIds: Map<GltfMaterial, 
                 }
             bones = [bone];
         }
+        const targetNames = character ? targetNamesOf(mesh) : null;
         for (const primitive of mesh.listPrimitives()) {
             const material = primitive.getMaterial();
             if (
@@ -517,7 +545,7 @@ function collect(node: GltfNode, out: Collected, materialIds: Map<GltfMaterial, 
                 characterBlend(!!material.getBaseColorTexture(), material.getBaseColorFactor()[3]!) === 'drop'
             )
                 continue;
-            append(primitive, world, n, flip, out, materialIds, bones, !skin, !!character, skin ? (out.skeleton?.fixes.get(skin) ?? null) : null);
+            append(primitive, world, n, flip, out, materialIds, bones, !skin, !!character, skin ? (out.skeleton?.fixes.get(skin) ?? null) : null, targetNames);
         }
     }
     for (const child of node.listChildren()) collect(child, out, materialIds, character);
@@ -600,15 +628,23 @@ function append(
     bones: number[] | null,
     rigid: boolean,
     compact: boolean,
-    fix: (number[] | null)[] | null
+    fix: (number[] | null)[] | null,
+    targetNames: string[] | null
 ): void {
     let position = primitive.getAttribute('POSITION')!.getArray()!,
         normal = primitive.getAttribute('NORMAL')!.getArray()!;
     const uv = primitive.getAttribute('TEXCOORD_0')?.getArray() ?? null;
+    // 表情/形态键：每个 target 的 POSITION 位移，与顶点一起变换、重编号（这里读一次）。
+    let targetDeltas: (ArrayLike<number> | null)[] | null = null;
+    if (targetNames) {
+        const targets = primitive.listTargets();
+        targetDeltas = targetNames.map((_, index) => targets[index]?.getAttribute('POSITION')?.getArray() ?? null);
+    }
     // Vertices bound in another pose than the skeleton's: each moved by its joints' fixes, blended by its weights.
     if (fix) {
         const moved = Float32Array.from(position),
             turned = Float32Array.from(normal),
+            fixedDeltas = targetDeltas ? targetDeltas.map(delta => (delta ? Float32Array.from(delta) : null)) : null,
             jointAccessor = primitive.getAttribute('JOINTS_0')!,
             weightAccessor = primitive.getAttribute('WEIGHTS_0')!,
             joint: number[] = [],
@@ -628,9 +664,18 @@ function append(
                 moved[vertex * 3 + row] = m[row]! * x + m[4 + row]! * y + m[8 + row]! * z + m[12 + row]!;
                 turned[vertex * 3 + row] = m[row]! * a + m[4 + row]! * b + m[8 + row]! * c;
             }
+            if (fixedDeltas)
+                for (let t = 0; t < fixedDeltas.length; t++) {
+                    const delta = targetDeltas![t],
+                        onto = fixedDeltas[t];
+                    if (!delta || !onto) continue;
+                    const [dx, dy, dz] = [delta[vertex * 3]!, delta[vertex * 3 + 1]!, delta[vertex * 3 + 2]!];
+                    for (let row = 0; row < 3; row++) onto[vertex * 3 + row] = m[row]! * dx + m[4 + row]! * dy + m[8 + row]! * dz;
+                }
         }
         position = moved;
         normal = turned;
+        if (fixedDeltas) targetDeltas = fixedDeltas;
     }
     const source = primitive.getIndices()?.getArray() ?? null,
         full = position.length / 3;
@@ -710,6 +755,38 @@ function append(
             out.uvs.push(u, 1 - v);
         } else out.uvs.push(0, 0);
     }
+    // 表情位移：与位置同样变换（X 取反、绕向无关），顶点按 keep 重编号；双面材质的背面副本也带一份。
+    if (targetDeltas && targetNames) {
+        const doubled = primitive.getMaterial()?.getDoubleSided() === true ? count : 0;
+        for (let t = 0; t < targetDeltas.length; t++) {
+            const delta = targetDeltas[t],
+                name = targetNames[t]!;
+            let bucket = out.morphs.get(name);
+            if (!bucket) {
+                bucket = {vertices: [], deltas: []};
+                out.morphs.set(name, bucket);
+            }
+            if (!delta) continue;
+            for (let item = 0; item < count; item++) {
+                const vertex = keep ? keep[item]! : item;
+                const dx = delta[vertex * 3]!,
+                    dy = delta[vertex * 3 + 1]!,
+                    dz = delta[vertex * 3 + 2]!;
+                requireImported(Number.isFinite(dx) && Number.isFinite(dy) && Number.isFinite(dz), 'non-finite');
+                const wx = -(world[0]! * dx + world[4]! * dy + world[8]! * dz),
+                    wy = world[1]! * dx + world[5]! * dy + world[9]! * dz,
+                    wz = world[2]! * dx + world[6]! * dy + world[10]! * dz;
+                requireImported(Math.abs(wx) <= limit && Math.abs(wy) <= limit && Math.abs(wz) <= limit, 'extent', {limit});
+                if (wx === 0 && wy === 0 && wz === 0) continue;
+                bucket.vertices.push(base + item);
+                bucket.deltas.push(wx, wy, wz);
+                if (doubled) {
+                    bucket.vertices.push(base + doubled + item);
+                    bucket.deltas.push(wx, wy, wz);
+                }
+            }
+        }
+    }
     const material = primitive.getMaterial();
     requireImported(material !== null, 'no-material');
     if (!materialIds.has(material!)) materialIds.set(material!, materialIds.size);
@@ -752,7 +829,7 @@ function append(
 export async function convertGlbModel(bytes: Uint8Array, codec: ImportedImageCodec, character?: GlbCharacter): Promise<ConvertedGlb> {
     const {json, bin} = splitGlb(bytes);
     inspect(json, bin, character);
-    const io = new WebIO().registerExtensions([KHRMaterialsIOR, KHRMaterialsSpecular, KHRMaterialsEmissiveStrength]);
+    const io = new WebIO().registerExtensions([KHRMaterialsIOR, KHRMaterialsSpecular, KHRMaterialsEmissiveStrength, KHRMaterialsClearcoat]);
     const document = await io.readBinary(bytes).catch(error => {
         throw new ImportedModelError('glb-json', {detail: errorMessage(error)});
     });
@@ -766,7 +843,7 @@ export async function convertGlbModel(bytes: Uint8Array, codec: ImportedImageCod
             [...(character?.follow ?? [])].flatMap(([bone, under]) => (nodeList[bone] && nodeList[under] ? [[nodeList[bone], nodeList[under]] as const] : []))
         ),
         skeleton = skins.length || extra.length ? readSkeleton(skins, [...extra, ...follow.values()], follow) : null;
-    const out: Collected = {positions: [], normals: [], uvs: [], indices: new Map(), joints: [], weights: [], skeleton},
+    const out: Collected = {positions: [], normals: [], uvs: [], indices: new Map(), joints: [], weights: [], skeleton, morphs: new Map()},
         materialIds = new Map<GltfMaterial, number>();
     for (const node of scene!.listChildren()) collect(node, out, materialIds, character);
     requireImported(out.positions.length > 0, 'empty');
@@ -778,6 +855,12 @@ export async function convertGlbModel(bytes: Uint8Array, codec: ImportedImageCod
                 list[at + 2] = 0 - list[at + 2]!;
             }
         for (const bone of skeleton?.bones ?? []) bone.rest = bone.rest.map((value, at) => (at % 4 === 0 || at % 4 === 2 ? 0 - value : value));
+        // 表情位移同样是方向量：X、Z 取反。
+        for (const morph of out.morphs.values())
+            for (let at = 0; at < morph.deltas.length; at += 3) {
+                morph.deltas[at] = 0 - morph.deltas[at]!;
+                morph.deltas[at + 2] = 0 - morph.deltas[at + 2]!;
+            }
     }
 
     // 材质与贴图：按首次出现的顺序编号；相同的贴图字节只存一份。
@@ -861,15 +944,25 @@ export async function convertGlbModel(bytes: Uint8Array, codec: ImportedImageCod
                 ? await storePixels(scaleNormals(await pixelsOf(normalTexture, label), normalScale))
                 : await pack(normalTexture, material.getNormalTextureInfo(), label);
         // The gear shader reads metal in red and smoothness (1 - roughness) in green of one map; the glTF factors are folded in.
+        // 清漆（KHR_materials_clearcoat，MMD 导出常见）没有单独的着色器输入：把它的强度折算成更低的粗糙度（= 更高的平滑度），
+        // 只提高不降低；基础色、贴图、金属度一概不动。
+        const clearcoat = material.getExtension<Clearcoat>('KHR_materials_clearcoat'),
+            coat = clearcoat ? Math.min(1, Math.max(0, clearcoat.getClearcoatFactor())) : 0,
+            coatRoughness = clearcoat ? Math.min(1, Math.max(0, clearcoat.getClearcoatRoughnessFactor())) : 0,
+            roughnessFactor = coat > 0 ? Math.min(material.getRoughnessFactor(), 1 - (1 - coatRoughness) * coat) : material.getRoughnessFactor();
         const metalTexture = material.getMetallicRoughnessTexture();
         const metalIndex = metalTexture
-            ? await storePixels(packMetalSmooth(await pixelsOf(metalTexture, label), material.getMetallicFactor(), material.getRoughnessFactor()))
+            ? await storePixels(packMetalSmooth(await pixelsOf(metalTexture, label), material.getMetallicFactor(), roughnessFactor))
             : -1;
         // 自发光颜色 = glTF 的 emissiveFactor × KHR_materials_emissive_strength（线性，1 为原色全亮，可大于 1）。
         const strength = material.getExtension<EmissiveStrength>('KHR_materials_emissive_strength')?.getEmissiveStrength() ?? 1;
         const [red, green, blue] = material.getEmissiveFactor().map(channel => channel * strength) as [number, number, number],
-            glows = red > 0 || green > 0 || blue > 0;
-        const emissiveTexture = glows ? await pack(material.getEmissiveTexture(), material.getEmissiveTextureInfo(), label) : -1;
+            emissiveNode = material.getEmissiveTexture();
+        // 没有自发光贴图的纯白自发光只会把整块表面洗白：Blender 导出器把「Emission Color 白、强度 0」写成 emissiveFactor
+        // [1,1,1] 时就是这样（MMD 模型的 face/body 皮肤常见），有基础色贴图的材质按导出痕迹忽略它。
+        const washedOut = emissiveNode === null && index >= 0 && red === 1 && green === 1 && blue === 1,
+            glows = !washedOut && (red > 0 || green > 0 || blue > 0);
+        const emissiveTexture = glows ? await pack(emissiveNode, material.getEmissiveTextureInfo(), label) : -1;
         const blend = !!character && material.getAlphaMode() === 'BLEND',
             mask = material.getAlphaMode() === 'MASK' || (blend && characterBlend(index >= 0, factor[3]!) === 'mask');
         materials.push({
@@ -877,7 +970,7 @@ export async function convertGlbModel(bytes: Uint8Array, codec: ImportedImageCod
             baseColor: index >= 0 ? [1, 1, 1, 1] : [factor[0]!, factor[1]!, factor[2]!, mask ? factor[3]! : 1],
             texture: index,
             metallic: metalIndex >= 0 ? 1 : material.getMetallicFactor(),
-            roughness: metalIndex >= 0 ? 1 : material.getRoughnessFactor(),
+            roughness: metalIndex >= 0 ? 1 : roughnessFactor,
             alpha: mask ? 'mask' : 'opaque',
             cutoff: blend ? characterBlendCutoff : material.getAlphaCutoff(),
             normalTexture: normalIndex,
@@ -897,15 +990,26 @@ export async function convertGlbModel(bytes: Uint8Array, codec: ImportedImageCod
     }
     const faces = indices.length / 3,
         vertices = out.positions.length / 3;
-    requireImported(importedMeshFits(vertices, indices.length, !!skeleton), 'mesh-too-large');
+    // 表情：名字按首次出现的顺序，位移与顶点同序（稀疏，未动的顶点不写）。
+    const morphNames = [...out.morphs.keys()],
+        morphs = morphNames.map(name => {
+            const morph = out.morphs.get(name)!;
+            return {vertices: Uint32Array.from(morph.vertices), deltas: Float32Array.from(morph.deltas)};
+        });
+    requireImported(importedMeshFits(vertices, indices.length, !!skeleton, morphs.length ? morphs : undefined), 'mesh-too-large');
     const mesh = writeImportedMesh(
         Float32Array.from(out.positions),
         Float32Array.from(out.normals),
         Float32Array.from(out.uvs),
         Uint32Array.from(indices),
-        skeleton ? {joints: Uint16Array.from(out.joints), weights: Float32Array.from(out.weights)} : undefined
+        skeleton ? {joints: Uint16Array.from(out.joints), weights: Float32Array.from(out.weights)} : undefined,
+        morphs.length ? morphs : undefined
     );
     const shape = {mesh: {sha256: await sha256Bytes(mesh), vertices, indices: indices.length}, submeshes, materials, textures};
-    const descriptor: ImportedModelDescriptor = skeleton ? {format: 2, ...shape, skin: {bones: skeleton.bones}} : {format: 1, ...shape};
+    const descriptor: ImportedModelDescriptor = !skeleton
+        ? {format: 1, ...shape}
+        : morphs.length
+          ? {format: 3, ...shape, skin: {bones: skeleton.bones}, morphs: morphNames}
+          : {format: 2, ...shape, skin: {bones: skeleton.bones}};
     return {descriptor, mesh, textures: textureBytes, stats: {faces, vertices, materials: materials.length, textures: textures.length}};
 }

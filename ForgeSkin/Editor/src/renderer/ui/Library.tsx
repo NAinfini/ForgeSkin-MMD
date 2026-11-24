@@ -1,23 +1,16 @@
-// The work library at the top of the left column: the game profile the works are seen in, weapon skins or characters, and every
-// work as a card with its state in that profile (in use in game, installed, changed since). The cards switch, make, copy, rename,
-// export and delete works, put one into use or take it out of the profile, and the profile's skins from others show read only.
-import { ActionIcon, Button, Group, Menu, Modal, ScrollArea, SegmentedControl, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
+// The work library at the top of the left column: the game profile the works are seen in, and every character work as a card with
+// its state in that profile (in use in game, installed, changed since). The cards open, make, rename, export and delete works, put
+// one into use or take it out of the profile, and the profile's character skins from others show read only.
+import { ActionIcon, Button, Group, Menu, Modal, ScrollArea, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
 import {
-  IconAlertTriangle,
   IconCheck,
   IconChevronDown,
-  IconChevronRight,
   IconCopy,
-  IconCrosshair,
-  IconDeviceFloppy,
-  IconDots,
   IconDownload,
-  IconFolderSymlink,
-  IconEraser,
-  IconFileImport,
+  IconDots,
   IconFolderOpen,
   IconFolderPlus,
-  IconHistory,
+  IconFolderSymlink,
   IconPackageImport,
   IconPackages,
   IconPencil,
@@ -30,18 +23,15 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { activateSkin, applyToGame, editorEdition, exportPack, importSkinGroup, installPluginInto, installToProfile, openProject, profileProblem, shippedLabel, tellNewer } from '../actions';
+import { activateSkin, applyToGame, editorEdition, installPluginInto, installToProfile, profileProblem, shippedLabel, tellNewer } from '../actions';
 import { characterPicture, chooseModel, deleteCharacter, drawPackedPicture, ensureCharacterPicture, exportCharacterPack, openCharacter, pictureDrawn, refreshCharacters } from '../character/model';
-import { useCharacter, type Mode } from '../character/state';
-import { localName, t } from '../i18n';
+import { useCharacter } from '../character/state';
+import { t } from '../i18n';
 import { addPacks, adoptable, adoptPacks, removeFromProfile, statusOf, useEdited, useProfile, type WorkStatus } from '../profile';
 import { call, fileUrl, type InstalledPack, type Profile, type ProjectEntry } from '../protocol';
 import { useStore } from '../store';
-import { requestItemThumbs, skinThumbMissing, skinThumbnail, skinThumbOf, thumbOf } from '../viewport/thumbnails';
 import { Info } from './Features';
 import { showTab } from './InspectorTabs';
-import { SnapshotsModal } from './Snapshots';
-import { GearGallery, useThumbs } from './WeaponGallery';
 
 async function addProfileFolder() {
   const [folder] = await window.forge.openDialog('folder', undefined, 'profile');
@@ -64,6 +54,12 @@ async function removeProfileFolder(path: string) {
   } catch (e) {
     s.fail(e);
   }
+}
+
+/** Opens a character project file the author picked (its autosave, or one someone shared). */
+async function openProjectFile() {
+  const [p] = await window.forge.openDialog('file', [{ name: t('store.k11'), extensions: ['forgeskinproj'] }]);
+  if (p) await openCharacter(p);
 }
 
 /** Installs (or updates) the skin plugin in the chosen profile. */
@@ -95,11 +91,6 @@ async function uninstallPlugin() {
   } catch (e) {
     s.fail(e);
   }
-}
-
-/** After a work is opened or made: the whole gun selected. The left column stays on the works, where another may be picked next; the parts are a click on their tab away. */
-export function wholeGun() {
-  useStore.getState().select(null);
 }
 
 /** The game's state as a dot: running, found, not found. */
@@ -238,22 +229,18 @@ function ProfileBanner() {
   return problem ? <div className="lib-banner bad">{problem}</div> : null;
 }
 
-/** The work being edited, on top of both left pages: its name, gear and state; a click shows the works. */
+/** The work being edited, on top of both left pages: its name and state; a click shows the works. */
 export function CurrentWork() {
-  const character = useCharacter((s) => s.mode === 'character');
-  const weaponName = useStore((s) => s.doc.name);
-  const skinId = useStore((s) => s.doc.id);
-  const gear = useStore((s) => s.catalog.find((c) => c.id === s.weaponId));
   const characterName = useCharacter((s) => s.name);
   const characterId = useCharacter((s) => s.skinId);
+  const live = useCharacter((s) => s.lastEdited);
   const installed = useStore((s) => s.installed);
-  const open = character ? !!characterId : !!gear;
-  const id = character ? characterId : skinId;
-  const status = statusOf(installed, id ?? '', null);
+  const open = !!characterId;
+  const status = statusOf(installed, characterId ?? '', live);
   return (
     <UnstyledButton className="current-work" onClick={() => showTab('left', 'works')} data-tour="current-work">
-      <span className="name">{open ? (character ? characterName : weaponName) || t('works.nothingOpen') : t('works.nothingOpen')}</span>
-      {open && <span className="sub">{character ? t('works.characters') : gear ? localName(gear) : ''}</span>}
+      <span className="name">{open ? characterName || t('works.nothingOpen') : t('works.nothingOpen')}</span>
+      {open && <span className="sub">{t('works.characters')}</span>}
       {open && <Tags status={status} />}
     </UnstyledButton>
   );
@@ -286,8 +273,7 @@ interface CardAction {
 }
 
 /** One work as a card: its picture on top with its state over the picture's corner and ⋯ in the other on hover, then its name with
- * the gear (or 有改动未应用) under it beside 应用. A character card (`tall`) stands its picture upright and puts 应用 under the name.
- * Its actions are on ⋯ and on right click, at the pointer. */
+ * 应用 under it. Its actions are on ⋯ and on right click, at the pointer. */
 function WorkCard({
   thumb,
   name,
@@ -299,8 +285,6 @@ function WorkCard({
   renaming,
   onRename,
   use,
-  after,
-  tall,
 }: {
   thumb: ReactNode;
   name: string;
@@ -311,11 +295,8 @@ function WorkCard({
   actions: CardAction[];
   renaming?: boolean;
   onRename?: (name: string | null) => void;
-  /** 应用, right of the name (under it on a tall card). */
+  /** 应用, under the name. */
   use?: ReactNode;
-  /** Rendered after the card (a dialog it opens). */
-  after?: ReactNode;
-  tall?: boolean;
 }) {
   const [menu, setMenu] = useState(false);
   /** Where a right click opened the menu: it opens at the pointer (turning back from the window's edges), ⋯ beside itself. */
@@ -332,7 +313,7 @@ function WorkCard({
   );
   return (
     <div
-      className={['work', tall && 'tall', status.state === 'inUse' && 'in-use'].filter(Boolean).join(' ')}
+      className={['work', 'tall', status.state === 'inUse' && 'in-use'].filter(Boolean).join(' ')}
       role="button"
       aria-current={current}
       onClick={() => !current && onOpen?.()}
@@ -392,14 +373,13 @@ function WorkCard({
           {items}
         </Menu>
       )}
-      {after}
     </div>
   );
 }
 
-/** 应用 on a card (§ the works list): puts the work into use in the chosen profile. An installed, unchanged one only becomes the
- * game's choice; otherwise it is opened (when it is not the edited one) and applied, which builds and installs it. In use, the
- * card offers 应用 only while it has changes not applied; going back to the original look is done in game. */
+/** 应用 on a card: puts the work into use in the chosen profile. An installed, unchanged one only becomes the game's choice;
+ * otherwise it is opened (when it is not the edited one) and applied, which builds and installs it. In use, the card offers 应用
+ * only while it has changes not applied; going back to the original look is done in game. */
 function UseButtons({ id, name, status, open, tour }: { id: string; name: string; status: WorkStatus; open?: () => Promise<void>; tour?: boolean }) {
   const blocked = useStore((s) => (s.profiles.length ? profileProblem(s.profiles.find((p) => p.path === s.prefs.profilePath)) : null));
   const busy = useStore((s) => !!s.busy);
@@ -442,15 +422,6 @@ function ownActions(
 
 type Deleting = { name: string; adopted?: boolean; run: () => void } | null;
 
-/** An item's image, asked for (drawn in the background) when there is none yet. */
-function useItemThumb(id: string | null | undefined) {
-  const thumb = id ? thumbOf(id) : null;
-  useEffect(() => {
-    if (id && !thumb) requestItemThumbs([id], true);
-  }, [id, thumb]);
-  return thumb;
-}
-
 /** A character pack's card picture (once per pack file and version): its own, else one drawn in the background from its model and
  * kept in the data dir's cache; null while it loads or when neither can be had. */
 const packPictures = new Map<string, Promise<string | null>>();
@@ -479,88 +450,6 @@ function usePackPicture(p: InstalledPack | null) {
   return url;
 }
 
-/** A skin card's image: drawn from its file once, and the open skin's again a moment after the last change. */
-function useSkinThumb(weaponId: string, k: ProjectEntry, current: boolean) {
-  const doc = useStore((s) => (current ? s.doc : null));
-  const ready = useStore((s) => s.weaponId !== weaponId || (!!s.preview && !s.previewLoading));
-  useEffect(() => {
-    if (!current && k.path && ready) void skinThumbnail(weaponId, k.id, { path: k.path });
-  }, [weaponId, k.id, k.path, current, ready]);
-  useEffect(() => {
-    if (!doc || !ready) return;
-    const id = setTimeout(() => void skinThumbnail(weaponId, k.id, { doc }), 1500);
-    return () => clearTimeout(id);
-  }, [weaponId, k.id, doc, ready]);
-  return skinThumbOf(k.id);
-}
-
-function SkinWork({ weaponId, k, onDelete }: { weaponId: string; k: ProjectEntry; onDelete: (d: Deleting) => void }) {
-  const current = useStore((s) => s.doc.id === k.id);
-  const name = useStore((s) => (s.doc.id === k.id ? s.doc.name : k.name)) ?? '';
-  const status = statusOf(
-    useStore((s) => s.installed),
-    k.id,
-    useEdited(k),
-  );
-  const [renaming, setRenaming] = useState(false);
-  const [snapshots, setSnapshots] = useState(false);
-  const { openWork, newSkin, edit, deleteSkin, saveProject, newProject } = useStore.getState();
-  const open = () => openWork(weaponId, k.id);
-  const item = useItemThumb(weaponId);
-  const thumb = useSkinThumb(weaponId, k, current) ?? item;
-  const missing = skinThumbMissing(k.id);
-  const gear = useStore((s) => s.catalog.find((c) => c.id === weaponId));
-  return (
-    <WorkCard
-      sub={gear ? localName(gear) : weaponId}
-      thumb={
-        thumb && (
-          <>
-            <img src={thumb} alt="" />
-            {missing && (
-              <Tooltip
-                label={[
-                  missing.gone.length ? t('works.picturesGone', { v0: missing.gone.join('、') }) : '',
-                  missing.unreadable.length ? t('works.picturesUnreadable', { v0: missing.unreadable.join('、') }) : '',
-                  t('works.picturesFix'),
-                ]
-                  .filter(Boolean)
-                  .join('\n')}
-                multiline
-                w={260}
-                style={{ whiteSpace: 'pre-line' }}
-              >
-                <span className="thumb-warn">
-                  <IconAlertTriangle size={12} />
-                </span>
-              </Tooltip>
-            )}
-          </>
-        )
-      }
-      name={name}
-      status={status}
-      current={current}
-      onOpen={() => void open().then(wholeGun)}
-      renaming={renaming}
-      onRename={(v) => (setRenaming(false), v && edit((d) => void (d.name = v)))}
-      use={<UseButtons id={k.id} name={name} status={status} open={current ? undefined : open} tour={current} />}
-      actions={ownActions(k.id, name, status, open, {
-        copy: () => void newSkin(true),
-        rename: () => setRenaming(true),
-        exportIt: () => void exportPack(),
-        remove: () => onDelete({ name, adopted: k.adopted, run: () => void deleteSkin(k.id, weaponId) }),
-        extra: [
-          { label: t('snapshots.menu'), icon: <IconHistory size={14} />, run: () => setSnapshots(true) },
-          { label: t('skins.saveFile'), icon: <IconDeviceFloppy size={14} />, run: () => void saveProject() },
-          { label: t('topBar.k57'), icon: <IconEraser size={14} />, run: () => void newProject() },
-        ],
-      })}
-      after={current && <SnapshotsModal opened={snapshots} onClose={() => setSnapshots(false)} />}
-    />
-  );
-}
-
 function CharacterWork({ k, onDelete }: { k: ProjectEntry; onDelete: (d: Deleting) => void }) {
   const current = useCharacter((s) => s.skinId === k.id);
   const live = useCharacter((s) => (s.skinId === k.id ? s.name : null));
@@ -568,14 +457,13 @@ function CharacterWork({ k, onDelete }: { k: ProjectEntry; onDelete: (d: Deletin
   const status = statusOf(
     useStore((s) => s.installed),
     k.id,
-    k.edited,
+    useEdited(k),
   );
   const [renaming, setRenaming] = useState(false);
   const open = () => openCharacter(k.path);
   const drawn = pictureDrawn.get(k.id) ?? 0;
   return (
     <WorkCard
-      tall
       thumb={
         <>
           <IconUser size={18} />
@@ -587,7 +475,7 @@ function CharacterWork({ k, onDelete }: { k: ProjectEntry; onDelete: (d: Deletin
       name={name}
       status={status}
       current={current}
-      onOpen={() => void open().then(wholeGun)}
+      onOpen={() => void open()}
       renaming={renaming}
       onRename={(v) => (setRenaming(false), v && useCharacter.setState({ name: v }))}
       use={<UseButtons id={k.id} name={name} status={status} open={current ? undefined : open} tour={current} />}
@@ -604,20 +492,14 @@ function CharacterWork({ k, onDelete }: { k: ProjectEntry; onDelete: (d: Deletin
 /** A skin in the profile that is not one of the author's works: put into use, taken out of the profile (not a skin mod's, which
  * the mod manager owns) or moved to the author's works; never edited or deleted here. */
 function OtherWork({ p }: { p: InstalledPack }) {
-  const item = useStore((s) => s.catalog.find((c) => c.id === p.weapon));
   const status = statusOf([p], p.id, null);
-  const character = p.weapon === 'character';
-  const gear = useItemThumb(p.weapon && !character ? p.weapon : null);
-  const picture = usePackPicture(character ? p : null);
-  const thumb = character ? picture : gear;
+  const picture = usePackPicture(p);
   const from = p.source === 'mod' ? t('works.fromMod', { v0: p.mod ?? '' }) : p.source === 'hand' ? t('works.fromHand') : null;
-  const sub = [item ? localName(item) : null, from].filter(Boolean).join(' · ');
   return (
     <WorkCard
-      tall={character}
-      thumb={thumb ? <img src={thumb} alt="" /> : character ? <IconUser size={18} /> : <IconCrosshair size={18} />}
+      thumb={picture ? <img src={picture} alt="" /> : <IconUser size={18} />}
       name={p.name}
-      sub={sub}
+      sub={from ?? undefined}
       status={status}
       use={<UseButtons id={p.id} name={p.name} status={status} />}
       actions={[
@@ -627,49 +509,6 @@ function OtherWork({ p }: { p: InstalledPack }) {
         { label: t('works.adopt'), icon: <IconFolderSymlink size={14} />, run: () => void adoptPacks([p]) },
       ]}
     />
-  );
-}
-
-/** Weapon skins, one group per gear: the open gear's group open, the others folded. */
-function WeaponWorks({ query, onDelete }: { query: string; onDelete: (d: Deleting) => void }) {
-  const works = useStore((s) => s.works);
-  const weaponId = useStore((s) => s.weaponId);
-  const catalog = useStore((s) => s.catalog);
-  const docId = useStore((s) => s.doc.id);
-  const docName = useStore((s) => s.doc.name);
-  const installed = useStore((s) => s.installed);
-  const [open, setOpen] = useState<Record<string, boolean>>({});
-  const q = query.trim().toLowerCase();
-  const groups = useMemo(() => {
-    const all = { ...works };
-    // The open skin before its first save.
-    if (weaponId && docId && !all[weaponId]?.some((k) => k.id === docId)) all[weaponId] = [{ path: '', id: docId, name: docName ?? '', modified: new Date().toISOString() }, ...(all[weaponId] ?? [])];
-    return Object.entries(all)
-      .map(([id, skins]) => ({ id, item: catalog.find((c) => c.id === id), skins }))
-      .map((g) => {
-        const gearHit = !q || [g.item?.name, g.item?.nameZh, g.id].some((x) => x?.toLowerCase().includes(q));
-        return { ...g, skins: byState(installed, gearHit ? g.skins : g.skins.filter((k) => k.name.toLowerCase().includes(q))) };
-      })
-      .filter((g) => g.skins.length)
-      .sort((a, b) => (b.skins[0]?.modified ?? '').localeCompare(a.skins[0]?.modified ?? ''));
-  }, [works, weaponId, catalog, docId, docName, q, installed]);
-  if (!groups.length) return <Text className="lib-empty">{q ? t('works.noHits') : t('works.noWeaponWorks')}</Text>;
-  return (
-    <>
-      {groups.map((g) => {
-        const expanded = !!q || (open[g.id] ?? g.id === weaponId);
-        return (
-          <div key={g.id} className="lib-group">
-            <UnstyledButton className="lib-group-head" aria-expanded={expanded} onClick={() => setOpen({ ...open, [g.id]: !expanded })}>
-              <IconChevronRight size={13} className="twist" />
-              <span className="name">{g.item ? localName(g.item) : g.id}</span>
-              <span className="count">{g.skins.length}</span>
-            </UnstyledButton>
-            {expanded && g.skins.map((k) => <SkinWork key={k.id} weaponId={g.id} k={k} onDelete={onDelete} />)}
-          </div>
-        );
-      })}
-    </>
   );
 }
 
@@ -700,73 +539,38 @@ function byState<T extends { id: string }>(installed: InstalledPack[], works: T[
   return [...works].sort((a, b) => rank(a.id) - rank(b.id));
 }
 
-/** 「＋ 新建」: a weapon skin starts from the gear gallery (the menu copies, opens or imports); a character from its model file. */
-function NewButton({ character }: { character: boolean }) {
-  const [gallery, setGallery] = useState(false);
+/** 「＋ 新建」: a character work starts from its model file; the menu opens an existing work and adds skin packs. */
+function NewButton() {
+  const [menu, setMenu] = useState(false);
   const canAdd = useStore((s) => !!s.profiles.find((p) => p.path === s.prefs.profilePath)?.hasBepInEx);
   return (
-    <>
-      <Group gap={0} wrap="nowrap" data-tour="new">
-        <Button
-          size="xs"
-          leftSection={<IconPlus size={14} />}
-          onClick={() => (character ? void chooseModel().then((ok) => ok && wholeGun()) : setGallery(true))}
-          style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
-        >
-          {t('works.new')}
-        </Button>
-        <Menu position="bottom-end" withinPortal>
-          <Menu.Target>
-            <Button size="xs" px={6} aria-label={t('works.newMore')} data-tour="new-more" style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: '1px solid rgba(0,0,0,.2)' }}>
-              <IconChevronDown size={14} />
-            </Button>
-          </Menu.Target>
-          <Menu.Dropdown>
-            {!character && (
-              <>
-                <Menu.Item leftSection={<IconCopy size={14} />} disabled={!useStore.getState().weaponId} onClick={() => void useStore.getState().newSkin(true)}>
-                  {t('works.copyCurrent')}
-                </Menu.Item>
-                <Menu.Item
-                  leftSection={<IconFolderOpen size={14} />}
-                  rightSection={
-                    <Text size="xs" c="dimmed">
-                      Ctrl O
-                    </Text>
-                  }
-                  onClick={() => void openProject()}
-                >
-                  {t('topBar.k54')}
-                </Menu.Item>
-                <Menu.Item leftSection={<IconFileImport size={14} />} onClick={() => void importSkinGroup()}>
-                  {t('skins.importGroup')}
-                </Menu.Item>
-              </>
-            )}
-            <Tooltip label={t('works.addPacksInfo')} multiline w={260} position="left">
-              <Menu.Item leftSection={<IconPackageImport size={14} />} disabled={!canAdd} onClick={() => void addPacks()} data-tour="add-packs">
-                {t('works.addPacks')}
-              </Menu.Item>
-            </Tooltip>
-          </Menu.Dropdown>
-        </Menu>
-      </Group>
-      {!character && <GearGallery opened={gallery} onClose={() => setGallery(false)} onPick={(id) => void useStore.getState().newWork(id).then(wholeGun)} />}
-    </>
-  );
-}
-
-function TabLabel({ text, count }: { text: string; count: number }) {
-  return (
-    <span className="lib-tab">
-      {text}
-      <span className="count">{count}</span>
-    </span>
+    <Group gap={0} wrap="nowrap" data-tour="new">
+      <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => void chooseModel()} style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}>
+        {t('works.new')}
+      </Button>
+      <Menu opened={menu} onChange={setMenu} position="bottom-end" withinPortal>
+        <Menu.Target>
+          <Button size="xs" px={6} aria-label={t('works.newMore')} data-tour="new-more" style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: '1px solid rgba(0,0,0,.2)' }}>
+            <IconChevronDown size={14} />
+          </Button>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item leftSection={<IconFolderOpen size={14} />} onClick={() => void openProjectFile()}>
+            {t('topBar.k54')}
+          </Menu.Item>
+          <Tooltip label={t('works.addPacksInfo')} multiline w={260} position="left">
+            <Menu.Item leftSection={<IconPackageImport size={14} />} disabled={!canAdd} onClick={() => void addPacks()} data-tour="add-packs">
+              {t('works.addPacks')}
+            </Menu.Item>
+          </Tooltip>
+        </Menu.Dropdown>
+      </Menu>
+    </Group>
   );
 }
 
 /** The profile's skins from others, folded into one bar (how many, 全部搬过来) that opens to their cards; nothing when there are none. */
-function Others({ others, character }: { others: InstalledPack[]; character: boolean }) {
+function Others({ others }: { others: InstalledPack[] }) {
   const [open, setOpen] = useState(false);
   if (!others.length) return null;
   return (
@@ -786,7 +590,7 @@ function Others({ others, character }: { others: InstalledPack[]; character: boo
         <IconChevronDown size={14} className="twist" />
       </div>
       {open && (
-        <div className={character ? 'lib-grid' : undefined}>
+        <div className="lib-grid">
           {others.map((p) => (
             <OtherWork key={p.id} p={p} />
           ))}
@@ -796,60 +600,43 @@ function Others({ others, character }: { others: InstalledPack[]; character: boo
   );
 }
 
-/** The left column's top: profile, category, search and new, the works and the profile's skins from others. */
+/** The left column's top: profile, search and new, the character works and the profile's skins from others. */
 export function Library() {
-  const mode = useCharacter((s) => s.mode);
-  const character = mode === 'character';
   const ready = useStore((s) => s.ready);
   const installed = useStore((s) => s.installed);
-  const works = useStore((s) => s.works);
   const characters = useStore((s) => s.characters);
   const hasProfile = useStore((s) => !!s.profiles.find((p) => p.path === s.prefs.profilePath)?.hasBepInEx);
   const [query, setQuery] = useState('');
   const [deleting, setDeleting] = useState<Deleting>(null);
-  useThumbs();
   useEffect(() => {
     if (ready) void refreshCharacters();
   }, [ready]);
-  const mine = useMemo(() => new Set([...Object.values(works).flat(), ...characters].map((k) => k.id)), [works, characters]);
-  const others = installed.filter((p) => !mine.has(p.id) && (p.weapon === 'character') === character && !p.error);
+  const mine = useMemo(() => new Set(characters.map((k) => k.id)), [characters]);
+  const others = installed.filter((p) => !mine.has(p.id) && p.weapon === 'character' && !p.error);
   return (
     <section className="library" data-tour="library">
       <ProfileRow />
       <ProfileBanner />
       <div className="lib-tools">
-        <SegmentedControl
-          fullWidth
-          size="xs"
-          color="flare"
-          data-tour="mode"
-          aria-label={t('character.mode')}
-          value={mode}
-          onChange={(v) => useCharacter.setState({ mode: v as Mode })}
-          data={[
-            { value: 'weapon', label: <TabLabel text={t('works.weapons')} count={Object.values(works).reduce((n, k) => n + k.length, 0)} /> },
-            { value: 'character', label: <TabLabel text={t('works.characters')} count={characters.length} /> },
-          ]}
-        />
         <Group gap={6} wrap="nowrap">
           <TextInput
             size="xs"
             style={{ flex: 1 }}
             aria-label={t('works.search')}
-            placeholder={character ? t('works.searchCharacters') : t('works.search')}
+            placeholder={t('works.searchCharacters')}
             leftSection={<IconSearch size={13} />}
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
           />
-          <NewButton character={character} />
+          <NewButton />
         </Group>
       </div>
       <ScrollArea className="lib-list" type="hover" scrollbars="y">
-        {hasProfile && <Others others={others} character={character} />}
+        {hasProfile && <Others others={others} />}
         <div className="lib-section">
           <span>{t('works.mine')}</span>
         </div>
-        {character ? <CharacterWorks query={query} onDelete={setDeleting} /> : <WeaponWorks query={query} onDelete={setDeleting} />}
+        <CharacterWorks query={query} onDelete={setDeleting} />
       </ScrollArea>
       <Modal opened={!!deleting} onClose={() => setDeleting(null)} title={t('skins.deleteTitle')} centered>
         <Text size="sm">{t(deleting?.adopted ? 'skins.deleteBodyAdopted' : 'skins.deleteBody', { v0: deleting?.name })}</Text>

@@ -222,7 +222,7 @@
       "pluginGuid": "ForgeSkin",
       "providerId": null,
       "providerIds": [],
-      "version": "1.0.2",
+      "version": "1.0.3",
       "audience": "player",
       "packager": "tools/package_release.py",
       "dependencies": [

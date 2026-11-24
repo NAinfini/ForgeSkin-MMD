@@ -15,8 +15,9 @@ const config: ForgeConfig = {
     name: 'ForgeSkin',
     executableName: 'ForgeSkin',
     icon: 'assets/icon',
-    // Font licences (SIL OFL) ship next to the app with the fonts they cover.
-    extraResource: [publish, 'licenses'],
+    // Font licences (SIL OFL) ship next to the app with the fonts they cover. `resources/dance` is the bake kit (Blender's
+    // script, the reference model and rig it needs) and the GtfoMmdDance plugin a dance is installed with.
+    extraResource: [publish, 'licenses', 'resources/dance'],
   },
   hooks: {
     prePackage: async () => {

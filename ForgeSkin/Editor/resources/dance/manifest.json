@@ -1,0 +1,295 @@
+{
+  "schema": 1,
+  "id": "char-06485eda1578",
+  "name": "\u9E23\u6F6E-\u9501\u669D5.3",
+  "author": "",
+  "version": "1.0.0",
+  "target": {
+    "weapon": "character"
+  },
+  "materials": [],
+  "attachments": [],
+  "parts": [],
+  "sounds": [],
+  "character": {
+    "model": {
+      "descriptor": "character/model.json",
+      "mesh": "character/model.forgemesh",
+      "textures": [
+        "character/t0.png",
+        "character/t1.png",
+        "character/t2.png",
+        "character/t3.png",
+        "character/t4.png",
+        "character/t5.png",
+        "character/t6.png",
+        "character/t7.png",
+        "character/t8.png",
+        "character/t9.png",
+        "character/t10.png",
+        "character/t11.png",
+        "character/t12.png",
+        "character/t13.png"
+      ]
+    },
+    "bones": {
+      "hip": "\u30BB\u30F3\u30BF\u30FC",
+      "leftUpperLeg": "\u8DB3D.L",
+      "leftLowerLeg": "\u3072\u3056D.L",
+      "leftFoot": "\u8DB3\u9996D.L",
+      "rightUpperLeg": "\u8DB3D.R",
+      "rightLowerLeg": "\u3072\u3056D.R",
+      "rightFoot": "\u8DB3\u9996D.R",
+      "spine0": "\u4E0A\u534A\u8EAB",
+      "spine1": "\u4E0A\u534A\u8EAB2",
+      "spine2": "\u4E0A\u534A\u8EAB1",
+      "leftShoulder": "\u80A9.L",
+      "leftUpperArm": "\u8155.L",
+      "leftLowerArm": "\u3072\u3058.L",
+      "leftHand": "\u624B\u9996.L",
+      "rightShoulder": "\u80A9.R",
+      "rightUpperArm": "\u8155.R",
+      "rightLowerArm": "\u3072\u3058.R",
+      "rightHand": "\u624B\u9996.R",
+      "neck": "\u9996",
+      "head": "\u982D",
+      "leftThumb1": "\u89AA\u6307\uFF10.L",
+      "leftThumb2": "\u89AA\u6307\uFF11.L",
+      "leftThumb3": "\u89AA\u6307\uFF12.L",
+      "leftIndex1": "\u4EBA\u6307\uFF11.L",
+      "leftIndex2": "\u4EBA\u6307\uFF12.L",
+      "leftIndex3": "\u4EBA\u6307\uFF13.L",
+      "leftMiddle1": "\u4E2D\u6307\uFF11.L",
+      "leftMiddle2": "\u4E2D\u6307\uFF12.L",
+      "leftMiddle3": "\u4E2D\u6307\uFF13.L",
+      "leftRing1": "\u85AC\u6307\uFF11.L",
+      "leftRing2": "\u85AC\u6307\uFF12.L",
+      "leftRing3": "\u85AC\u6307\uFF13.L",
+      "leftPinky1": "\u5C0F\u6307\uFF11.L",
+      "leftPinky2": "\u5C0F\u6307\uFF12.L",
+      "leftPinky3": "\u5C0F\u6307\uFF13.L",
+      "rightThumb1": "\u89AA\u6307\uFF10.R",
+      "rightThumb2": "\u89AA\u6307\uFF11.R",
+      "rightThumb3": "\u89AA\u6307\uFF12.R",
+      "rightIndex1": "\u4EBA\u6307\uFF11.R",
+      "rightIndex2": "\u4EBA\u6307\uFF12.R",
+      "rightIndex3": "\u4EBA\u6307\uFF13.R",
+      "rightMiddle1": "\u4E2D\u6307\uFF11.R",
+      "rightMiddle2": "\u4E2D\u6307\uFF12.R",
+      "rightMiddle3": "\u4E2D\u6307\uFF13.R",
+      "rightRing1": "\u85AC\u6307\uFF11.R",
+      "rightRing2": "\u85AC\u6307\uFF12.R",
+      "rightRing3": "\u85AC\u6307\uFF13.R",
+      "rightPinky1": "\u5C0F\u6307\uFF11.R",
+      "rightPinky2": "\u5C0F\u6307\uFF12.R",
+      "rightPinky3": "\u5C0F\u6307\uFF13.R"
+    },
+    "springs": {
+      "chains": [],
+      "capsules": [
+        {
+          "joint": "head",
+          "a": [
+            0,
+            0,
+            1.110223E-16
+          ],
+          "b": [
+            0.007549812,
+            0.07006019,
+            0.02399461
+          ],
+          "radius": 0.038814936
+        },
+        {
+          "joint": "spine2",
+          "a": [
+            -6.938894E-18,
+            0,
+            -1.110223E-16
+          ],
+          "b": [
+            1.7694179E-15,
+            0.11560752,
+            1.3969824E-08
+          ],
+          "radius": 0.06460108
+        },
+        {
+          "joint": "hip",
+          "a": [
+            0,
+            0,
+            2.7755576E-17
+          ],
+          "b": [
+            4.3968416E-08,
+            0.040818494,
+            0.00076508813
+          ],
+          "radius": 0.07600127
+        },
+        {
+          "joint": "leftUpperLeg",
+          "a": [
+            3.469447E-18,
+            0,
+            0
+          ],
+          "b": [
+            -0.0060920194,
+            -0.3064716,
+            -0.0133172255
+          ],
+          "radius": 0.04614363
+        },
+        {
+          "joint": "rightUpperLeg",
+          "a": [
+            -1.3877788E-17,
+            1.110223E-16,
+            -1.110223E-16
+          ],
+          "b": [
+            0.0060921796,
+            -0.3064716,
+            -0.013317271
+          ],
+          "radius": 0.04614363
+        },
+        {
+          "joint": "leftLowerLeg",
+          "a": [
+            2.7755576E-17,
+            -1.110223E-16,
+            1.3877788E-17
+          ],
+          "b": [
+            -0.0066720024,
+            -0.33089668,
+            -0.03745198
+          ],
+          "radius": 0.03257197
+        },
+        {
+          "joint": "rightLowerLeg",
+          "a": [
+            -1.3877788E-17,
+            0,
+            -1.3877788E-17
+          ],
+          "b": [
+            0.0066725463,
+            -0.33089668,
+            -0.037452012
+          ],
+          "radius": 0.03257197
+        }
+      ]
+    },
+    "materials": [
+      {
+        "name": "\u767D2",
+        "shader": "lit"
+      },
+      {
+        "name": "\u76EE",
+        "shader": "lit"
+      },
+      {
+        "name": "\u76EE\u002Bhi",
+        "shader": "lit"
+      },
+      {
+        "name": "\u76EE\u002B\u002Bhi",
+        "shader": "lit"
+      },
+      {
+        "name": "\u53E3",
+        "shader": "lit"
+      },
+      {
+        "name": "\u820C",
+        "shader": "lit"
+      },
+      {
+        "name": "\u767D",
+        "shader": "lit"
+      },
+      {
+        "name": "\u776B\u6BDB",
+        "shader": "lit"
+      },
+      {
+        "name": "face",
+        "shader": "lit"
+      },
+      {
+        "name": "\u88D9\u5B50",
+        "shader": "lit"
+      },
+      {
+        "name": "\u5E26\u5B50",
+        "shader": "lit"
+      },
+      {
+        "name": "\u53CC\u9A6C\u5C3E",
+        "shader": "lit"
+      },
+      {
+        "name": "head",
+        "shader": "lit"
+      },
+      {
+        "name": "head\u002B",
+        "shader": "lit"
+      },
+      {
+        "name": "\u4E0A\u8863",
+        "shader": "lit"
+      },
+      {
+        "name": "body",
+        "shader": "lit"
+      },
+      {
+        "name": "heng",
+        "shader": "lit"
+      },
+      {
+        "name": "\u5934\u9970",
+        "shader": "lit"
+      },
+      {
+        "name": "\u94C3\u94DB",
+        "shader": "lit"
+      },
+      {
+        "name": "MI_Bangs",
+        "shader": "lit"
+      },
+      {
+        "name": "MI_Bangs\u002B",
+        "shader": "lit"
+      },
+      {
+        "name": "emo1",
+        "shader": "lit"
+      },
+      {
+        "name": "Cheek",
+        "shader": "lit"
+      },
+      {
+        "name": "emo43",
+        "shader": "lit"
+      },
+      {
+        "name": "emo\u76EE",
+        "shader": "lit"
+      }
+    ],
+    "height": 1,
+    "picture": "character/picture.png"
+  }
+}

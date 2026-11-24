@@ -4,6 +4,7 @@
 import { useEffect } from 'react';
 import { logDropped } from './actions';
 import { characterPicture, ensureCharacterPicture, notePackPicture, refreshCharacters } from './character/model';
+import { useCharacter } from './character/state';
 import { call, fileUrl, type InstalledPack, type Methods, type Profile, type ProjectEntry } from './protocol';
 import { autosaveRoot, useStore } from './store';
 import { t } from './i18n';
@@ -25,9 +26,9 @@ export function statusOf(installed: InstalledPack[], id: string, edited: string 
   return { pack, state: pack.inUse ? 'inUse' : 'installed', changed: !!edited && !!pack.modified && edited > pack.modified };
 }
 
-/** When a work was last changed: the open weapon skin's or character skin's from this session's edits, else what its file keeps. */
+/** When a character work was last changed: the open one's from this session's edits, else what its file keeps. */
 export function useEdited(entry: ProjectEntry): string | null {
-  const live = useStore((s) => (s.doc.id === entry.id && s.editedAt ? new Date(s.editedAt).toISOString() : null));
+  const live = useCharacter((s) => (s.skinId === entry.id ? s.lastEdited : null));
   return live ?? entry.edited ?? null;
 }
 
@@ -70,34 +71,33 @@ export async function addPacks() {
   if (done) s.toast('ok', t('works.packsAdded', { v0: done, v1: profile.name }));
 }
 
-/** Whether an installed pack can become one of the author's works: a gear or character skin that reads. */
-export const adoptable = (p: InstalledPack) => !!p.weapon && !p.error;
+/** Whether an installed pack can become one of the author's works: a character skin that reads. */
+export const adoptable = (p: InstalledPack) => p.weapon === 'character' && !p.error;
 
-/** 「搬到我的作品」: installed packs of others made into the author's works, the packs left installed (a name a work of that gear
+/** 「搬到我的作品」: installed character packs of others made into the author's works, the packs left installed (a name a work
  * already has gets a number); what the packs no longer hold (Backend Projects.Adopt) is said once in the toast. Nothing opens. */
 export async function adoptPacks(packs: InstalledPack[]) {
   const s = useStore.getState();
   const lost = new Set<Methods['pack.adopt'][1]['lost'][number]>();
-  const taken = (weapon: string) => (weapon === 'character' ? s.characters : (s.works[weapon] ?? [])).map((k) => k.name);
-  const adopted: Record<string, string[]> = {};
+  const taken = () => s.characters.map((k) => k.name);
+  const adopted: string[] = [];
   let done = 0;
   for (const p of packs.filter(adoptable)) {
-    const weapon = p.weapon!;
     try {
-      const r = await call('pack.adopt', { pack: p.file, dir: `${autosaveRoot()}\\${weapon}`, taken: [...taken(weapon), ...(adopted[weapon] ?? [])] });
-      (adopted[weapon] ??= []).push(r.name);
+      const r = await call('pack.adopt', { pack: p.file, dir: `${autosaveRoot()}\\character`, taken: [...taken(), ...adopted] });
+      adopted.push(r.name);
       // A character work's card shows the pack's own picture, else one drawn in the background from its model.
       if (r.picture) {
         await window.forge.writeFile(characterPicture(p.id), new Uint8Array(await (await fetch(fileUrl(r.picture))).arrayBuffer()));
         notePackPicture(p.id);
-      } else if (weapon === 'character') ensureCharacterPicture({ id: p.id, path: r.path });
+      } else ensureCharacterPicture({ id: p.id, path: r.path });
       r.lost.forEach((x) => lost.add(x));
       done++;
     } catch (e) {
       s.fail(e);
     }
   }
-  await Promise.all([s.refreshWorks(), s.refreshSkins(), s.refreshInstalled(), refreshCharacters()]);
+  await Promise.all([s.refreshInstalled(), refreshCharacters()]);
   if (!done) return;
   const missing = [...lost].map((x) => (x === 'editor' ? t('works.lostEditor') : t(`works.lost.${x}` as const)));
   s.toast('ok', [t('works.adopted', { v0: done }), ...missing].join(' '));

@@ -2,22 +2,6 @@
   "version": 1,
   "dependencies": {
     "net10.0": {
-      "AssetsTools.NET": {
-        "type": "Direct",
-        "requested": "[3.0.5, )",
-        "resolved": "3.0.5",
-        "contentHash": "StvUj6ykBOSOdquRmpbjn6mfM7PyOCKdBB/Ed2Jn5aIhbfrl/Oz69tmgJEQCZdix7AZRVZin14/wytP2moJgAQ=="
-      },
-      "AssetsTools.NET.Texture": {
-        "type": "Direct",
-        "requested": "[3.0.2, )",
-        "resolved": "3.0.2",
-        "contentHash": "TI3pS4IuTrM5owRKdGJjRtLhLe799Mh7apxQoFrHvjnLtaWxDHXeIi/8xzC2qzhc5l5r1ta7bffClG3WW9RuVg==",
-        "dependencies": {
-          "AssetRipper.TextureDecoder": "1.3.0",
-          "AssetsTools.NET": "3.0.0"
-        }
-      },
       "BCnEncoder.Net": {
         "type": "Direct",
         "requested": "[2.3.0, )",
@@ -26,12 +10,6 @@
         "dependencies": {
           "CommunityToolkit.HighPerformance": "8.4.0"
         }
-      },
-      "LibTessDotNet": {
-        "type": "Direct",
-        "requested": "[1.1.15, )",
-        "resolved": "1.1.15",
-        "contentHash": "KuA7N3Nv/lIeawJdQBQJR6oqWD9KETHLbWzBqapwFs+Tby+R5I4crkKujKMm5bXcSuFZ8LNtflFQVadsWCbBjg=="
       },
       "SkiaSharp": {
         "type": "Direct",
@@ -48,11 +26,6 @@
         "requested": "[2.88.9, )",
         "resolved": "2.88.9",
         "contentHash": "wb2kYgU7iy84nQLYZwMeJXixvK++GoIuECjU4ECaUKNuflyRlJKyiRhN1MAHswvlvzuvkrjRWlK0Za6+kYQK7w=="
-      },
-      "AssetRipper.TextureDecoder": {
-        "type": "Transitive",
-        "resolved": "1.3.0",
-        "contentHash": "8Ok/7NWc8DcDrJegwfaLfXUqta3r7svVPUCUZCthOfZv5/D3uWlluxP1P5Vbk0C6WotujOUofOOIYsuuQVaDkQ=="
       },
       "CommunityToolkit.HighPerformance": {
         "type": "Transitive",

@@ -12,6 +12,13 @@ internal static class Program
             if (ok) passed++;
             else { failed++; Console.WriteLine("FAIL " + label); }
         }
+        // `chains` runs only the chain physics checks: the full suite needs the upstream repository layout this mirror does not have.
+        if (args.Contains("chains"))
+        {
+            ChainChecks.Run(Check);
+            Console.WriteLine(passed + " passed, " + failed + " failed");
+            return failed == 0 ? 0 : 1;
+        }
         NetChecks.Run(Check, errors);
 
         HookChecks.Run(Check);

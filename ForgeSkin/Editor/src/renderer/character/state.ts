@@ -1,9 +1,9 @@
 // The 人物模型 tab's state: which tab the window shows, the step the author is on, the imported model and what the author set on it
 // (bone match, spring bones, colliders, shaders). The model's three.js scene is not state; model.ts keeps it.
 import { create } from 'zustand';
-import type { CharmMotion } from '../viewport/refs';
 
-export type Mode = 'weapon' | 'character';
+/** The preview motions a character's spring bones are shown swinging with (viewport/motion.ts). */
+export type CharmMotion = 'shake' | 'run' | 'turn';
 export type Step = 'model' | 'bones' | 'arms' | 'springs' | 'materials' | 'check';
 export const STEPS: Step[] = ['model', 'bones', 'arms', 'springs', 'materials', 'check'];
 
@@ -25,6 +25,20 @@ export interface Spring {
   weight?: number;
   gravity?: number;
   radius?: number;
+  /** Degrees one bone may swing from the one above it; 0 removes the limit, unset is the preset's. */
+  angleLimit?: number;
+  restore?: number;
+  styleLeash?: number;
+  inertia?: number;
+  /** Degrees a piece may swing around its parent's axis from the bound radial plane; 0 removes the limit. */
+  azimuthLimit?: number;
+  collide?: boolean;
+  collideCloth?: boolean;
+  selfCollide?: boolean;
+  /** The solver's sub-step in seconds. */
+  step?: number;
+  iterations?: number;
+  lengthPasses?: number;
 }
 
 /** The body colliders spring bones are kept off: one capsule per joint, from it to the next joint up or down the body. */
@@ -42,8 +56,10 @@ export const COLLIDER_RADIUS: Record<ColliderJoint, number> = {
 };
 export interface Collider {
   on: boolean;
-  /** Times the default radius. */
+  /** Times the radius. */
   scale: number;
+  /** The radius measured on the model's own mesh, in its metres (unset: the canonical default scaled by the model's size). */
+  fit?: number;
 }
 /** A collider the file itself set (VRM spring-bone colliders): on a joint's bone, its ends in that bone's own space in the game's
  * axes (X mirrored), as the character document holds it (Core/Character.cs SpringCapsule). */
@@ -52,6 +68,23 @@ export interface Capsule {
   a: [number, number, number];
   b: [number, number, number];
   radius: number;
+}
+
+/** The body as its very skin: per joint the surface's vertices with their outward normals, base64 float32 (x, y, z, nx, ny, nz), in
+ * that joint's bone space, and the triangles over them, base64 uint32 (three vertex indices each): the model's own surface. The exact
+ * collider: a spring node cannot come nearer than its own thickness to the surface anywhere on a triangle, and nothing bulges out
+ * past it the way a capsule does. */
+export interface ShieldShell {
+  on: boolean;
+  /** The materials whose surface the collider is, as the author picked them; null or unset: the body meshes' own materials. */
+  parts?: string[] | null;
+  /** Each joint's surface; empty when the model had nothing to measure. */
+  joints: { joint: string; data: string; tris?: string }[];
+  /** How many vertices and triangles there are in all, for the panel. */
+  points: number;
+  triangles?: number;
+  /** Which fit produced the surface: a work measured by an older fit is measured again when it opens. */
+  version?: number;
 }
 
 export interface BoneRow {
@@ -83,17 +116,20 @@ export interface RigCheck {
 }
 
 export interface CharacterState {
-  mode: Mode;
   step: Step;
   /** The character skin's id (its autosave and pack) and name. */
   skinId: string | null;
   name: string;
+  /** When the author last changed the open skin (ISO, saved as editor.editedAt); null for one not changed since it was kept. */
+  lastEdited: string | null;
   /** The model as the character format holds it (converted on import, in the skin's own folder) and the imported file's copy. */
   files: { descriptor: string; mesh: string; textures: string[]; source: string } | null;
   /** The file was built facing the other way (VRM 0.x) and is shown and packed turned round. */
   turned: boolean;
-  /** The colliders the file set; null: the automatic ones below. */
+  /** The colliders the file itself set; null: the body's surface (see shell) is what the cloth is kept out of. */
   capsules: Capsule[] | null;
+  /** The body's surface measured from the model: what the pack exports as the body, and what the editor draws. */
+  shell: ShieldShell | null;
   /** Material name to its MToon settings as the file had them (kept for a toon shader later). */
   mtoon: Record<string, unknown>;
   /** The credit the model's licence asks for, null when it asks none. */
@@ -112,6 +148,9 @@ export interface CharacterState {
   joint: string | null;
   springs: Spring[];
   spring: string | null;
+  /** The strand of the picked set the author picked on the figure (an index into its strands), and the one under the pointer. */
+  strand: number | null;
+  hoverStrand: number | null;
   /** What the pointer is on, in the list or on the figure: a spring set's id, or a loose bone's name. */
   hover: string | null;
   colliders: Record<ColliderJoint, Collider>;
@@ -133,13 +172,14 @@ export interface CharacterState {
 }
 
 export const useCharacter = create<CharacterState>(() => ({
-  mode: 'weapon',
   step: 'model',
   skinId: null,
   name: '',
+  lastEdited: null,
   files: null,
   turned: false,
   capsules: null,
+  shell: null,
   mtoon: {},
   credit: null,
   model: null,
@@ -153,6 +193,8 @@ export const useCharacter = create<CharacterState>(() => ({
   joint: null,
   springs: [],
   spring: null,
+  strand: null,
+  hoverStrand: null,
   hover: null,
   colliders: Object.fromEntries(COLLIDER_JOINTS.map((j) => [j, { on: true, scale: 1 }])) as Record<ColliderJoint, Collider>,
   shaders: {},

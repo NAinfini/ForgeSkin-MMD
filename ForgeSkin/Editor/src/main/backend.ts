@@ -30,16 +30,18 @@ export class Backend {
       return { file, args: dataArgs, cwd: dirname(file) };
     }
     // In a checkout the backend is built from the current source first (incremental, seconds when up to date), so the
-    // editor never talks to a backend older than itself (e.g. a glyph strip cut into the wrong number of cells).
+    // editor never talks to a backend older than itself (e.g. a glyph strip cut into the wrong number of cells). Release,
+    // not Debug: the chain physics is a pile of float math whose Debug build runs some twenty times slower, and the preview
+    // simulates a whole clip's frames in one call.
     const project = join(app.getAppPath(), '..', 'Backend');
     try {
-      execFileSync('dotnet', ['build', project, '-c', 'Debug', '-nologo', '-v', 'q'], { windowsHide: true, stdio: 'pipe' });
+      execFileSync('dotnet', ['build', project, '-c', 'Release', '-nologo', '-v', 'q'], { windowsHide: true, stdio: 'pipe' });
     } catch (e) {
       this.onLog(`backend build failed: ${(e as { stdout?: Buffer }).stdout?.toString() ?? e}`);
     }
     // The backend installs the plugin from artifacts/forge-skin-release/publish/plugin (Install.PluginSource), which
     // build-editor-release.ps1 -PluginOnly -ForgeCore <release-set ForgeCore zip> stages; without it the backend says so (no-plugin).
-    const file = join(project, 'bin', 'Debug', 'net10.0', 'win-x64', 'ForgeSkin.Backend.exe');
+    const file = join(project, 'bin', 'Release', 'net10.0', 'win-x64', 'ForgeSkin.Backend.exe');
     return { file, args: dataArgs, cwd: dirname(file) };
   }
 

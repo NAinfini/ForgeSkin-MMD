@@ -2,6 +2,7 @@
 // picked step's settings on the right, built from the same inspector parts as the weapon tab.
 import { Badge, Button, Group, Image, Modal, NumberInput, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
 import {
+  IconAdjustments,
   IconAlertTriangle,
   IconBone,
   IconCheck,
@@ -11,9 +12,11 @@ import {
   IconPalette,
   IconPlus,
   IconRefresh,
+  IconRulerMeasure,
   IconTrash,
   IconUpload,
   IconUser,
+  IconWand,
   IconWind,
   IconWorldUpload,
   type Icon,
@@ -24,8 +27,8 @@ import { fileUrl } from '../protocol';
 import { Field, Slider } from '../ui/fields';
 import { modName } from '../actions';
 import { Empty, Info, InspHead, Section } from '../ui/Features';
-import { BODY_JOINTS, chooseModel, exportCharacterMod, exportCharacterPack, addSpring, pickBone, rematch, springLabel, stageIcon, useSpringPresets } from './model';
-import { COLLIDER_JOINTS, matchOf, matchReady, SPRING_KINDS, STEPS, updateSpring, useCharacter, type ColliderJoint, type RigCheck, type SpringKind, type Step } from './state';
+import { BODY_JOINTS, chooseModel, exportCharacterMod, exportCharacterPack, addSpring, autoAddSprings, fitShell, pickBone, rematch, shellParts, springLabel, stageIcon, toggleShellPart, useSpringPresets } from './model';
+import { matchOf, matchReady, SPRING_KINDS, STEPS, updateSpring, useCharacter, type RigCheck, type SpringKind, type Step } from './state';
 
 const STEP: Record<Step, { icon: Icon; color: string }> = {
   model: { icon: IconUser, color: 'var(--flare)' },
@@ -470,6 +473,30 @@ function materialLabels(names: string[]): string[] {
 
 // ---- 4. hair and skirt ----
 
+const OPTIONAL_KEYS = [
+  'stiffness', 'damping', 'weight', 'gravity', 'radius', 'angleLimit',
+  'restore', 'styleLeash', 'inertia', 'azimuthLimit', 'collide', 'collideCloth', 'selfCollide',
+  'step', 'iterations', 'lengthPasses',
+] as const;
+type OptionalKey = (typeof OPTIONAL_KEYS)[number];
+
+/** One optional value beside its preset's default: the slider starts at the default, and once the author moves it a reset button
+ * drops the field again so the preset drives it. */
+function OptSlider({ changed, value, onChange, onReset, min, max, step, unit }: { changed: boolean; value: number; onChange: (v: number) => void; onReset: () => void; min: number; max: number; step: number; unit?: string }) {
+  return (
+    <Group gap={4} wrap="nowrap" align="center">
+      <div style={{ flex: 1 }}>
+        <Slider value={value} min={min} max={max} step={step} unit={unit} onChange={onChange} />
+      </div>
+      <Tooltip label={t('character.resetValue')}>
+        <UnstyledButton aria-label={t('character.resetValue')} onClick={onReset} style={{ opacity: changed ? 1 : 0.25 }}>
+          <IconRefresh size={12} />
+        </UnstyledButton>
+      </Tooltip>
+    </Group>
+  );
+}
+
 function SpringCard({ id }: { id: string }) {
   const sp = useCharacter((s) => s.springs.find((x) => x.id === id));
   const label = useCharacter((s) => springLabel(s.springs, id));
@@ -477,13 +504,31 @@ function SpringCard({ id }: { id: string }) {
   const base = presets?.[sp?.kind ?? 'longHair'];
   const selected = useCharacter((s) => s.spring === id);
   const hovered = useCharacter((s) => s.hover === id);
+  const strand = useCharacter((s) => (s.spring === id ? s.strand : null));
+  const [more, setMore] = useState(false);
   const card = useRef<HTMLDivElement>(null);
   // A set picked on the figure brings its card into view.
   useEffect(() => {
     if (selected) card.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [selected]);
   if (!sp || !base) return null;
-  const set = (key: 'stiffness' | 'damping' | 'weight' | 'gravity' | 'radius') => (v: number) => updateSpring(id, (x) => void (x[key] = v));
+  const set = (key: 'stiffness' | 'damping' | 'weight' | 'gravity' | 'radius' | 'angleLimit') => (v: number) => updateSpring(id, (x) => void (x[key] = v));
+  const reset = (key: OptionalKey) => updateSpring(id, (x) => void (x[key] = undefined));
+  // Removing a strand: the last one takes its set with it.
+  const drop = (index: number) => {
+    updateSpring(id, (x) => void x.strands.splice(index, 1));
+    const after = useCharacter.getState().springs.find((x) => x.id === id);
+    if (!after || !after.strands.length)
+      useCharacter.setState((s) => ({ springs: s.springs.filter((x) => x.id !== id), spring: null, strand: null, hover: null, hoverStrand: null }));
+    else useCharacter.setState({ strand: null });
+  };
+  // A new kind starts from its preset in every value, not four of them.
+  const retype = (v: SpringKind) =>
+    updateSpring(id, (x) => {
+      x.kind = v;
+      for (const k of OPTIONAL_KEYS) (x as Record<OptionalKey, unknown>)[k] = undefined;
+    });
+  const hz = 1 / (sp.step ?? base.step);
   return (
     <div
       ref={card}
@@ -491,7 +536,7 @@ function SpringCard({ id }: { id: string }) {
       data-selected={selected || undefined}
       data-hover={hovered || undefined}
       onPointerEnter={() => useCharacter.setState({ hover: id })}
-      onPointerLeave={() => useCharacter.setState((s) => (s.hover === id ? { hover: null } : {}))}
+      onPointerLeave={() => useCharacter.setState((s) => (s.hover === id ? { hover: null, hoverStrand: null } : {}))}
       onPointerDown={() => useCharacter.setState({ spring: id })}
     >
       <Group gap={6} wrap="nowrap" mb={6}>
@@ -501,7 +546,7 @@ function SpringCard({ id }: { id: string }) {
           {sp.strands.length > 1 ? ` ×${sp.strands.length}` : ''}
         </Text>
         <Tooltip label={t('character.removeSpring')}>
-          <UnstyledButton aria-label={t('character.removeSpring')} onClick={() => useCharacter.setState((s) => ({ springs: s.springs.filter((x) => x.id !== id), hover: null }))}>
+          <UnstyledButton aria-label={t('character.removeSpring')} onClick={() => useCharacter.setState((s) => ({ springs: s.springs.filter((x) => x.id !== id), hover: null, spring: null, strand: null }))}>
             <IconTrash size={14} color="var(--mantine-color-red-5)" />
           </UnstyledButton>
         </Tooltip>
@@ -512,8 +557,31 @@ function SpringCard({ id }: { id: string }) {
           allowDeselect={false}
           data={SPRING_KINDS.map((p) => ({ value: p, label: t(`character.preset.${p}`) }))}
           value={sp.kind}
-          onChange={(v) => v && updateSpring(id, (x) => Object.assign(x, { kind: v as SpringKind, stiffness: undefined, damping: undefined, radius: undefined }))}
+          onChange={(v) => v && retype(v as SpringKind)}
         />
+      </Field>
+      <Field label={t('character.strands')}>
+        <Stack gap={2}>
+          {sp.strands.map((bones, i) => (
+            <Group key={i} gap={4} wrap="nowrap">
+              <UnstyledButton
+                aria-label={`${t('character.strand')} ${i + 1}`}
+                style={{ flex: 1, textAlign: 'left', minWidth: 0 }}
+                onClick={() => useCharacter.setState({ spring: id, strand: i })}
+              >
+                <Text size="xs" truncate c={i === strand ? 'orange' : undefined} fw={i === strand ? 700 : 400}>
+                  {i + 1}. {bones[0]}
+                  {bones.length > 1 ? ` › … › ${bones[bones.length - 1]}` : ''} <Text span size="xs" c="dimmed">({bones.length})</Text>
+                </Text>
+              </UnstyledButton>
+              <Tooltip label={t('character.removeStrand')}>
+                <UnstyledButton aria-label={t('character.removeStrand')} onClick={() => drop(i)}>
+                  <IconTrash size={12} color="var(--mantine-color-red-5)" />
+                </UnstyledButton>
+              </Tooltip>
+            </Group>
+          ))}
+        </Stack>
       </Field>
       <Field label={t('character.stiffness')}>
         <Slider value={sp.stiffness ?? base.stiffness} onChange={set('stiffness')} />
@@ -528,8 +596,68 @@ function SpringCard({ id }: { id: string }) {
         <Slider value={sp.gravity ?? base.gravity} min={0} max={3} step={0.05} onChange={set('gravity')} />
       </Field>
       <Field label={t('character.radius')}>
-        <Slider value={(sp.radius ?? base.radius) * 100} min={0} max={10} step={0.1} unit=" cm" onChange={(v) => set('radius')(v / 100)} />
+        <Slider value={(sp.radius ?? base.radius) * 100} min={0} max={50} step={0.1} unit=" cm" onChange={(v) => set('radius')(v / 100)} />
       </Field>
+      <Field label={t('character.angleLimit')}>
+        <Slider value={sp.angleLimit ?? base.angleLimit} min={0} max={180} step={1} unit="°" onChange={set('angleLimit')} />
+      </Field>
+      <UnstyledButton mt={6} onClick={() => setMore(!more)} aria-expanded={more}>
+        <Group gap={4}>
+          <IconAdjustments size={12} color="var(--violet)" />
+          <Text size="xs" c="dimmed">
+            {t('character.advanced')}
+          </Text>
+        </Group>
+      </UnstyledButton>
+      {more && (
+        <Stack gap={6} mt={6}>
+          <Field label={t('character.restore')}>
+            <OptSlider changed={sp.restore !== undefined} value={sp.restore ?? base.restore} onChange={(v) => updateSpring(id, (x) => void (x.restore = v))} onReset={() => reset('restore')} min={0} max={1} step={0.01} />
+          </Field>
+          <Field label={t('character.styleLeash')}>
+            <OptSlider changed={sp.styleLeash !== undefined} value={sp.styleLeash ?? base.styleLeash} onChange={(v) => updateSpring(id, (x) => void (x.styleLeash = v))} onReset={() => reset('styleLeash')} min={0} max={1} step={0.01} />
+          </Field>
+          <Field label={t('character.inertia')}>
+            <OptSlider changed={sp.inertia !== undefined} value={sp.inertia ?? base.inertia} onChange={(v) => updateSpring(id, (x) => void (x.inertia = v))} onReset={() => reset('inertia')} min={0} max={1} step={0.01} />
+          </Field>
+          <Field label={t('character.azimuthLimit')}>
+            <OptSlider changed={sp.azimuthLimit !== undefined} value={sp.azimuthLimit ?? base.azimuthLimit} onChange={(v) => updateSpring(id, (x) => void (x.azimuthLimit = v))} onReset={() => reset('azimuthLimit')} min={0} max={180} step={1} unit="°" />
+          </Field>
+          <Field label={t('character.step')}>
+            <OptSlider changed={sp.step !== undefined} value={hz} onChange={(v) => updateSpring(id, (x) => void (x.step = 1 / v))} onReset={() => reset('step')} min={60} max={480} step={5} unit=" Hz" />
+          </Field>
+          <Field label={t('character.iterations')}>
+            <OptSlider changed={sp.iterations !== undefined} value={sp.iterations ?? base.iterations} onChange={(v) => updateSpring(id, (x) => void (x.iterations = Math.round(v)))} onReset={() => reset('iterations')} min={1} max={12} step={1} />
+          </Field>
+          <Field label={t('character.lengthPasses')}>
+            <OptSlider changed={sp.lengthPasses !== undefined} value={sp.lengthPasses ?? base.lengthPasses} onChange={(v) => updateSpring(id, (x) => void (x.lengthPasses = Math.round(v)))} onReset={() => reset('lengthPasses')} min={1} max={8} step={1} />
+          </Field>
+          <Field label={t('character.collide')}>
+            <Group gap={4} wrap="nowrap">
+              <Switch size="xs" checked={sp.collide ?? base.collide} onChange={(e) => updateSpring(id, (x) => void (x.collide = e.currentTarget.checked))} />
+              <UnstyledButton aria-label={t('character.resetValue')} onClick={() => reset('collide')} style={{ opacity: sp.collide !== undefined ? 1 : 0.25 }}>
+                <IconRefresh size={12} />
+              </UnstyledButton>
+            </Group>
+          </Field>
+          <Field label={t('character.collideCloth')}>
+            <Group gap={4} wrap="nowrap">
+              <Switch size="xs" checked={sp.collideCloth ?? base.collideCloth} onChange={(e) => updateSpring(id, (x) => void (x.collideCloth = e.currentTarget.checked))} />
+              <UnstyledButton aria-label={t('character.resetValue')} onClick={() => reset('collideCloth')} style={{ opacity: sp.collideCloth !== undefined ? 1 : 0.25 }}>
+                <IconRefresh size={12} />
+              </UnstyledButton>
+            </Group>
+          </Field>
+          <Field label={t('character.selfCollide')}>
+            <Group gap={4} wrap="nowrap">
+              <Switch size="xs" checked={sp.selfCollide ?? base.selfCollide} onChange={(e) => updateSpring(id, (x) => void (x.selfCollide = e.currentTarget.checked))} />
+              <UnstyledButton aria-label={t('character.resetValue')} onClick={() => reset('selfCollide')} style={{ opacity: sp.selfCollide !== undefined ? 1 : 0.25 }}>
+                <IconRefresh size={12} />
+              </UnstyledButton>
+            </Group>
+          </Field>
+        </Stack>
+      )}
     </div>
   );
 }
@@ -539,66 +667,74 @@ function SpringsStep() {
   if (!s.model) return <Empty>{t('character.needModel')}</Empty>;
   const used = new Set([...Object.values(matchOf(s)), ...s.springs.flatMap((x) => x.strands.flat())]);
   const candidates = s.bones.filter((b) => !used.has(b.name)).map((b) => ({ value: b.name, label: b.name }));
+  const parts = shellParts();
 
   return (
     <>
       <Section title={t('character.step.springs')} icon={IconWind} color={STEP.springs.color} info={t('character.springsInfo')}>
         <Stack gap="xs">
-          <Select
-            searchable
-            leftSection={<IconPlus size={14} />}
-            aria-label={t('character.addSpring')}
-            placeholder={t('character.addSpring')}
-            data={candidates}
-            value={null}
-            onChange={(name) => name && addSpring(name)}
-            nothingFoundMessage={t('character.noBone')}
-          />
+          <Group gap="xs" wrap="nowrap">
+            <Select
+              style={{ flex: 1 }}
+              searchable
+              leftSection={<IconPlus size={14} />}
+              aria-label={t('character.addSpring')}
+              placeholder={t('character.addSpring')}
+              data={candidates}
+              value={null}
+              onChange={(name) => name && addSpring(name)}
+              nothingFoundMessage={t('character.noBone')}
+            />
+            <Tooltip label={t('character.autoSpringsInfo')} multiline w={280}>
+              <Button size="compact-sm" variant="light" color="violet" leftSection={<IconWand size={14} />} onClick={() => void autoAddSprings()}>
+                {t('character.autoSprings')}
+              </Button>
+            </Tooltip>
+          </Group>
           {s.springs.length ? s.springs.map((x) => <SpringCard key={x.id} id={x.id} />) : <Empty>{t('character.noSprings')}</Empty>}
         </Stack>
       </Section>
       <Section id="char.colliders" title={t('character.colliders')} icon={IconWind} color="var(--scan)" info={t('character.collidersInfo')}>
-        {s.capsules ? (
-          <Stack gap={6}>
-            {s.capsules.map((c, i) => (
-              <Group key={i} gap={8} wrap="nowrap">
-                <Text size="sm" style={{ flex: 1 }}>
-                  {jointLabel(c.joint)}
+        <Stack gap={6}>
+          <Group gap={8} wrap="nowrap">
+            <Switch
+              size="xs"
+              checked={s.shell?.on ?? false}
+              disabled={!s.shell?.points}
+              label={t('character.shellOn')}
+              onChange={(e) => useCharacter.setState((x) => (x.shell ? { shell: { ...x.shell, on: e.currentTarget.checked } } : {}))}
+            />
+            <Text size="xs" c="dimmed">
+              {t('character.shellCount', { v0: s.shell?.points ?? 0, v1: s.shell?.triangles ?? 0 })}
+            </Text>
+          </Group>
+          {s.shell?.on && (
+            <Stack gap={4}>
+              <Text size="xs" c="dimmed">
+                {t('character.shellText')}
+              </Text>
+              <Group>
+                <Button size="compact-xs" variant="subtle" color="gray" leftSection={<IconRulerMeasure size={13} />} onClick={() => void fitShell(true)}>
+                  {t('character.fitShell')}
+                </Button>
+              </Group>
+              <Stack gap={4} role="group" aria-label={t('character.shellParts')}>
+                <Text size="sm" fw={600}>
+                  {t('character.shellParts')}
                 </Text>
                 <Text size="xs" c="dimmed">
-                  {(c.radius * 100).toFixed(1)} cm
+                  {t('character.shellPartsInfo')}
                 </Text>
-                <Tooltip label={t('character.removeCollider')}>
-                  <UnstyledButton aria-label={t('character.removeCollider')} onClick={() => useCharacter.setState((x) => ({ capsules: x.capsules!.filter((_, k) => k !== i) }))}>
-                    <IconTrash size={14} color="var(--mantine-color-red-5)" />
-                  </UnstyledButton>
-                </Tooltip>
-              </Group>
-            ))}
-            <Tooltip label={t('character.autoCollidersInfo')} multiline w={260}>
-              <Button size="compact-xs" variant="subtle" color="gray" onClick={() => useCharacter.setState({ capsules: null })}>
-                {t('character.autoColliders')}
-              </Button>
-            </Tooltip>
-          </Stack>
-        ) : (
-          <Stack gap={6}>
-            {COLLIDER_JOINTS.map((j: ColliderJoint) => {
-              const c = s.colliders[j];
-              const setC = (change: Partial<typeof c>) => useCharacter.setState((x) => ({ colliders: { ...x.colliders, [j]: { ...x.colliders[j], ...change } } }));
-              return (
-                <Field key={j} label={jointLabel(j)}>
-                  <Group gap={8} wrap="nowrap">
-                    <Switch size="xs" checked={c.on} aria-label={jointLabel(j)} onChange={(e) => setC({ on: e.currentTarget.checked })} />
-                    <div style={{ flex: 1, opacity: c.on ? 1 : 0.4 }}>
-                      <Slider value={c.scale} min={0.5} max={2} step={0.05} label={(v) => `×${v.toFixed(2)}`} onChange={(v) => setC({ scale: v })} />
-                    </div>
-                  </Group>
-                </Field>
-              );
-            })}
-          </Stack>
-        )}
+                <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                  {materialLabels(s.materials).map((label, i) => {
+                    const name = s.materials[i]!;
+                    return <Switch key={i} size="xs" label={label} title={name} checked={parts.includes(name)} onChange={() => toggleShellPart(name)} />;
+                  })}
+                </div>
+              </Stack>
+            </Stack>
+          )}
+        </Stack>
       </Section>
     </>
   );

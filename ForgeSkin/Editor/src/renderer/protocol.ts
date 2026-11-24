@@ -580,7 +580,30 @@ export interface Methods {
     { triangles: number[]; metallic: number; smoothness: number; frames: { pendant: number[]; vertices: string; normals: string }[] },
   ];
   /** The values each spring-bone preset starts from (ForgeCore ChainSpec). */
-  'springs.presets': [Record<string, never>, Record<'longHair' | 'shortHair' | 'skirt' | 'tail', { stiffness: number; damping: number; weight: number; gravity: number; radius: number }>];
+  'springs.presets': [
+    Record<string, never>,
+    Record<
+      'longHair' | 'shortHair' | 'skirt' | 'tail',
+      {
+        stiffness: number;
+        damping: number;
+        weight: number;
+        gravity: number;
+        radius: number;
+        angleLimit: number;
+        restore: number;
+        styleLeash: number;
+        inertia: number;
+        azimuthLimit: number;
+        collide: boolean;
+        collideCloth: boolean;
+        selfCollide: boolean;
+        step: number;
+        iterations: number;
+        lengthPasses: number;
+      }
+    >,
+  ];
   /** One spring-bone set moved by ForgeCore's chain physics along the anchor bone's path: nodes at rest in the anchor's frame (roots
    * first in each strand), one result frame per input frame of node world positions, base64 little-endian float32. */
   'springs.simulate': [
@@ -598,10 +621,31 @@ export interface Methods {
         weight?: number;
         gravity?: number;
         radius?: number;
+        angleLimit?: number;
+        restore?: number;
+        styleLeash?: number;
+        inertia?: number;
+        azimuthLimit?: number;
+        collide?: boolean;
+        collideCloth?: boolean;
+        selfCollide?: boolean;
+        step?: number;
+        iterations?: number;
+        lengthPasses?: number;
       };
       nodes: { parent: number; at: number[] }[];
       strands?: number[][];
-      frames: { time: number; m: number[]; body: number[]; capsules: number[][] }[];
+      /** The anchor's bind-pose matrix: with it the chain is laid at rest beside the shells' own bind poses, so the depths it
+       * keeps from the surface are the bind pose's (not the first frame's). */
+      rest?: number[];
+      /** The body's surface when chains are kept out of it instead of capsules (Core/Character.cs SpringShell); `tris` is the
+       * triangles over its points (base64 uint32, three a triangle) and `rest` its bone's bind-pose matrix, where the depth the
+       * chains keep from it is measured. */
+      shells?: { joint: string; data: string; tris?: string; rest?: number[] }[];
+      /** The model's world scale: radius and gravity are model metres, multiplied by it as the game's Characters.Wear does. */
+      scale?: number;
+      /** Per frame: the anchor's matrix, the body's move, the capsules and the surface's joint matrices, all in the world. */
+      frames: { time: number; m: number[]; body: number[]; capsules: number[][]; shells?: number[][] }[];
     },
     { frames: string[] },
   ];
@@ -665,6 +709,10 @@ export interface Methods {
   'assets.export': [{ pack: string; out: string }, { zip: string; buildId: string; files: string[]; warnings: string[] }];
   'plugin.install': [{ profile: string }, { installed: string; replaced: string[]; newer: string[]; notes: InstallNote[]; version: string | null }];
   'plugin.loadCheck': [{ profile: string }, { log: string; notes: InstallNote[] }];
+  'dance.install': [
+    { profile: string; dir: string; name?: string },
+    { installed: string; dances: string; files: string[]; missing: string[]; version: string | null },
+  ];
   'plugin.log': [{ profile: string; since?: string; from?: number; head?: string }, { lines: { time: string; level: 'info' | 'warn'; message: string }[]; next: number; head: string; reset: boolean }];
   'plugin.uninstall': [{ profile: string }, unknown];
   'export.obj': [{ weaponId: string; parts: string[]; mode: 'separate' | 'merged'; outDir: string }, { dir: string; files: string[] }];

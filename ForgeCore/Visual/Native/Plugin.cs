@@ -48,6 +48,8 @@ internal static class VisualFrame
         catch (Exception error) { Plugin.Logger.ErrorOnce("visual-gun-model-update-failed", "ForgeVisual gun model update failed: " + error); }
         try { Scene.Tick(); }
         catch (Exception error) { Plugin.Logger.ErrorOnce("visual-frame-update-failed", "ForgeVisual frame update failed: " + error); }
+        try { Blink.TickAll(); }
+        catch (Exception error) { Plugin.Logger.ErrorOnce("visual-blink-update-failed", "ForgeVisual blink update failed: " + error); }
     }
 
     /// <summary>Joint clips, the pose copies that follow a body, then the outlines, after animation and movement, before the cameras render.</summary>
