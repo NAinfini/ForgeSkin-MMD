@@ -227,7 +227,11 @@ public sealed class ChainState
     readonly double[] _fab;
     readonly bool[] _clothed;
     readonly bool _hasFabric;
-    int[] _fabRestNear = Array.Empty<int>(), _fabNear = Array.Empty<int>();
+    // Per node, a bound on its fabric for a quick miss: every point lies within _fabSpan x the piece's length + _fabOff of the piece's
+    // middle (-1: no fabric); _fabFar marks the pieces a shell is too far from this sub-step.
+    readonly double[] _fabSpan, _fabOff;
+    readonly bool[] _fabFar;
+    int[] _fabRestNear = Array.Empty<int>(), _fabNear = Array.Empty<int>(), _fabHint = Array.Empty<int>();
     double[] _fabFloor = Array.Empty<double>();
     // The driven target (see Targets): per (driving shell, node) pair, measured once at the bind, the shell, the node, its weight and
     // the bound direction of the node's piece in the shell bone's frame (a unit direction: a rescale leaves it); per node the target
@@ -260,6 +264,16 @@ public sealed class ChainState
         _hasFabric = _nf > 0;
         _clothed = new bool[_n];
         foreach (int i in _fabNode) _clothed[i] = _clothed[_parent[i]] = true;
+        _fabSpan = new double[_n];
+        _fabOff = new double[_n];
+        _fabFar = new bool[_n];
+        Array.Fill(_fabOff, -1);
+        for (int k = 0; k < _nf; k++)
+        {
+            int i = _fabNode[k], f = k * 4;
+            _fabSpan[i] = Math.Max(_fabSpan[i], Math.Abs(_fab[f] - 0.5));
+            _fabOff[i] = Math.Max(_fabOff[i], Math.Sqrt(_fab[f + 1] * _fab[f + 1] + _fab[f + 2] * _fab[f + 2] + _fab[f + 3] * _fab[f + 3]));
+        }
         _w = new double[_n];
         _bendK = new double[_n];
         _bendD = new double[_n];
@@ -409,6 +423,8 @@ public sealed class ChainState
             if (!double.IsNaN(_fabFloor[i])) _fabFloor[i] *= factor;
         for (int k = 0; k < _nf; k++)
             for (int c = 1; c < 4; c++) _fab[k * 4 + c] *= factor;
+        for (int i = 0; i < _n; i++)
+            if (_fabOff[i] > 0) _fabOff[i] *= factor;
         _scale *= factor;
         _appliedScale = double.NaN;
         if (_self) BuildSelfPairs();
@@ -640,7 +656,8 @@ public sealed class ChainState
                 Array.Resize(ref _fabRestNear, fabCells);
                 Array.Resize(ref _fabNear, fabCells);
                 Array.Resize(ref _fabFloor, fabCells);
-                for (int i = wasCells; i < fabCells; i++) { _fabRestNear[i] = _fabNear[i] = -1; _fabFloor[i] = double.NaN; }
+                Array.Resize(ref _fabHint, fabCells);
+                for (int i = wasCells; i < fabCells; i++) { _fabRestNear[i] = _fabNear[i] = _fabHint[i] = -1; _fabFloor[i] = double.NaN; }
             }
         }
     }
@@ -729,8 +746,11 @@ public sealed class ChainState
         b[3] = body[0]; b[4] = body[1]; b[5] = body[2];
         _time = time;
         _acc += dt;
-        int steps = (int)Math.Floor(_acc / _step);
-        _acc -= steps * _step;
+        // A frame time a rounding error short of a whole number of sub-steps (1/60 s is 4 x 1/240 s, but 3.9999999 in doubles) runs
+        // them all: flooring it left a sub-step over every few frames, so frames ran 3, 5, 4 sub-steps by turns, and the leftover
+        // carried the chain rigidly and pushed it out of the surfaces once more outside the solve.
+        int steps = (int)Math.Floor(_acc / _step + 1e-6);
+        _acc = Math.Max(0, _acc - steps * _step);
         // Each sub-step takes the anchor where it was at that sub-step's own time in this frame (the clock runs _acc behind), so it
         // moves at its real speed whatever the frame times. Past MaxSteps, the frame's start is only followed.
         int skip = Math.Max(0, steps - MaxSteps);
@@ -763,6 +783,7 @@ public sealed class ChainState
             for (int c = 0; c < _capsules; c++) PushOutOfCapsule(c * 7);
             for (int s = 0; s < _shells; s++) CollideShell(s * 10);
             if (_hasFabric) SweepLengths(0); // fabric pushes swing the drawn bones, they do not stretch them
+            Inelastic();
             Array.Copy(_cur, _last, 7);
         }
         // Debug telemetry: how far the nodes are from their driven target at the last sub-step (what a floating fringe is).
@@ -969,11 +990,14 @@ public sealed class ChainState
                 }
         }
         // The style leash, once the lengths are exact: a node may swing only so far from where the bound shape carries it. Lengths
-        // are then re-held (the leash moves a node off its parent's segment) before the limits below, which keep them.
+        // are then re-held (the leash moves a node off its parent's segment) before the limits below, which keep them. Cloth shares
+        // that correction between both ends, as everywhere else in its solve: a sweep down from the roots handed every millimetre
+        // the leash took off a panel's upper nodes on to its hem, which kept the hem of a resting skirt swinging for good.
         if (_leash > 0)
         {
             HoldStyle();
-            SweepLengths(0);
+            if (_collideCloth) HoldLengths(2);
+            else SweepLengths(0);
         }
         // The azimuth limit has the last word: the side links of the iteration would otherwise drag a panel sideways again after
         // the Bend pass, and the piece rendered this sub-step would leave its plane.
@@ -1012,6 +1036,7 @@ public sealed class ChainState
             for (int pass = 0; pass < 2; pass++) { HoldStyle(); SweepLengths(0); }
             HoldStyle();
         }
+        Inelastic();
     }
 
     // Cloth's pieces at their bound length with both ends moving (a root stays pinned). A one-sided sweep drags a node the leg pushed
@@ -1367,7 +1392,7 @@ public sealed class ChainState
                 // works where it matters and a bone bound close to the body does not fight its way out of the cloth's own style — that
                 // fight is a buzz. Bound inside it — a cloth rig whose bones run inside the body, the fabric held out by the weights:
                 // exactly that depth, so binding never shoves the cloth out.
-                _shFloor[slot] = depth >= 0 ? Math.Min(_radius[i] + _standoff, depth + _floorSlack) : depth;
+                _shFloor[slot] = depth >= 0 ? Math.Min(Clearance(i), depth + _floorSlack) : depth;
             }
             // The fabric is the model's own surface: held off the skin by _fabGap, or at the depth it was made at.
             for (int k = 0; k < _nf; k++)
@@ -1538,17 +1563,27 @@ public sealed class ChainState
         double cx = px + _t[0], cy = py + _t[1], cz = pz + _t[2];
         double margin = _fabGap, band = Math.Max(_bandFloor, margin);
         double far = smax * (data.Radius + data.Cell) + band;
+        for (int i = 0; i < _n; i++)
+        {
+            if (_fabOff[i] < 0) continue;
+            int o2 = i * 3, a2 = _parent[i] * 3;
+            double dx = _p[o2] - _p[a2], dy = _p[o2 + 1] - _p[a2 + 1], dz = _p[o2 + 2] - _p[a2 + 2];
+            double mx = (_p[o2] + _p[a2]) * 0.5 - cx, my = (_p[o2 + 1] + _p[a2 + 1]) * 0.5 - cy, mz = (_p[o2 + 2] + _p[a2 + 2]) * 0.5 - cz;
+            double reach = far + _fabSpan[i] * Math.Sqrt(dx * dx + dy * dy + dz * dz) + _fabOff[i];
+            _fabFar[i] = mx * mx + my * my + mz * mz > reach * reach;
+        }
         for (int k = 0; k < _nf; k++)
         {
-            if (!FabricAt(k, _sub)) continue;
+            if (_fabFar[_fabNode[k]] || !FabricAt(k, _sub)) continue;
             int i = _fabNode[k];
             double fx = _t[6], fy = _t[7], fz = _t[8];
             if ((fx - cx) * (fx - cx) + (fy - cy) * (fy - cy) + (fz - cz) * (fz - cz) > far * far) continue;
             Rotate(-qx, -qy, -qz, qw, fx - px, fy - py, fz - pz, _t, 3);
             double lx = _t[3] / sx, ly = _t[4] / sy, lz = _t[5] / sz;
             int slot = first + k;
-            int p = data.Nearest(lx, ly, lz, data.Cell);
-            if (p < 0) p = data.Nearest(lx, ly, lz, data.Cell * 3, 2);
+            // One search: a point within a cell is also the nearest of the wider one (anything in its outer ring is a cell away).
+            int p = data.Nearest(lx, ly, lz, data.Cell * 3, 2, _fabHint[slot]);
+            _fabHint[slot] = p;
             if (p < 0) p = _fabNear[slot] >= 0 ? _fabNear[slot] : _fabRestNear[slot];
             if (p < 0) continue;
             int q = p * 6;
@@ -1558,6 +1593,7 @@ public sealed class ChainState
             if (!double.IsNaN(floor) && floor < gap) gap = floor;
             double inside = (ox * nx + oy * ny + oz * nz) * unit;
             int last = _fabNear[slot] >= 0 ? _fabNear[slot] : _fabRestNear[slot];
+            double fade = 1;
             if (inside < gap - 2 * band && last >= 0)
             {
                 // Deep: the nearest point now may be the far side of the limb; the one it was last clear of says which way is out.
@@ -1567,13 +1603,13 @@ public sealed class ChainState
             }
             // Far from the nearest point, its plane says nothing (a leg's surface is an open tube, and a point well above its rim is
             // behind the rim's normal without being in the leg).
-            else if ((ox * ox + oy * oy + oz * oz) * unit * unit > band * band) continue;
+            else if ((fade = Fade((ox * ox + oy * oy + oz * oz) * unit * unit, band)) <= 0) continue;
             if (inside >= gap - _dead)
             {
                 _fabNear[slot] = p;
                 continue;
             }
-            double push = (gap - _dead - inside) / unit;
+            double push = (gap - _dead - inside) / unit * fade;
             int a = _parent[i], va = a * 3, vb = i * 3;
             bool moveA = _parent[a] >= 0;
             double ua = moveA ? Math.Sqrt(_shPush[va] * _shPush[va] + _shPush[va + 1] * _shPush[va + 1] + _shPush[va + 2] * _shPush[va + 2]) : 0;
@@ -1587,8 +1623,14 @@ public sealed class ChainState
             if (!moveA)
             {
                 // The root stays pinned: the far node alone moves, by more where the fabric sits near the root (it moves the
-                // fabric only by its share of the way down).
-                double lever = 1 / Math.Max(_fab[k * 4], 0.5);
+                // fabric only by its share of the way down). That turns the piece, and the fabric's offset turns with it: a point
+                // held well off a short first piece moves several times the nudge, which threw it clear and back every other
+                // sub-step. Where it moved further along the nudge than asked, the node is taken back by the excess share.
+                double lever = 1 / Math.Max(_fab[k * 4], 0.5), want = mx * mx + my * my + mz * mz;
+                _p[vb] += mx * lever; _p[vb + 1] += my * lever; _p[vb + 2] += mz * lever;
+                double along = FabricAt(k, _sub) ? ((_t[6] - fx) * mx + (_t[7] - fy) * my + (_t[8] - fz) * mz) / want : 1;
+                _p[vb] -= mx * lever; _p[vb + 1] -= my * lever; _p[vb + 2] -= mz * lever;
+                if (along > 1) lever /= along;
                 mx *= lever; my *= lever; mz *= lever;
             }
             for (int e = moveA ? 0 : 1; e < 2; e++)
@@ -1599,6 +1641,36 @@ public sealed class ChainState
             }
         }
     }
+
+    // Contacts are inelastic: once the sub-step is solved, a node the surfaces pushed keeps no speed along the way they pushed it in
+    // all, neither the push (cloth thrown off the skin by a correction a few millimetres deep bounced back and forth for good) nor the
+    // speed it came in with. Only after every constraint: taken at each push, a push the lengths then undid left the node a speed
+    // it never had, which kept a strand caught between two surfaces swinging for good.
+    void Inelastic()
+    {
+        for (int v = 0; v < _n * 3; v += 3)
+        {
+            double nx = _shPush[v], ny = _shPush[v + 1], nz = _shPush[v + 2];
+            double l = Math.Sqrt(nx * nx + ny * ny + nz * nz);
+            if (l < 1e-12) continue;
+            nx /= l; ny /= l; nz /= l;
+            double vn = (_p[v] - _q[v]) * nx + (_p[v + 1] - _q[v + 1]) * ny + (_p[v + 2] - _q[v + 2]) * nz;
+            _q[v] += nx * vn; _q[v + 1] += ny * vn; _q[v + 2] += nz * vn;
+        }
+    }
+
+    // How much a surface point's plane counts for a query `d2` (squared, world) from it: whole within two thirds of the band, falling
+    // to nothing at its edge. A plane that counted whole up to the edge and not at all past it let a node sink the whole gap unseen
+    // just outside, then threw it out by that much at once: a strand bouncing on the head, a panel buzzing on the hip for good.
+    static double Fade(double d2, double band)
+    {
+        double d = Math.Sqrt(d2);
+        return Math.Clamp((band - d) * 3 / band, 0, 1);
+    }
+
+    // How far the surfaces keep node i's bone out: its radius and the standoff; in a set with fabric, the fabric's own clearance, since
+    // its bare bones stand for the same cloth (a bone held 3 cm off the thigh beside fabric held 1 cm off it never came to rest).
+    double Clearance(int i) => _hasFabric ? _fabGap : _radius[i] + _standoff;
 
     // Out of the body's surface at this sub-step: a node behind the nearest skin point's outward normal is moved out along that
     // normal. The points sit in the shell bone's own space, so the node is taken there through the bone's pose first.
@@ -1621,26 +1693,27 @@ public sealed class ChainState
             if (_parent[i] < 0 || _clothed[i]) continue; // a node carrying fabric: its fabric is what is kept out
             int v = i * 3;
             double dx = _p[v] - cx, dy = _p[v + 1] - cy, dz = _p[v + 2] - cz;
-            double margin = _radius[i] + _standoff;
+            double margin = Clearance(i);
             double far = near + margin;
             if (dx * dx + dy * dy + dz * dz > far * far) continue;
             // The node in the shell bone's space.
             double wx = _p[v] - px, wy = _p[v + 1] - py, wz = _p[v + 2] - pz;
             Rotate(-qx, -qy, -qz, qw, wx, wy, wz, _t, 3);
             double lx = _t[3] / sx, ly = _t[4] / sy, lz = _t[5] / sz;
-            // Where the node was when the shell was last searched for it, it has not moved far enough to look again.
+            // Where the node was when the shell was last searched for it, it has not moved far enough to look again. Only a point
+            // found: a node that found none and kept that until it had moved half a cell sank that far before the surface answered,
+            // and was then thrown out by the whole depth at once (a strand that dropped onto the head and jumped off it for good).
             int slot = first + i, at = slot * 3;
             int prev = _shNear[slot];
             int p;
             double wasX = _shNearAt[at], wasY = _shNearAt[at + 1], wasZ = _shNearAt[at + 2];
             double stepX = lx - wasX, stepY = ly - wasY, stepZ = lz - wasZ;
-            if (!double.IsNaN(wasX) && stepX * stepX + stepY * stepY + stepZ * stepZ <= data.Cell * data.Cell * 0.25)
+            if (prev >= 0 && !double.IsNaN(wasX) && stepX * stepX + stepY * stepY + stepZ * stepZ <= data.Cell * data.Cell * 0.25)
                 p = _shNear[slot];
             else
             {
-                // One cell around; failing that, a deeper look (a node that has sunk a few centimetres into the body).
-                p = data.Nearest(lx, ly, lz, data.Cell);
-                if (p < 0) p = data.Nearest(lx, ly, lz, data.Cell * 3, 2);
+                // Two cells around, for a node that has sunk a few centimetres into the body.
+                p = data.Nearest(lx, ly, lz, data.Cell * 3, 2, prev);
                 _shNear[slot] = p;
                 _shNearAt[at] = lx; _shNearAt[at + 1] = ly; _shNearAt[at + 2] = lz;
             }
@@ -1654,7 +1727,8 @@ public sealed class ChainState
             // is never narrower than the standoff itself: raising a set's radius is the author asking for that much clearance, and the
             // surface has to answer at that distance or the radius would only matter on contact.
             double band = Math.Max(_bandFloor, margin);
-            if ((cx0 * cx0 + cy0 * cy0 + cz0 * cz0) * unit * unit > band * band) continue;
+            double fade = Fade((cx0 * cx0 + cy0 * cy0 + cz0 * cz0) * unit * unit, band);
+            if (fade <= 0) continue;
             double inside = (cx0 * nx + cy0 * ny + cz0 * nz) * unit;
             // The floor: the standoff, or the depth the node was bound at when that is nearer the surface than the standoff.
             double gap = margin;
@@ -1690,7 +1764,7 @@ public sealed class ChainState
             // A dead band: cloth resting on the body breathes in and out a millimetre or two every sub-step; pushing on that
             // would be a buzz at the sub-step's own rate. Only past 3 mm does the surface answer.
             if (inside >= gap - _dead) continue;
-            double push = (gap - _dead - inside) / unit;
+            double push = (gap - _dead - inside) / unit * fade;
             // A contact correction is a nudge, never a jump: a node gets a bounded share of surface correction a sub-step, all
             // surfaces and iterations together (the body can move into cloth fast; the cloth follows at this pace and no faster).
             double used = Math.Sqrt(_shPush[v] * _shPush[v] + _shPush[v + 1] * _shPush[v + 1] + _shPush[v + 2] * _shPush[v + 2]);
@@ -1702,8 +1776,9 @@ public sealed class ChainState
             ly = (ly + ny * push) * sy;
             lz = (lz + nz * push) * sz;
             Rotate(qx, qy, qz, qw, lx, ly, lz, _t, 3);
-            _shPush[v] += px + _t[3] - _p[v]; _shPush[v + 1] += py + _t[4] - _p[v + 1]; _shPush[v + 2] += pz + _t[5] - _p[v + 2];
-            _p[v] = px + _t[3]; _p[v + 1] = py + _t[4]; _p[v + 2] = pz + _t[5];
+            double mx = px + _t[3] - _p[v], my = py + _t[4] - _p[v + 1], mz = pz + _t[5] - _p[v + 2];
+            _shPush[v] += mx; _shPush[v + 1] += my; _shPush[v + 2] += mz;
+            _p[v] += mx; _p[v + 1] += my; _p[v + 2] += mz;
         }
     }
 
@@ -1728,22 +1803,24 @@ public sealed class ChainState
         for (int k = 0; k < _segA.Length; k++)
         {
             int ia = _segA[k], ib = _segB[k], va = ia * 3, vb = ib * 3;
-            if (_clothed[ia] && _clothed[ib]) continue; // between two nodes that carry fabric: the fabric is what is kept out
+            // A node that carries fabric is kept out by its fabric alone, as PushOutOfShell leaves it: a piece's middle held out at the
+            // bone clearance beside fabric held at a centimetre pulled the panel two ways every sub-step (the skirt that never rests).
+            if (_clothed[ia] || _clothed[ib]) continue;
             double wx = (_p[va] + _p[vb]) * 0.5 - cx, wy = (_p[va + 1] + _p[vb + 1]) * 0.5 - cy, wz = (_p[va + 2] + _p[vb + 2]) * 0.5 - cz;
-            double margin = Math.Max(_radius[ia], _radius[ib]) + _standoff;
+            double margin = Math.Max(Clearance(ia), Clearance(ib));
             double far = near + margin;
             if (wx * wx + wy * wy + wz * wz > far * far) continue;
             double mw0 = (_p[va] + _p[vb]) * 0.5 - px, mw1 = (_p[va + 1] + _p[vb + 1]) * 0.5 - py, mw2 = (_p[va + 2] + _p[vb + 2]) * 0.5 - pz;
             Rotate(-qx, -qy, -qz, qw, mw0, mw1, mw2, _t, 3);
             double lx = _t[3] / sx, ly = _t[4] / sy, lz = _t[5] / sz;
-            int p = data.Nearest(lx, ly, lz, data.Cell);
-            if (p < 0) p = data.Nearest(lx, ly, lz, data.Cell * 3, 2);
+            int p = data.Nearest(lx, ly, lz, data.Cell * 3, 2);
             if (p < 0) continue;
             int q = p * 6;
             double nx = data.Points[q + 3], ny = data.Points[q + 4], nz = data.Points[q + 5];
             double ox = lx - data.Points[q], oy = ly - data.Points[q + 1], oz = lz - data.Points[q + 2];
             double band = Math.Max(_bandFloor, margin);
-            if ((ox * ox + oy * oy + oz * oz) * unit * unit > band * band) continue;
+            double fade = Fade((ox * ox + oy * oy + oz * oz) * unit * unit, band);
+            if (fade <= 0) continue;
             double inside = (ox * nx + oy * ny + oz * nz) * unit;
             double gap = margin;
             double fa = _shFloor[first + ia], fb = _shFloor[first + ib];
@@ -1753,7 +1830,7 @@ public sealed class ChainState
                 if (f < gap) gap = f;
             }
             if (inside >= gap - _dead) continue;
-            double push = (gap - _dead - inside) / unit;
+            double push = (gap - _dead - inside) / unit * fade;
             // Both nodes move by the same world nudge, so the piece translates rather than stretches; its size is the same budget a
             // node's own correction gets.
             double ua = Math.Sqrt(_shPush[va] * _shPush[va] + _shPush[va + 1] * _shPush[va + 1] + _shPush[va + 2] * _shPush[va + 2]);
@@ -1761,15 +1838,20 @@ public sealed class ChainState
             double most = Math.Min(_segBudget, Math.Min(_budget - ua, _budget - ub)) / unit;
             if (most <= 0) continue;
             if (push > most) push = most;
-            for (int e = 0; e < 2; e++)
+            // A pinned root stays: the other node alone moves, twice as far, so the piece's middle still moves by the push.
+            bool pinA = _parent[ia] < 0, pinB = _parent[ib] < 0;
+            if (pinA && pinB) continue;
+            if (pinA || pinB) push *= 2;
+            for (int e = pinA ? 1 : 0; e < (pinB ? 1 : 2); e++)
             {
                 int v = e == 0 ? va : vb;
                 double ew0 = _p[v] - px, ew1 = _p[v + 1] - py, ew2 = _p[v + 2] - pz;
                 Rotate(-qx, -qy, -qz, qw, ew0, ew1, ew2, _t, 3);
                 double ex = (_t[3] / sx + nx * push) * sx, ey = (_t[4] / sy + ny * push) * sy, ez = (_t[5] / sz + nz * push) * sz;
                 Rotate(qx, qy, qz, qw, ex, ey, ez, _t, 3);
-                _shPush[v] += px + _t[3] - _p[v]; _shPush[v + 1] += py + _t[4] - _p[v + 1]; _shPush[v + 2] += pz + _t[5] - _p[v + 2];
-                _p[v] = px + _t[3]; _p[v + 1] = py + _t[4]; _p[v + 2] = pz + _t[5];
+                double dx = px + _t[3] - _p[v], dy = py + _t[4] - _p[v + 1], dz = pz + _t[5] - _p[v + 2];
+                _shPush[v] += dx; _shPush[v + 1] += dy; _shPush[v + 2] += dz;
+                _p[v] += dx; _p[v + 1] += dy; _p[v + 2] += dz;
             }
         }
     }
@@ -1976,8 +2058,10 @@ public sealed class ChainShellData
     }
 
     /// <summary>The point nearest to (x, y, z) within `reach` among the `span` cells around it (1: the cells touching its own;
-    /// -1: every point, for a one-off measurement), as an index into <see cref="Points"/>, or -1.</summary>
-    public int Nearest(double x, double y, double z, double reach, int span = 1)
+    /// -1: every point, for a one-off measurement), as an index into <see cref="Points"/>, or -1.
+    /// `hint`: a point found near here before (-1: none). Cells further off than the nearest found so far are passed over, so a good
+    /// guess leaves most of them unread; the answer does not depend on it.</summary>
+    public int Nearest(double x, double y, double z, double reach, int span = 1, int hint = -1)
     {
         if (Count == 0) return -1;
         if (span < 0)
@@ -1998,19 +2082,36 @@ public sealed class ChainShellData
         int iz = Math.Clamp((int)((z - _minZ) / Cell), 0, _nz - 1);
         double best = reach * reach;
         int found = -1;
+        if (hint >= 0 && hint < Count)
+        {
+            // Only a point the search itself would have read: in the block of cells, within reach.
+            int o = hint * 6;
+            double ex = x - Points[o], ey = y - Points[o + 1], ez = z - Points[o + 2];
+            double d = ex * ex + ey * ey + ez * ez;
+            int hx = Math.Clamp((int)((Points[o] - _minX) / Cell), 0, _nx - 1);
+            int hy = Math.Clamp((int)((Points[o + 1] - _minY) / Cell), 0, _ny - 1);
+            int hz = Math.Clamp((int)((Points[o + 2] - _minZ) / Cell), 0, _nz - 1);
+            if (d < best && Math.Abs(hx - ix) <= span && Math.Abs(hy - iy) <= span && Math.Abs(hz - iz) <= span) { best = d; found = hint; }
+        }
         for (int dx = -span; dx <= span; dx++)
         {
             int cxi = ix + dx;
             if (cxi < 0 || cxi >= _nx) continue;
+            double gx = Math.Max(0, Math.Abs(x - (_minX + (cxi + 0.5) * Cell)) - Cell * 0.5);
+            if (gx * gx >= best) continue;
             for (int dy = -span; dy <= span; dy++)
             {
                 int cyi = iy + dy;
                 if (cyi < 0 || cyi >= _ny) continue;
+                double gy = Math.Max(0, Math.Abs(y - (_minY + (cyi + 0.5) * Cell)) - Cell * 0.5);
+                if (gx * gx + gy * gy >= best) continue;
                 int row = (cxi * _ny + cyi) * _nz;
                 for (int dz = -span; dz <= span; dz++)
                 {
                     int czi = iz + dz;
                     if (czi < 0 || czi >= _nz) continue;
+                    double gz = Math.Max(0, Math.Abs(z - (_minZ + (czi + 0.5) * Cell)) - Cell * 0.5);
+                    if (gx * gx + gy * gy + gz * gz >= best) continue;
                     int c = row + czi;
                     for (int k = _start[c]; k < _start[c + 1]; k++)
                     {
